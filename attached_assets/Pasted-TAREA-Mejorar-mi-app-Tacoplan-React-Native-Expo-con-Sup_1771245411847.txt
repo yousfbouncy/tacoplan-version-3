@@ -1,0 +1,141 @@
+TAREA: Mejorar mi app Tacoplan (React Native + Expo) con Supabase para que cada usuario pueda configurar sus precios (dietas y extras) y el Dashboard calcule siempre usando esa configuración.
+
+STACK:
+- React Native + Expo Router
+- Supabase JS client
+- Auth con Supabase (email/password)
+- Base de datos por usuario con RLS
+
+OBJETIVOS FUNCIONALES:
+
+1) BASE DE DATOS (Supabase) - crear/usar estas tablas:
+A) diet_rates:
+- id uuid pk default gen_random_uuid()
+- user_id uuid not null references auth.users(id)
+- scope text not null (NACIONAL | INTERNACIONAL)
+- percent int not null (100 | 60 | 30)
+- amount_eur numeric not null
+Unique: (user_id, scope, percent)
+
+B) day_extras:
+- id uuid pk
+- user_id uuid not null
+- kind text not null (SAB | DOM | FEST)
+- amount_eur numeric not null
+Unique: (user_id, kind)
+
+C) holidays:
+- id uuid pk
+- user_id uuid not null
+- date date not null
+- name text
+Unique: (user_id, date)
+
+D) journeys:
+- id uuid pk
+- user_id uuid not null
+- start_at timestamptz not null
+- end_at timestamptz not null
+- start_place text
+- end_place text
+- travel_type text (NAC | INTL | REG_INTL | NAC_INTL | NAC_REG)
+- pernocta boolean default false
+- diet_mode text (AUTO | MANUAL)
+- diet_percent int (100|60|30) nullable
+- manual_scope text (NACIONAL|INTERNACIONAL) nullable
+- special_day text (AUTO|SAB|DOM|FEST)
+- driving_hours_override numeric nullable
+- diet_base_eur numeric not null default 0
+- extra_day_eur numeric not null default 0
+- diet_total_eur numeric not null default 0
+
+2) RLS:
+- Activar RLS en todas las tablas.
+- Políticas: cada usuario solo puede ver/insertar/update/delete filas con user_id = auth.uid().
+
+3) PANTALLA USUARIO / CONFIGURACIÓN:
+Crear un menú de configuración real (no solo acordeones vacíos):
+- Sección “Tarifas dietas”:
+  - Formulario editable tipo tabla:
+    NACIONAL: 100/60/30
+    INTERNACIONAL: 100/60/30
+  - Guardar en diet_rates (upsert).
+  - Si no existen filas, crear valores por defecto (usar los actuales como default).
+- Sección “Extras Día”:
+  - Inputs: Sábado, Domingo, Festivo (EUR)
+  - Guardar en day_extras (upsert).
+- Sección “Festivos”:
+  - Añadir festivo: fecha + nombre
+  - Listar festivos guardados y permitir borrar.
+- Sección “Cuenta”:
+  - Cerrar sesión (signOut)
+  - Mostrar email del usuario
+
+4) DASHBOARD - FIN DE JORNADA:
+Mejorar el formulario:
+- Campos:
+  - Fecha fin (date)
+  - Hora fin (time)
+  - Lugar fin
+  - Tipo de viaje (chips): Nacional, Internacional, Regional/Internacional, Nacional/Internacional, Nacional/Regional
+  - Pernocta (Si/No)
+  - Dieta (Auto/Manual)
+  - Si Manual: elegir “tipo dieta” (Nacional/Internacional) y “% dieta” (100/60/30)
+  - Día especial (chips): Auto, Sab, Dom, Fest
+
+Reglas de cálculo:
+A) Resolver end_at:
+- start_at ya guardado.
+- si el usuario elige fecha fin distinta, usarla.
+- si fecha fin = start_at date y hora fin < hora inicio -> end_at = end_at + 1 day.
+
+B) Calcular base diet (diet_base_eur):
+- Si diet_mode = MANUAL:
+  - base = lookup diet_rates por (manual_scope, diet_percent)
+- Si diet_mode = AUTO:
+  - travel_type:
+    * NAC:
+        - si pernocta=true -> NACIONAL 100
+        - si pernocta=false -> NACIONAL 60
+    * INTL:
+        - usar INTERNACIONAL con el % seleccionado (si no hay seleccionado, default 100)
+    * REG_INTL:
+        - INTERNACIONAL 60
+    * NAC_INTL:
+        - NACIONAL 60 + INTERNACIONAL 60 (sumar dos rates)
+    * NAC_REG:
+        - si pernocta=true -> NACIONAL 100
+        - si pernocta=false -> NACIONAL 60
+
+C) Calcular extra_day_eur:
+- Si special_day = SAB/DOM/FEST: lookup day_extras.kind y sumar.
+- Si special_day = AUTO:
+   1) si end_date está en holidays -> FEST
+   2) else si end_date es domingo -> DOM
+   3) else si end_date es sábado -> SAB
+   4) else -> 0
+
+D) diet_total_eur = diet_base_eur + extra_day_eur
+
+Guardar estos valores en journeys.
+
+5) HISTORIAL:
+- Permitir editar jornada (abrir pantalla edit):
+  - editar start/end, lugares, travel_type, pernocta, diet_mode, % y día especial
+  - al guardar, recalcular diet_base_eur/extra_day_eur/total con la configuración del usuario.
+- Permitir borrar jornada.
+
+6) BUGS A ARREGLAR:
+- “Nacional/Internacional 30%” no se registra: asegurar que:
+  - diet_percent acepta 30
+  - lookup en diet_rates funciona para 30
+  - en NAC_INTL sumar ambos rates con 30 si el usuario elige 30 en manual o si aplicase.
+- Cuando trabajo en domingo no suma: asegurar que extra_day_eur se añade al total y que day_extras DOM se carga bien desde configuración.
+
+7) UX:
+- Si el usuario no configuró tarifas, mostrar banner: “Configura tus tarifas en Usuario > Tarifas”.
+- En Dashboard, mostrar “Dieta base” y “Extra día” y “Total” en tiempo real mientras selecciona chips.
+
+ENTREGABLE:
+- Código completo funcionando, tablas/SQL de Supabase incluidos (migración en un archivo .sql).
+- Actualizar variables de entorno y lectura desde Supabase (sin hardcode).

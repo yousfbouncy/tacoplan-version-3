@@ -1,0 +1,196 @@
+Actúa como desarrollador senior de Expo/React Native + Supabase y corrige el flujo UX + lógica del descanso ferry en mi app Tacoplan basándote en el comportamiento actual que ya existe.
+
+CONTEXTO ACTUAL DETECTADO
+- En Historial existe un modal “Editar descanso ferry” con:
+  - tipo de descanso 9h / 11h
+  - hora inicio
+  - hora fin
+  - descanso acumulado
+  - interrupciones total
+- En Historial aparecen estados como:
+  - “inválido por interrupciones”
+  - “descanso no completado”
+  - “jornada anterior reanudada tras ferry incompleto”
+- La UX actual obliga a introducir o editar demasiados campos manualmente.
+- Eso NO es válido para una app rápida de conductor.
+
+OBJETIVO
+Simplificar radicalmente el flujo ferry:
+- menos escritura manual
+- más botones rápidos
+- lógica automática
+- estados visibles en Dashboard
+- historial más limpio
+
+NUEVO COMPORTAMIENTO REQUERIDO
+
+1. INICIO FERRY
+- En Dashboard, si el usuario tiene activado “Cruce en ferry” en Configuración, mostrar un botón:
+  “Iniciar ferry”
+- Este botón debe aparecer encima de “Finalizar jornada”
+- Al pulsarlo:
+  - start_time = hora actual automáticamente
+  - permitir edición manual opcional
+  - por defecto seleccionar descanso de 9h
+  - crear estado `ferry_mode_active = true`
+  - guardar referencia a la jornada actual como `paused_journey_before_ferry`
+- En Dashboard debe aparecer una tarjeta visible:
+  - icono ferry
+  - texto “Ferry activo”
+  - hora inicio
+  - objetivo: 9h o 11h
+  - tiempo acumulado automatico
+  - interrupciones hechas
+  - estado actual
+
+2. DURANTE EL FERRY
+- NO pedir “hora fin” manual
+- NO pedir “descanso acumulado manual”
+- Todo eso debe calcularse automáticamente
+- Mostrar solo botones rápidos:
+  - “Iniciar interrupción”
+  - “Finalizar interrupción”
+  - “Finalizar ferry”
+  - selector 9h / 11h
+- Las interrupciones deben funcionar así:
+  - al pulsar “Iniciar interrupción”:
+    interruption_start = now
+  - al pulsar “Finalizar interrupción”:
+    interruption_end = now
+  - máximo 2 interrupciones
+  - suma total <= 60 minutos
+- Si hay una interrupción abierta, no permitir abrir otra
+- Mostrar el total acumulado de interrupciones en vivo
+
+3. CÁLCULO AUTOMÁTICO
+- El sistema debe calcular:
+  - interruptions_total_minutes
+  - rest_required = 9h o 11h
+  - computed_end_time = start_time + rest_required + interruptions_total
+  - elapsed_rest_minutes = tiempo transcurrido menos lógica de interrupciones según modelo actual
+- “Hora fin” debe ser calculada, no escrita por el conductor
+
+4. VALIDACIÓN
+- El descanso ferry es válido solo si:
+  - descanso efectivo >= 9h mínimo (o 11h si elige normal)
+  - interrupciones <= 2
+  - total interrupciones <= 60 minutos
+- Si falla:
+  - marcar ferry_status = "invalid" o "incomplete"
+  - mostrar motivo exacto
+
+5. CUANDO EL FERRY TERMINA
+CASO A — descanso ferry válido y completado:
+- cerrar definitivamente la jornada anterior al ferry
+- reiniciar disponibilidad diaria
+- reiniciar conducción diaria
+- abrir nueva jornada automáticamente
+- mostrar mensaje:
+  - “Descanso ferry completado”
+  - “Nueva jornada iniciada”
+
+CASO B — ferry terminado antes de completar 9h mínimas:
+- NO reiniciar disponibilidad
+- NO abrir nueva jornada
+- NO cerrar definitivamente la jornada anterior
+- mostrar modal:
+  “El descanso ferry no ha completado el descanso diario. ¿Quieres reanudar la jornada anterior?”
+  Botones:
+   1. “Sí, reanudar jornada”
+   2. “No, dejar como descanso incompleto”
+- Si el usuario elige “Sí, reanudar jornada”:
+   - restaurar la jornada pausada antes del ferry
+   - continuar contadores desde donde estaban
+   - guardar ferry como descanso incompleto
+   - marcar `resumed_previous_journey = true`
+- Si elige “No”:
+   - dejar ferry como incompleto
+   - no reiniciar disponibilidad
+   - no crear nueva jornada
+
+6. HISTORIAL
+Rehacer la visualización del ferry en Historial para que sea mucho más limpia.
+Cada ferry debe mostrar:
+- icono ferry
+- descanso elegido: 9h o 11h
+- hora inicio → hora fin calculada
+- interrupciones: X / total min
+- estado:
+  - completado
+  - incompleto
+  - inválido
+- Si fue reanudada la jornada anterior:
+  mostrar texto pequeño:
+  “Jornada anterior reanudada”
+- NO mostrar textos repetitivos largos ni confusos
+- NO mostrar campos técnicos innecesarios
+
+7. MODAL EDITAR DESCANSO FERRY
+El modal actual debe simplificarse:
+- mantener solo:
+  - tipo descanso 9h / 11h
+  - hora inicio editable
+  - lista de interrupciones
+- eliminar edición manual de:
+  - hora fin
+  - descanso acumulado
+  - interrupciones total como input
+- esos campos deben ser de solo lectura o calculados automáticamente
+
+8. DASHBOARD
+Mientras ferry_mode_active = true:
+- mostrar tarjeta visible y destacada
+- no obligar al usuario a ir a Historial para ver el estado
+- mostrar:
+  - Ferry activo
+  - inicio
+  - fin estimado
+  - contador restante
+  - interrupciones totales
+  - estado legal provisional
+
+9. INTEGRACIÓN CON JORNADA
+Importante:
+- al iniciar ferry, la jornada previa queda “pausada”, no destruida
+- solo si el descanso se completa válidamente:
+  - se cierra jornada previa
+  - se abre nueva jornada
+- si no se completa:
+  - se puede reanudar la jornada pausada
+- esto debe evitar errores con fin de jornada / inicio jornada
+
+10. MODO MARRUECOS Y DIETAS
+- Si el conductor tiene activado modo Marruecos en configuración:
+  - adaptar la pantalla de Dietas/Viajes según payment_mode
+- Si payment_mode = morocco_trip:
+  - ocultar formulario de dietas normal
+  - mostrar formulario de viaje
+- Si payment_mode = morocco_pernight:
+  - ocultar formulario de dietas normal
+  - mostrar formulario de pernocta
+- Si payment_mode = morocco_diet:
+  - usar la lógica actual de dietas
+- No mezclar el formulario normal de dietas con el modo Marruecos
+
+11. IMPLEMENTACIÓN TÉCNICA
+- Analiza primero los archivos actuales del Dashboard, Historial, Dietas, Configuración y lógica de jornada
+- Identifica:
+  - dónde se guarda ferry actual
+  - dónde se reinicia disponibilidad
+  - dónde se decide qué formulario de dieta mostrar
+- Después implementa cambios
+- Mantener Supabase como backend
+
+
+12. VERIFICACIONES OBLIGATORIAS
+Añadir comprobaciones/logs para validar:
+- iniciar ferry pone hora automática
+- dashboard muestra ferry activo
+- interrupciones se crean con botones
+- hora fin ferry es automática
+- ferry válido reinicia disponibilidad
+- ferry incompleto pregunta si reanudar jornada
+- modo Marruecos oculta dietas normales si corresponde
+
+Primero explica el plan de cambios por archivos.
+Después implementa.

@@ -1,0 +1,187 @@
+Quiero que mejores mi app Tacoplan (APK ya funcionando) corrigiendo bugs y añadiendo mejoras de UX y funcionalidades. El objetivo es que todos los cálculos sean consistentes, que la sincronización entre dispositivos sea automática, y que la app sea práctica para camioneros.
+
+PRINCIPIOS OBLIGATORIOS
+	1.	Los precios de dietas/plus/extras/día especial deben salir SIEMPRE de los “precios de referencia” configurados por el usuario (config editable). No deben existir valores hardcoded de ejemplo que se usen si el usuario puso 0.
+	2.	Todo lo que se calcule debe recalcularse igual tanto si el registro se crea con flujo “inicio→fin” como si se crea con “jornada completa manual”.
+	3.	Dietas e Historial deben usar una única fuente de verdad para rangos (evitar discrepancias).
+	4.	Sincronización entre dispositivos debe ser automática si hay conexión.
+
+⸻
+
+1) BUG CRÍTICO: precio de referencia = 0€ y la app vuelve a poner el precio antiguo (ej. 10€)
+
+Hay un error: si el usuario pone un precio de referencia a 0€ (dieta o extra), al seleccionar esa dieta en una jornada el importe no se pone en 0 y vuelve a un valor por defecto (ejemplo 10€).
+Quiero que lo arregles de forma definitiva:
+	•	Si el usuario fija un precio a 0€, ese 0 debe respetarse.
+	•	El precio debe tomarse del config actual, no de “valores de ejemplo”.
+	•	Asegura que el código no usa lógicas tipo “si no existe usa default” que confunden 0 con vacío. 0 es un valor válido.
+	•	Aplica esto a: dietas, plus/extra, días especiales y cualquier tipo de suplemento.
+
+Criterio de aceptación:
+	•	Configuro “Sábado” = 0€ → selecciono sábado en una jornada → importe = 0€.
+	•	Configuro una dieta a 0€ → al seleccionarla o autocalcularla → importe = 0€.
+
+⸻
+
+2) SINCRONIZACIÓN ENTRE DISPOSITIVOS (auto, sin preguntar)
+
+Quiero que si uso Tacoplan en dos dispositivos:
+	•	Dispositivo A (Galaxy) guarda datos hoy → se suben a la nube.
+	•	Dispositivo B (A9) al abrir la app con conexión debe descargar automáticamente lo último de la nube (sin que me pregunte).
+	•	Si mañana guardo datos desde B, al abrir A debe verse lo último de B.
+
+Implementa:
+	•	Sincronización automática al abrir la app y al volver del background si hay conexión.
+	•	Indicador discreto en UI: “Sincronizando… / Sincronizado / Sin conexión”.
+	•	Cada registro debe tener updatedAt y un mecanismo de resolución de conflictos: “última modificación gana” (last write wins).
+	•	Si hay cambios locales pendientes, se suben automáticamente después del pull.
+
+Criterio de aceptación:
+	•	Sin tocar nada, al abrir en otro dispositivo aparece el último registro creado en el primero.
+
+⸻
+
+3) CONFIGURACIÓN INICIAL: NO mostrar setup a usuarios existentes
+
+Problema actual: cuando inicio sesión en un dispositivo nuevo sin storage local, la app muestra el setup de configuración aunque el usuario ya existe en la nube.
+
+Quiero este comportamiento:
+	•	Si el usuario ya existe en la nube (tiene perfil/config guardada), NO mostrar pantalla de configuración inicial.
+	•	En ese caso debe hacer pull automático de config+datos y entrar directo al dashboard.
+	•	Solo mostrar setup de configuración del rango si el usuario es realmente nuevo y NO existe perfil/config en la nube.
+
+⸻
+
+4) RANGO DE FECHAS (incluye 20→20) – siempre correcto
+
+Asegura que los rangos funcionan y nunca vuelven a mostrar errores como:
+	•	“20/01/2026 – 20/01/2026” (inicio y fin igual)
+	•	“20 – 20 del mismo mes” cuando debería ser mes siguiente
+
+Requisitos:
+	•	Soportar modos de rango:
+	•	AUTO_01_30
+	•	AUTO_20_20
+	•	MANUAL (día desde / día hasta)
+	•	Fuente única del rango: Dietas e Historial deben usar exactamente la misma configuración.
+	•	Definir internamente from inclusivo y to exclusivo para evitar duplicados.
+	•	El usuario puede cambiar el rango en Configuración cuando quiera, pero la app no debe pedirlo si el usuario ya existe.
+
+⸻
+
+5) MEJORAS FIN DE JORNADA (formulario)
+
+Mejorar el formulario de Fin de jornada con:
+
+Tipos de viaje (selector)
+	•	Ninguno (siempre 0€ en dietas)
+	•	Regional
+	•	Nacional
+	•	Internacional
+	•	Regional/Internacional
+	•	Nacional/Internacional
+
+Dieta manual (opcional)
+
+Activar switch “Dieta manual”.
+Si activado:
+	•	Tipo dieta: Nacional / Internacional
+	•	Porcentaje: 100% / 60% / 30%
+
+Día especial / Extra
+	•	Debe permitir “Ninguno”
+	•	Si Ninguno → 0€
+
+Observaciones
+
+Añadir campo “Observaciones” en fin de jornada:
+	•	Se guarda en la jornada
+	•	Se muestra en Historial
+	•	Se incluye en Exportación PDF SOLO si tiene contenido
+
+⸻
+
+6) EXPORTACIÓN PDF (completa)
+
+Ahora exporta jornadas + dietas + extras día especial, pero faltan plus/extra.
+
+Quiero que el PDF incluya:
+	•	Historial de jornadas
+	•	Dietas (tipo + % + importe)
+	•	Día especial
+	•	Plus/extra (todas las categorías)
+	•	Observaciones (si existen)
+
+Al final del PDF:
+	•	Totales de dietas por tipo
+	•	Totales de extras/plus
+	•	Total general
+
+⸻
+
+7) COMPENSACIÓN DESCANSO SEMANAL (bug: recuperas y sigue pendiente)
+
+Hay un error: si hago descanso semanal reducido, genero deuda y la recupero en la segunda semana, a veces la app sigue marcando que debo compensar.
+
+Quiero que lo arregles:
+	•	La deuda debe tener un estado real: OK / PENDIENTE / INFRACCIÓN
+	•	Cuando haya un descanso válido de recuperación posterior, debe aplicar la recuperación y cerrar la deuda.
+	•	Debe funcionar igual si el usuario registra con flujo inicio→fin o con jornada manual completa.
+	•	Debe recalcular si el usuario edita registros anteriores.
+
+Criterio de aceptación:
+	•	Si recupero antes del límite → dashboard deja de mostrar pendiente.
+	•	Si pasa el límite sin recuperar → marca infracción y muestra fecha límite.
+
+En Dashboard mostrar:
+	•	Horas pendientes totales de recuperar
+	•	Fecha límite más cercana
+
+⸻
+
+8) AUTOCOMPLETAR LUGARES (muy importante UX)
+
+Implementar:
+	•	Al iniciar una jornada, el campo “Inicio lugar” se pre-rellena con el “Fin lugar” de la jornada anterior (editable).
+	•	Guardar lista de lugares recientes y ofrecer sugerencias/autocompletado.
+
+⸻
+
+9) NUEVA PESTAÑA: CONTROL DE VIAJES (cargas/descargas)
+
+Añadir una pestaña “Control de viajes” para registrar operaciones de carga/descarga asociadas a un viaje.
+
+Requisitos:
+	•	Un “viaje” puede tener múltiples eventos de carga y descarga.
+	•	Botones grandes: “+ Carga” y “+ Descarga”.
+	•	Cada evento debe tener:
+	•	Cliente
+	•	Ubicación
+	•	Hora cita
+	•	Hora llegada real (se marca con un botón “Marcar llegada” que pone timestamp actual)
+	•	Observaciones
+	•	No quiero sugerencias automáticas al crear descargas (no rellenar automáticamente).
+Si se añade un atajo, que sea opcional y manual (por ejemplo un botón “Duplicar datos de este evento” dentro del mismo evento), pero NO autocompletar por defecto.
+
+Ideas UX deseadas:
+	•	Cada evento en formato tarjeta, con estado:
+	•	Pendiente
+	•	Llegado (tiene hora llegada)
+	•	Botón “Marcar llegada” y opcional “Marcar salida”.
+	•	Filtros por viaje y por fecha.
+
+⸻
+
+10) Entregables esperados
+	•	Implementa los cambios sin romper la app.
+	•	Asegura que todo sincroniza sin popups.
+	•	Añade logs o un apartado “Diagnóstico de sincronización” (oculto) para comprobar pull/push.
+
+Prioriza en este orden:
+	1.	Bug precios 0€
+	2.	Sync multi-dispositivo + no setup si user existe
+	3.	Fix compensaciones
+	4.	Mejoras fin de jornada + observaciones
+	5.	Export PDF completo
+	6.	Autocompletar lugares
+	7.	Control de viajes

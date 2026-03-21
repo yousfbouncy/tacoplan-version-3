@@ -1,0 +1,160 @@
+Actúa como desarrollador senior de Expo/React Native + Supabase y modifica mi app Tacoplan para que el onboarding obligatorio de usuarios nuevos sea la pantalla de Configuración antes de permitir usar la app.
+
+OBJETIVO
+Quiero que cuando un usuario entra por primera vez en la app, NO vaya al Dashboard directamente.
+Primero debe ir obligatoriamente a una pantalla de configuración inicial para completar su perfil y parámetros base.
+Solo después de guardar esa configuración podrá acceder al Dashboard.
+
+REGLA PRINCIPAL
+- Usuario nuevo = usuario autenticado que todavía no tiene su configuración inicial completa guardada.
+- Si el usuario no ha completado la configuración inicial:
+  - bloquear acceso normal al Dashboard y resto de flujos principales
+  - redirigir automáticamente a pantalla de Configuración inicial
+- Cuando complete y guarde la configuración:
+  - marcar onboarding como completado
+  - redirigir al Dashboard
+- En siguientes accesos:
+  - entrar normalmente al Dashboard
+  - la configuración seguirá editable desde la pantalla Config, pero ya no será obligatoria al abrir la app
+
+CAMPOS OBLIGATORIOS DE CONFIGURACIÓN INICIAL
+La pantalla inicial debe pedir y guardar obligatoriamente estos bloques:
+
+1. Perfil del conductor
+- tipo de conductor / perfil
+- por ejemplo:
+  - conductor estándar
+  - conductor Marruecos
+  - cruza ferry
+  - otros perfiles ya existentes si aplica
+
+2. Tipos de viaje
+- nacional
+- internacional
+- Marruecos
+- ferry
+- o estructura equivalente actual del proyecto
+
+3. Zona de operación
+- España
+- Europa
+- Marruecos
+- mixta
+- o equivalente según estructura actual
+
+4. Configuración de precios
+Debe permitir definir valores base editables:
+- dieta nacional completa
+- dieta internacional completa
+- media dieta / porcentaje si existe en la app
+- pernocta
+- viaje
+- día especial
+- festivo / domingo / sábado si aplica
+- cualquier precio de referencia actual que ya use la app
+
+5. Periodo de contabilización
+- el usuario debe elegir cómo quiere contabilizar:
+  - mes natural
+  - periodo personalizado
+  - o el sistema que ya uses (por ejemplo del 21 al 20)
+- este campo debe quedar guardado en la configuración del usuario
+
+COMPORTAMIENTO DE NAVEGACIÓN
+- Si user_settings no existe o está incompleto:
+  -> navegar a pantalla `InitialSetupScreen` o reutilizar `ConfigScreen` en modo onboarding
+- Si user_settings existe y onboarding_completed = true:
+  -> entrar a Dashboard normal
+- El usuario no debe poder saltarse este paso con back, tabs o navegación manual
+- Mientras no complete la configuración:
+  - ocultar tabs principales o bloquear navegación
+  - o mostrar solo la pantalla de configuración obligatoria
+
+ESTRUCTURA DE DATOS
+Usar Supabase para persistir esta configuración por usuario.
+
+Crear o adaptar tabla `user_settings` con campos tipo:
+- user_id uuid primary key
+- onboarding_completed boolean default false
+- driver_profile text
+- trip_types jsonb
+- operation_zone text
+- payment_mode text nullable
+- trip_rate numeric nullable
+- pernight_rate numeric nullable
+- special_day_rate numeric nullable
+- national_diet_rate numeric nullable
+- international_diet_rate numeric nullable
+- accounting_period_type text
+- accounting_period_start_day integer nullable
+- accounting_period_end_day integer nullable
+- updated_at timestamptz
+
+Si ya existe `user_settings`, no romperla: ampliar con los campos necesarios.
+
+VALIDACIÓN
+No permitir guardar si faltan datos obligatorios.
+Mostrar errores claros por sección.
+
+Ejemplos de validaciones:
+- perfil de conductor obligatorio
+- al menos un tipo de viaje seleccionado
+- zona de operación obligatoria
+- precios obligatorios según el modo elegido
+- periodo de contabilización obligatorio
+
+UX
+Quiero que esta pantalla de configuración inicial se vea como onboarding profesional:
+- título claro: “Configuración inicial”
+- subtítulo: “Antes de empezar, configura tu perfil y parámetros de trabajo”
+- secciones bien separadas
+- botón fijo abajo: “Guardar configuración y continuar”
+- estado loading mientras guarda
+- mensaje de éxito breve y luego navegación al Dashboard
+
+REQUISITOS IMPORTANTES
+- Si el usuario es nuevo, esta su email en auth supabase esta configuración es obligatoria
+- Si el usuario ya existe y tiene settings, no volver a mostrar onboarding
+- Mantener editable desde Config después
+- No romper la lógica actual de Dashboard, Dietas, Viajes, Ferry o Marruecos
+- El resto de pantallas deben leer estos valores guardados como fuente oficial
+
+INTEGRACIÓN CON LA APP
+Analiza el proyecto actual e identifica:
+1. dónde se resuelve la sesión del usuario
+2. dónde se decide la pantalla inicial
+3. dónde está la pantalla de configuración actual
+4. cómo reutilizar la lógica existente para no duplicar código
+
+IMPLEMENTACIÓN
+Quiero que:
+1. analices la estructura actual del proyecto
+2. indiques qué archivos vas a tocar
+3. expliques si reutilizarás ConfigScreen o crearás InitialSetupScreen
+4. implementes la lógica de redirección de usuario nuevo
+5. implementes guardado en Supabase
+6. implementes navegación al Dashboard tras guardar
+7. dejes logs o comprobaciones para validar el flujo
+
+FLUJO FINAL ESPERADO
+- usuario se registra o inicia sesión por primera vez
+- la app detecta que no tiene configuración inicial
+- se abre Configuración inicial obligatoria
+- completa:
+  - perfil conductor
+  - tipos de viaje
+  - zona operación
+  - precios
+  - periodo contabilización
+- pulsa guardar
+- se guarda en Supabase
+- onboarding_completed = true
+- va automáticamente al Dashboard
+
+Antes de implementar:
+- explica plan de cambios por archivos
+- indica migraciones necesarias en Supabase
+Después:
+- implementa
+- muestra código modificado
+- explica cómo probar el flujo con usuario nuevo y usuario ya existente

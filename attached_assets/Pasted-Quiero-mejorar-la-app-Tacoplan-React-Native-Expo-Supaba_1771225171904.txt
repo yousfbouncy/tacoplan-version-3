@@ -1,0 +1,141 @@
+Quiero mejorar la app Tacoplan (React Native/Expo + Supabase) con estas mejoras obligatorias:
+
+A) Cálculo correcto cuando una jornada cruza medianoche
+
+Problema: cuando inicio y fin están en fechas diferentes (ej. 15/02/2026 22:30 → 16/02/2026 01:30), la duración debe ser 3h, no negativa.
+
+Requisitos
+	1.	Guardar en BD (y en estado interno) los tiempos como:
+
+	•	start_at (timestamp ISO: YYYY-MM-DDTHH:mm)
+	•	end_at (timestamp ISO, nullable si jornada abierta)
+
+	2.	Mantener los campos de UI por separado:
+
+	•	fecha_inicio, hora_inicio, fecha_fin, hora_fin
+pero al guardar deben convertirse a start_at y end_at.
+
+	3.	Duración de jornada:
+
+	•	jornada_min = round((end_at - start_at) / 60000)
+	•	Si end_at < start_at NO permitas guardar (error) salvo que sea realmente fecha siguiente; como usamos fecha_fin explícita ya no debe pasar.
+
+	4.	En el historial mostrar:
+
+	•	Duración en formato H:MM (ej. 3:00)
+
+B) Lógica del contador de descansos (descanso anterior)
+
+Asegurar que el cálculo de descanso anterior siempre usa timestamps reales:
+	•	Para cada jornada cerrada, buscar la jornada cerrada anterior (orden por end_at).
+	•	rest_min = (start_at_actual - end_at_anterior) en minutos.
+	•	Clasificación:
+	•	< 9h => INFRACCION_DESCANSO
+	•	9h a <11h => DESCANSO_DIARIO_REDUCIDO
+	•	11h a <24h => DESCANSO_DIARIO_COMPLETO
+	•	24h a <45h => DESCANSO_SEMANAL_REDUCIDO
+	•	=45h => DESCANSO_SEMANAL_COMPLETO
+
+Regla adicional importante:
+	•	Si la duración de la jornada anterior (end_at - start_at) es > 13h, entonces el descanso siguiente debe contar como “reducido” a efectos de contador (aunque el descanso sea 11h). Implementar un flag:
+	•	counts_as_daily_reduced = (prev_jornada_min > 13h*60) ? true : false
+y usarlo para contar los 3 reducidos/semana en el dashboard.
+
+C) Dietas: corregir 30% y asegurar TODOS los tipos y porcentajes
+
+Actualmente no registra cuando el tipo de viaje es “NACIONAL/INTERNACIONAL” con 30%. Debe soportar cualquier combinación.
+
+Tipos de viaje (selector en FIN DE JORNADA)
+
+Debe incluir exactamente:
+	•	NACIONAL
+	•	INTERNACIONAL
+	•	REGIONAL_INTERNACIONAL
+	•	NACIONAL_INTERNACIONAL
+	•	NACIONAL_REGIONAL (nuevo)
+
+Reglas de dieta AUTO (con pernocta)
+
+Usar importes:
+	•	INTERNACIONAL: 100%=72,77 | 60%=43,66 | 30%=21,83
+	•	NACIONAL: 100%=54,30 | 60%=32,58 | 30%=16,29
+
+Reglas AUTO por tipo de viaje:
+	1.	REGIONAL_INTERNACIONAL:
+	•	Si NO pernocta => INTERNACIONAL 60%
+	•	Si pernocta => INTERNACIONAL 100%
+	2.	NACIONAL_INTERNACIONAL:
+	•	Si NO pernocta => NACIONAL 60% + INTERNACIONAL 60%
+	•	Si pernocta => NACIONAL 60% + INTERNACIONAL 100%  (mantener así por defecto)
+	3.	NACIONAL:
+	•	Si NO pernocta => NACIONAL 60%
+	•	Si pernocta => NACIONAL 100%
+	4.	INTERNACIONAL:
+	•	Si NO pernocta => INTERNACIONAL 60%
+	•	Si pernocta => INTERNACIONAL 100%
+	5.	NACIONAL_REGIONAL (nuevo):
+	•	Si NO pernocta => NACIONAL 60%
+	•	Si pernocta => NACIONAL 100%
+
+Dieta MANUAL
+
+En FIN DE JORNADA debe poder activarse “Dieta manual” y elegir:
+	•	tipo: NACIONAL o INTERNACIONAL
+	•	porcentaje: 100% / 60% / 30%
+
+Debe funcionar para TODOS los casos, incluido 30% (sin fallos).
+Guardar:
+	•	dieta_manual_tipo
+	•	dieta_manual_pct (100|60|30)
+y calcular importe exacto.
+
+Guardado de dietas combinadas
+
+Para tipos con 2 dietas (ej. NACIONAL_INTERNACIONAL), guardar como lista:
+	•	tabla dietas_items: (jornada_id, tipo, pct, importe)
+y además guardar dieta_total en jornadas.
+
+D) Historial: permitir editar jornada y recalcular todo
+
+En la pantalla Historial:
+	1.	Al pulsar una jornada → botón “Editar”.
+	2.	Permitir editar:
+
+	•	fecha/hora inicio y fin
+	•	lugares
+	•	tipo viaje
+	•	pernocta
+	•	dieta manual/auto + manual tipo/pct
+
+	3.	Al guardar edición:
+
+	•	actualizar timestamps start_at, end_at
+	•	recalcular jornada_min
+	•	recalcular descanso anterior y tipo (para esa jornada y también para la siguiente, porque cambia la diferencia)
+	•	recalcular dietas (items y total)
+	•	actualizar dashboard inmediatamente.
+
+E) Dashboard (no romper lo existente)
+
+Mantener las tarjetas actuales y asegurar que:
+	•	Semana (lunes-domingo) y bisemanal (14 días) se calculan con fechas reales.
+	•	Contador de reducidos (3/semana) usa la regla adicional de jornadas > 13h.
+	•	Extensiones 10h (2/semana) se mantiene.
+
+F) Implementación y pruebas
+	1.	Añadir tests simples o un modo “debug”:
+
+	•	crear 3 jornadas demo incluyendo una que cruce medianoche
+	•	un caso con dieta manual internacional 30%
+	•	un caso NACIONAL_REGIONAL sin pernocta y con pernocta
+
+	2.	Mostrar en consola el resultado de:
+
+	•	jornada_min
+	•	rest_min
+	•	dietas_items y total
+
+No elimines funcionalidades actuales. Solo mejora lo anterior y corrige los bugs.
+Usa las variables env SUPABASE_URL y SUPABASE_ANON_KEY ya configuradas.
+
+Tip extra (para que no te vuelva a fallar lo de “30%”)

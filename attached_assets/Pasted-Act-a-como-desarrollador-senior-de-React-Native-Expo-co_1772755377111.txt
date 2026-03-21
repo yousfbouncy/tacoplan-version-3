@@ -1,0 +1,132 @@
+Actúa como desarrollador senior de React Native (Expo) con Supabase.
+
+Necesito corregir la lógica del “modo ferry” en mi app Tacoplan para que siga correctamente la normativa del tacógrafo (Reglamento CE 561/2006) sin romper la lógica actual de la jornada.
+
+CONTEXTO ACTUAL
+- La app tiene:
+  - botón "Iniciar jornada"
+  - botón "Finalizar jornada"
+- La jornada se calcula desde inicio hasta fin.
+- Existe una configuración para "Cruce en ferry".
+- Hay un botón "Descanso en ferry" que se añadirá encima de "Finalizar jornada".
+
+PROBLEMA ACTUAL
+La lógica del descanso ferry no valida correctamente si el descanso alcanza las 9h mínimas ni gestiona bien el cierre o continuidad de la jornada.
+
+OBJETIVO
+Implementar correctamente la lógica del descanso ferry según normativa.
+
+REGLAS DEL DESCANSO EN FERRY
+1. El descanso diario mínimo sigue siendo:
+   - 9 horas (reducido)
+   - 11 horas (normal)
+
+2. En ferry o tren el descanso puede interrumpirse:
+   - máximo 2 interrupciones
+   - máximo 60 minutos en total
+
+3. El descanso debe validarse así:
+
+if (rest_duration >= 9h AND interruptions <= 2 AND interruptions_total <= 60min)
+    rest_valid = true
+else
+    rest_valid = false
+
+COMPORTAMIENTO QUE DEBE IMPLEMENTARSE
+
+CUANDO EL USUARIO PULSA "DESCANSO EN FERRY"
+
+1. cerrar la jornada actual inmediatamente
+2. registrar evento ferry_rest con:
+   - start_time
+   - rest_type (9h / 11h)
+   - interruptions[]
+   - interruptions_total
+   - computed_end_time
+   - is_valid
+
+CALCULO DEL FINAL DEL DESCANSO
+
+computed_end_time = start_time + rest_required + interruptions_total
+
+VALIDACIÓN DEL DESCANSO
+
+Si rest_duration < 9h:
+    rest_valid = false
+    la jornada NO se reinicia
+    el conductor sigue en la misma jornada
+    mostrar aviso:
+    "Descanso diario no completado"
+
+Si rest_duration >= 9h:
+    rest_valid = true
+    crear nueva jornada automáticamente
+    reiniciar contadores de disponibilidad
+
+REINICIO DE JORNADA
+
+Cuando now >= computed_end_time AND rest_valid = true
+
+ejecutar:
+
+resetDrivingAvailability()
+startNewDay()
+
+IMPORTANTE
+
+NO reiniciar la jornada cuando:
+- el descanso ferry termina antes de 9h
+- hay más de 2 interrupciones
+- las interrupciones superan 60 minutos
+
+BOTÓN MODO FERRY EN UI
+
+Si user_settings.crosses_ferry = true
+
+mostrar botón:
+
+"Descanso en Ferry"
+
+encima de:
+
+"Finalizar jornada"
+
+El formulario debe pedir:
+
+- tipo descanso (9h / 11h)
+- hora inicio
+- interrupción 1 inicio/fin
+- interrupción 2 inicio/fin
+
+PERSISTENCIA (SUPABASE)
+
+Crear tabla ferry_rests:
+
+id uuid
+user_id uuid
+start_time timestamptz
+rest_type text
+interruptions jsonb
+interruptions_total int
+computed_end_time timestamptz
+is_valid boolean
+invalid_reason text
+
+RLS:
+user_id = auth.uid()
+
+REQUISITOS IMPORTANTES
+
+- No romper la lógica actual de jornadas
+- No mezclar dietas ni modo Marruecos
+- No usar API externa (solo Supabase)
+- Mantener persistencia de sesión con AsyncStorage
+
+ANTES DE IMPLEMENTAR
+
+Analiza el proyecto y responde:
+1. Qué archivos controlan la jornada
+2. Dónde añadir el botón ferry
+3. Cómo conectar el reinicio de disponibilidad con el descanso válido
+
+Después implementa los cambios.

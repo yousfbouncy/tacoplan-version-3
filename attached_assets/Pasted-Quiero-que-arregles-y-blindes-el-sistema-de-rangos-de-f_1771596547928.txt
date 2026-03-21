@@ -1,0 +1,70 @@
+Quiero que arregles y blindes el sistema de rangos de fechas de mi app para que el modo “20 al 20” funcione siempre correctamente y no vuelva a mostrar “del 20 al 20 del mismo mes” cuando debería ser “del 20 del mes actual al 20 del mes siguiente”.
+
+1) Modos de rango
+
+La app debe soportar 3 modos de rango:
+	•	AUTO_01_30 (por defecto)
+	•	AUTO_20_20
+	•	MANUAL (usuario elige día desde / día hasta)
+
+El modo elegido debe guardarse en storage local y en la nube.
+
+2) Definición exacta del rango AUTO_20_20
+
+Implementa la regla:
+	•	Si la fecha actual (o la fecha de referencia elegida en UI) tiene día >= 20:
+	•	from = día 20 del mes actual
+	•	to = día 20 del mes siguiente
+	•	Si el día es < 20:
+	•	from = día 20 del mes anterior
+	•	to = día 20 del mes actual
+
+IMPORTANTE:
+	•	to debe ser siempre del mes siguiente cuando corresponde (nunca el mismo mes).
+	•	Debe funcionar correctamente en cambios de año (diciembre → enero).
+	•	Debe funcionar correctamente con zonas horarias locales (Europa/Madrid). No usar conversiones a UTC que cambien el día.
+
+3) Inclusivo/Exclusivo (para evitar errores de filtrado)
+
+Define internamente el rango como:
+	•	from inclusivo
+	•	to exclusivo
+
+Ejemplo:
+	•	Si UI muestra “20/01/2026 – 20/02/2026”
+	•	Internamente filtra fecha >= 20/01/2026 y fecha < 20/02/2026
+
+Así se evita duplicar el día 20 final o perderlo según pantallas.
+
+En la UI, siempre muestra el rango como “desde X hasta Y” (inclusive visual), pero el filtrado debe ser consistente con el to exclusivo.
+
+4) Fuente única de verdad del rango
+
+Dietas e Historial deben consumir el rango desde un único estado global (context/store) o un único servicio de rango.
+Está prohibido recalcular rangos de forma independiente en cada pantalla.
+El texto mostrado en Dietas y en Historial debe ser exactamente el mismo para el mismo rango.
+
+5) Caso MANUAL
+
+Si el usuario elige un rango manual “día desde / día hasta”:
+	•	Normaliza fechas (sin horas) y evita errores de timezone
+	•	Si el usuario pone “hasta 20/02/2026”, internamente guarda to exclusivo como “21/02/2026 00:00” o usa una estrategia equivalente, pero debe filtrar bien.
+	•	Si el usuario invierte el rango (desde > hasta), corrígelo automáticamente.
+
+6) Verificación automática (para que no vuelva a pasar)
+
+Añade comprobaciones para detectar bugs de rango:
+	•	Si AUTO_20_20 y from y to caen en el mismo mes y mismo día, es un bug: log + fallback a la regla correcta.
+	•	Asegura que to > from siempre.
+	•	Añade tests o logs para estos casos:
+	•	Hoy = 20/02/2026 ⇒ rango “20/02/2026 – 20/03/2026”
+	•	Hoy = 19/02/2026 ⇒ rango “20/01/2026 – 20/02/2026”
+	•	Hoy = 25/12/2026 ⇒ “20/12/2026 – 20/01/2027”
+	•	Hoy = 01/01/2027 ⇒ “20/12/2026 – 20/01/2027”
+
+7) Resultado esperado
+	•	Si el usuario selecciona “AUTO_20_20”, nunca debe aparecer “20/02/2026 – 20/02/2026”.
+	•	Dietas e Historial deben mostrar y filtrar con el mismo rango.
+	•	El rango debe respetar exactamente el modo elegido (AUTO_01_30, AUTO_20_20 o MANUAL) y persistirlo.
+
+Implementa este cambio sin romper otras funcionalidades.

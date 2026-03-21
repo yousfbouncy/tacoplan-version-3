@@ -1,0 +1,120 @@
+Actúa como desarrollador senior de Expo/React Native + Supabase y modifica la lógica del modo ferry en mi app Tacoplan para simplificar el flujo.
+
+NUEVA DECISIÓN DE NEGOCIO
+La app NO es un tacógrafo oficial. Es una app de registro.
+Por tanto, quiero simplificar la lógica del ferry y evitar mezclarlo con jornadas abiertas.
+
+NUEVO FLUJO REQUERIDO
+
+1. ANTES DE INICIAR FERRY
+- El usuario debe cerrar la jornada actual manualmente al llegar al puerto.
+- Solo después de cerrar la jornada debe poder iniciar el modo ferry.
+- Si hay una jornada abierta, el botón “Iniciar ferry” debe:
+  - o bien estar deshabilitado
+  - o mostrar mensaje:
+    “Primero debes cerrar la jornada antes de iniciar el ferry”
+- No permitir ferry con jornada abierta.
+
+2. INICIO DEL FERRY
+- Una vez cerrada la jornada, el usuario pulsa “Iniciar ferry”.
+- El ferry se guarda como un evento independiente, NO dentro de la jornada.
+- start_time se pone automáticamente con la hora actual
+- permitir editar manualmente opcionalmente
+- seleccionar por defecto descanso ferry de 9h
+- ferry_mode_active = true
+
+3. DURANTE EL FERRY
+- Mantener flujo simplificado:
+  - selector 9h / 11h
+  - botón “Iniciar interrupción”
+  - botón “Finalizar interrupción”
+  - botón “Finalizar ferry”
+- Todo cálculo automático:
+  - hora fin calculada
+  - descanso acumulado calculado
+  - interrupciones totales calculadas
+- No pedir al usuario que escriba hora fin ni descanso acumulado manualmente.
+
+4. FINALIZACIÓN DEL FERRY
+CASO A — ferry válido y completado:
+- marcar ferry como “descanso válido”
+- reiniciar disponibilidad diaria
+- reiniciar conducción diaria
+- abrir una nueva jornada normal automáticamente
+- esta nueva jornada NO debe tener modo ferry activo
+- mostrar mensaje:
+  “Descanso ferry completado. Nueva jornada iniciada.”
+
+CASO B — ferry no completado:
+- marcar ferry como “incompleto” o “inválido”
+- no reiniciar disponibilidad
+- no abrir nueva jornada automática
+- dejar el siguiente paso manual al usuario
+
+5. HISTORIAL
+Corregir el posicionamiento visual del ferry en Historial.
+
+ORDEN CORRECTO:
+- primero la jornada cerrada antes del ferry
+- después el evento ferry
+- después la nueva jornada abierta tras ferry válido
+
+El ferry no debe aparecer desordenado ni separado de forma confusa como ahora.
+
+FORMATO DE HISTORIAL
+Cada ferry debe verse como bloque independiente:
+- icono ferry
+- descanso elegido 9h/11h
+- hora inicio → hora fin
+- estado:
+  - descanso válido
+  - descanso incompleto
+  - inválido
+- no mostrar textos como:
+  - “jornada anterior reanudada”
+  - ni cálculos confusos de descanso anterior
+si ya no existe lógica de ferry dentro de jornada abierta
+
+6. VALIDACIÓN DE DESCANSO ANTERIOR
+Como el ferry ahora será un evento separado entre dos jornadas:
+- si el ferry fue válido y completado, debe considerarse descanso anterior válido para la nueva jornada
+- no debe aparecer falsa infracción de “descanso anterior inferior a 9h”
+- la nueva jornada debe heredar:
+  - previous_rest_source = ferry_rest
+  - previous_rest_valid = true
+  - previous_rest_minutes = descanso ferry válido
+
+7. DASHBOARD
+- Si no hay jornada cerrada, no permitir iniciar ferry
+- Si ferry_mode_active = true, mostrar tarjeta visible:
+  - Ferry activo
+  - hora inicio
+  - fin estimado
+  - interrupciones
+  - estado
+- Cuando ferry termina válidamente y se crea nueva jornada, ocultar tarjeta ferry y mostrar jornada nueva normal
+
+8. IMPLEMENTACIÓN TÉCNICA
+Analiza primero:
+- archivos de Dashboard
+- Historial
+- lógica de jornadas
+- lógica de validación de descanso anterior
+- lógica que crea nueva jornada
+Luego implementa:
+- ferry solo después de cerrar jornada
+- ferry como evento independiente
+- nueva jornada automática al completar ferry válido
+- orden visual correcto en historial
+
+9. VERIFICACIONES OBLIGATORIAS
+Añadir comprobaciones para validar:
+- no se puede iniciar ferry con jornada abierta
+- al cerrar jornada, ya se puede iniciar ferry
+- ferry válido crea nueva jornada normal
+- ferry válido no genera falsa infracción de descanso anterior
+- historial muestra orden correcto: jornada anterior → ferry → nueva jornada
+- ferry no queda visualmente mal colocado
+
+Primero explica el plan de cambios por archivos.
+Después implementa.

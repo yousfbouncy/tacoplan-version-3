@@ -1,0 +1,109 @@
+OBJETIVO: Arreglar y mejorar Tacoplan (React Native + Expo). No refactors grandes: cambios concretos y seguros. Mantener el comportamiento actual.
+
+1) DESCANSO ANTERIOR: calcularlo al INICIAR jornada (no al cerrar)
+- Cuando el usuario pulsa "Iniciar Jornada":
+  a) buscar la última jornada cerrada del usuario (tiene endAt).
+  b) calcular prevRestMinutes = diffMinutes(last.endAt, new.startAt). Si no hay last, prevRestMinutes = null.
+  c) clasificar prevRestMinutes:
+     - < 540 => INFRACCION_DESCANSO
+     - 540..659 => DESCANSO_DIARIO_REDUCIDO
+     - 660..1439 => DESCANSO_DIARIO_NORMAL
+     - 1440..2699 => DESCANSO_SEMANAL_REDUCIDO
+     - >= 2700 => DESCANSO_SEMANAL_COMPLETO
+  d) guardar prevRestMinutes y prevRestType dentro de la nueva jornada (journey.prevRestMinutes, journey.prevRestType).
+  e) el conteo semanal de descansos reducidos (3/semana) se incrementa cuando prevRestType sea DESCANSO_DIARIO_REDUCIDO.
+  f) IMPORTANTE: la semana es LUNES->DOMINGO (ISO week). El contador se calcula por fecha de inicio de la jornada (startAt).
+
+2) PLAN DE HOY al INICIAR (conducción disponible, disponibilidad, límites)
+Al iniciar jornada (o al entrar al Dashboard si hay jornada abierta), mostrar “Plan de hoy” calculado con:
+- Restante semanal (56h) y bisemanal (90h) en minutos.
+- Extensiones 10h usadas esta semana (máx 2). Semana Lunes-Domingo.
+- Descansos reducidos usados esta semana (máx 3). Semana Lunes-Domingo.
+- Disponibilidad máxima de jornada HOY:
+   * Por defecto 13h (si descanso diario NORMAL previo >=11h)
+   * Si el descanso previo fue reducido (9-11h) o se considera reducido por haber superado 13h en la jornada anterior, entonces disponibilidad máxima hoy = 15h.
+   * Guardar en cada jornada el "dayMaxDutyMinutes" (13h o 15h) para consistencia histórica.
+- Conducción disponible HOY:
+   * Base 9h, o 10h solo si aún quedan extensiones (used10h < 2).
+   * Además, no permitir que la conducción disponible supere lo que queda de semanal o bisemanal.
+   * Regla final:
+       todayDrivingCap = min( (used10h < 2 ? 600 : 540), remainingWeekly, remainingBiweekly )
+   * Mostrar en UI:
+       - “Conducción disponible hoy: Xh Ym”
+       - “Extensión 10h disponible: Sí/No (usadas a/b)”
+- “Hora límite recomendada”:
+   * startAt + dayMaxDutyMinutes.
+   * Mostrar HH:MM y si cruza al día siguiente “(+1d)”.
+
+BUG A ARREGLAR (IMPORTANTE):
+Actualmente cuando used10h = 2/2 todavía muestra 10h disponible.
+=> Arreglar para que si used10h >= 2, el cap sea 9h (540 min). No mostrar “10h” en ningún caso.
+
+3) CONTADORES SEMANALES CORRECTOS (Lunes-Domingo)
+Implementar helper:
+- getWeekStart(date): lunes 00:00 local (o en UTC pero consistente en toda la app).
+- getWeekEnd(date): domingo 23:59:59.
+Para:
+- used10hThisWeek: contar jornadas de esa semana donde drivingMinutes >= 600 (o un flag saved like used10h=true al cerrar).
+- usedReducedDailyRestsThisWeek: contar jornadas de esa semana donde prevRestType == DESCANSO_DIARIO_REDUCIDO.
+IMPORTANTE: no reiniciar por “día” sino por semana ISO.
+
+4) INPUT HORAS CONDUCCIÓN: permitir “9:30” y teclado correcto
+Problema: en iOS no aparecen “:” y el usuario no puede escribir “9:30”.
+Cambios:
+- En el campo “Horas conducción” permitir formatos:
+   - “9” => 9h00
+   - “9.5” => 9h30
+   - “9,5” => 9h30
+   - “9:30” => 9h30
+- Implementar parseDrivingInputToMinutes(text):
+   * trim, reemplazar coma por punto.
+   * si incluye “:” => split hh:mm (mm 0-59) => minutes.
+   * si decimal => hoursFloat => minutes = round(hoursFloat*60).
+   * si entero => hours*60.
+   * si vacío => null (auto).
+- UI/Keyboard:
+   * usar keyboardType="numbers-and-punctuation" (iOS) y "numeric" (Android) o directamente "default" si RN no permite. Priorizar que pueda escribir ":".
+   * opcional: añadir un botón “:” junto al input (pequeño) que inserte ":" en la posición actual.
+- Guardar siempre drivingMinutes como número (minutos) en DB.
+
+5) MODAL / RESULTADO CIERRE JORNADA: habilitar SCROLL
+Ahora el usuario no puede desplazarse y no llega a los botones.
+Arreglar:
+- Envolver el contenido completo del modal/pantalla de “Resultado análisis legal / Plan de descanso” en:
+   <View style={{flex:1}}>
+     <ScrollView style={{flex:1}} contentContainerStyle={{padding:16,paddingBottom:48}}>
+        ...
+     </ScrollView>
+   </View>
+- Si hay teclado, usar KeyboardAvoidingView.
+- Asegurar que los botones de seleccionar descanso diario/semanal quedan accesibles siempre.
+- Si existe footer fijo, usar paddingBottom suficiente.
+
+6) MOSTRAR DISPONIBILIDAD AL INICIAR
+En “Plan de hoy” añadir línea:
+- “Disponibilidad hoy: 13h” o “15h” (según dayMaxDutyMinutes).
+Y debajo:
+- “Hora límite recomendada: HH:MM (+1d)”
+
+7) NO CAMBIAR DIETAS HISTÓRICAS
+Confirmar comportamiento:
+- Cuando una jornada se guarda, se guarda en la jornada:
+   * dietaBaseApplied
+   * dietaExtraApplied
+   * dietaTotalApplied
+   * tarifasSnapshot (opcional)
+- Si luego el usuario cambia tarifas en Config, no recalcular jornadas pasadas. Solo futuras.
+Mantener esto tal cual; si algo recalcula, corregirlo.
+
+ENTREGABLES:
+- Cambios de código listos funcionando.
+- Añadir helpers reutilizables (date/week, parseDrivingInputToMinutes, diffMinutes).
+- Actualizar UI del Dashboard y del modal de cierre con las líneas nuevas.
+
+VALIDACIONES RÁPIDAS (tests manuales):
+A) used10h=2/2 en semana => al iniciar jornada mostrar conducción disponible 9h (no 10h).
+B) Descanso anterior se ve al iniciar jornada (no esperar al cierre).
+C) Modal de cierre se puede desplazar hasta el final en iPhone.
+D) Input horas acepta “9:30” y se guarda como 570 min.
+E) Plan de hoy muestra disponibilidad (13h o 15h) y hora límite recomendada.

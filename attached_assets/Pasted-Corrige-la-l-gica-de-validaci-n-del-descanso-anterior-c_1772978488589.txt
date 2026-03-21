@@ -1,0 +1,53 @@
+Corrige la lógica de validación del “descanso anterior” cuando una nueva jornada se crea después de un descanso ferry válido.
+
+PROBLEMA ACTUAL
+Ahora la app hace esto:
+- la jornada anterior permanece abierta durante el ferry
+- al completar el ferry se cierra la jornada anterior
+- se abre una nueva jornada
+- luego la validación calcula el “descanso anterior” usando solo:
+  previous_journey.end_time -> new_journey.start_time
+Esto produce una falsa infracción de descanso inferior a 9h, aunque el descanso ferry sí fue completado correctamente.
+
+COMPORTAMIENTO CORRECTO
+Si un descanso ferry se completa válidamente:
+- ese descanso ferry debe convertirse en la fuente oficial del “descanso anterior” para la nueva jornada
+- NO debe calcularse el descanso anterior usando solo la diferencia entre timestamps de jornadas
+
+IMPLEMENTAR
+1. Añadir a la jornada nueva estos campos:
+   - previous_rest_source: "normal_gap" | "ferry_rest"
+   - previous_rest_id
+   - previous_rest_minutes
+   - previous_rest_valid
+   - previous_rest_type
+
+2. Cuando un ferry válido completa el descanso:
+   - cerrar la jornada anterior
+   - abrir nueva jornada
+   - asignar:
+     previous_rest_source = "ferry_rest"
+     previous_rest_id = ferryRest.id
+     previous_rest_minutes = ferryRest.valid_rest_minutes
+     previous_rest_valid = true
+     previous_rest_type = ferryRest.rest_type
+
+3. En la lógica de validación del descanso anterior:
+   - si previous_rest_source === "ferry_rest":
+       usar ferryRest como descanso anterior oficial
+       NO calcular gap entre jornadas
+   - si no:
+       mantener lógica actual basada en diferencia entre jornadas
+
+4. En Historial:
+   - no mostrar aviso “Descanso anterior inferior a 9h” si la jornada fue precedida por un ferry válido
+   - mostrar en su lugar:
+     “Descanso anterior realizado en ferry”
+     o usar estado legal normal
+
+5. Mantener el comportamiento actual solo para jornadas normales, sin romper nada más.
+
+Antes de implementar:
+- analiza dónde se calcula actualmente previous_rest
+- identifica dónde se crean nuevas jornadas tras ferry
+- corrige ambos puntos

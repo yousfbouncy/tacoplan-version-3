@@ -1,0 +1,105 @@
+Actúa como un desarrollador senior Expo/React Native + Supabase. 
+Necesito CORREGIR la lógica de mi app Tacoplan (sin romper el modo por defecto). 
+
+CONTEXTO ACTUAL
+- La app tiene: botón “Iniciar jornada” y un formulario/botón “Finalizar jornada”.
+- Hay un formulario de dietas por defecto (modo España).
+- Existe una configuración para “Conductor Marruecos” y “Cruce en ferry”, pero ahora NO cambia la UI ni la lógica al activarlo.
+
+OBJETIVO PRINCIPAL
+1) Por defecto: la app sigue como está (España: dietas normales + jornada).
+2) Si en Configuración se activa “Conductor Marruecos”, la app debe ADAPTARSE:
+   - Cambiar formularios/etiquetas según “forma de pago” elegida.
+   - Desaparece el formulario de dietas por defecto si el modo NO usa dietas.
+3) Corregir “Modo Ferry”:
+   - Debe aparecer como un botón NUEVO encima de “Finalizar jornada”.
+   - Al usarlo, debe sincronizarse con el contador/estado de la jornada.
+   - Debe validar descanso ferry (interrupciones <=2 y total <=60 min).
+   - Cuando el descanso ferry completa mínimo 9h (o 11h según elección) se reinicia la disponibilidad (nuevo día) sin “romper” el histórico de la jornada.
+   - Evitar errores con “fin de jornada e inicio” (no duplicar eventos, no dejar sesiones abiertas).
+
+REQUISITOS EXACTOS DE CONFIGURACIÓN → UI ADAPTATIVA
+- Crear/usar un estado global `driver_profile` que viene de Supabase (user_settings) y también se cachea localmente.
+- Campos mínimos:
+  - route_mode: "spain" | "morocco"   (default "spain")
+  - payment_mode: 
+      "spain_diet" (default)
+      "morocco_trip"
+      "morocco_pernight"
+      "morocco_diet"
+  - crosses_ferry: boolean (default false)
+  - ferry_rest_enabled: boolean (default false)
+  - trip_rate: number nullable
+  - pernight_rate: number nullable
+
+LÓGICA DE CAMBIO DE UI (OBLIGATORIA)
+- Si route_mode="spain" y payment_mode="spain_diet": mantener formulario dietas actual.
+- Si route_mode="morocco" y payment_mode="morocco_trip":
+   - OCULTAR COMPLETAMENTE formulario dietas por defecto.
+   - Mostrar formulario “Viaje” (fecha, ida/vuelta/completo opcional, importe por defecto trip_rate editable).
+- Si route_mode="morocco" y payment_mode="morocco_pernight":
+   - OCULTAR dietas por defecto.
+   - Mostrar formulario “Pernocta” (nº pernoctas o toggle “he dormido fuera” + importe por defecto pernight_rate editable).
+- Si route_mode="morocco" y payment_mode="morocco_diet":
+   - Usar dietas como España (puede cambiar etiquetas, pero misma lógica).
+
+CORRECCIÓN MODO FERRY (OBLIGATORIA)
+- En pantalla principal de jornada:
+  - Si crosses_ferry=true:
+     - añadir botón “Descanso en Ferry” encima de “Finalizar jornada”.
+  - Al pulsar “Descanso en Ferry” abrir modal/pantalla con:
+     - selector descanso: 9h o 11h (default 9h)
+     - start_time (autofill = ahora, editable)
+     - interrupción 1 start/end (opcional)
+     - interrupción 2 start/end (opcional)
+     - botón “Validar y Guardar”
+- Validación:
+  - max 2 interrupciones
+  - total interrupciones <= 60 min
+  - no permitir end < start
+- Cálculo:
+  - rest_required = 9h o 11h
+  - computed_end = start_time + rest_required + total_interruptions
+  - is_valid true/false + invalid_reason
+
+REINICIO DE DISPONIBILIDAD (CUANDO SE COMPLETA EL DESCANSO)
+- Cuando se detecte que `now >= computed_end` y el descanso ferry es válido:
+  - Reiniciar contadores de disponibilidad para “nuevo día” (lo que tu app llame “disponibilidad”).
+  - Crear un nuevo “day session” o “jornada lógica” SIN borrar histórico.
+  - No debe depender de que el usuario pulse “Finalizar jornada”.
+  - Debe quedar registro del descanso ferry que causó el reinicio.
+
+IMPORTANTE: NO MEZCLAR NI ROMPER LA JORNADA EXISTENTE
+- La app actualmente calcula “contador de la jornada” desde inicio hasta fin.
+- Con ferry, NO debe provocar que se pierda ese contador histórico, pero sí debe iniciar una nueva disponibilidad (nuevo bloque) al completarse el descanso.
+- Implementar concepto de:
+   - `work_session` (inicio/fin de jornada que el usuario ve)
+   - `availability_block` (bloque de disponibilidad que puede reiniciarse por descanso válido)
+  Si ya existe algo similar, reutilizarlo. Si no existe, crearlo mínimamente.
+
+PERSISTENCIA (SUPABASE)
+- Guardar:
+  - user_settings (perfil conductor)
+  - ferry_rests (eventos descanso ferry)
+  - trips o pernoctas (si modo Marruecos)
+- RLS: user_id = auth.uid() en todas.
+
+ENTREGABLE
+1) Señalar por qué ahora NO cambia la UI al activar Marruecos y dónde corregirlo (state management, hooks, navegación).
+2) Implementar cambio de UI según `payment_mode`.
+3) Implementar botón “Descanso en Ferry” + validación + cálculo + guardado.
+4) Implementar reinicio de disponibilidad cuando el descanso válido se completa (>= 9h/11h).
+5) Añadir pruebas rápidas o logs para verificar:
+   - modo spain_diet sigue igual
+   - morocco_trip oculta dietas y muestra viajes
+   - morocco_pernight oculta dietas y muestra pernoctas
+   - descanso ferry: valida, calcula fin, y al cumplirse reinicia disponibilidad
+
+RESTRICCIONES
+- No usar Replit ni EXPO_PUBLIC_API_URL.
+- App debe usar Supabase directo (EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY) con sesión persistente (AsyncStorage).
+- No pedir confirmaciones: implementa y deja funcionando.
+- Si falta un dato, asume defaults razonables y documenta en comentarios.
+
+Primero: analiza estructura actual del proyecto y enumera qué archivos tocarás.
+Luego: implementa cambios.

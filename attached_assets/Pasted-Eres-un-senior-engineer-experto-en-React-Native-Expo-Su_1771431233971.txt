@@ -1,0 +1,106 @@
+Eres un senior engineer experto en React Native + Expo + Supabase. 
+Tengo una app llamada “Tacoplan” ya funcionando (Dashboard / Historial / Dietas / Usuario). 
+NO quiero reescribir la app ni cambiar UI principal. Quiero añadir mejoras legales (EU 561/2006) y mantener compatibilidad con lo actual.
+
+OBJETIVO
+Implementa un “Motor Legal” (legalEngine) y conéctalo a:
+1) Cierre de jornada (fin jornada)
+2) Inicio de jornada
+3) Dashboard (panel legal)
+
+RESTRICCIONES
+- No rompas el flujo actual: iniciar jornada → cerrar jornada → guardar → aparece en historial y dietas.
+- Si falta algún dato, usa defaults seguros y muestra avisos en UI.
+- Mantén el estilo actual (chips/botones) y añade solo componentes necesarios.
+- Cálculos deben funcionar aunque la jornada cruce medianoche (ej: 15/02 22:30 a 16/02 01:30 = 3h).
+
+DATOS EXISTENTES (ASUME)
+- Jornada tiene: startDate, startTime, startPlace, endDate, endTime, endPlace, drivingMinutes (o input horas conducción), tripType, pernocta (bool), dietaMode (auto/manual), dietaPercent (100/60/30), specialDay (auto/sab/dom/fest), restPrevMinutes (descanso anterior).
+- En Dashboard ya se muestra: conduccion semana, bisemanal, extensiones 10h usadas, descansos reducidos usados, pendientes compensación (si existe).
+
+NUEVAS FUNCIONALIDADES A IMPLEMENTAR
+
+A) RESULTADO LEGAL AL CERRAR JORNADA (MODAL)
+Cuando el usuario pulse “Cerrar Jornada” y se vaya a guardar:
+1) Calcula automáticamente:
+   - Duración total de jornada (serviceMinutes) = diferencia startDateTime → endDateTime, soporta cruce de día.
+   - Conducción del día (drivingMinutes) si el usuario lo deja vacío: intenta estimar por defecto = min(serviceMinutes, 9h) y muestra que es estimación (pero respeta si lo introduce manual).
+2) Detecta si hoy ha sido “Extensión 10h”:
+   - Se considera extensión si drivingMinutes > 9h y <= 10h.
+   - Contador máximo 2 por semana (lunes-domingo). 
+3) Calcula “Descanso recomendado hoy” (postShiftRestRecommendation):
+   - Si ya usó 3 descansos reducidos (9-11h) esta semana → SOLO permite recomendar 11h.
+   - Si le quedan reducidos disponibles → permitir seleccionar 9h o 11h.
+4) UI del modal de resultado legal:
+   - Texto: “Resultado legal”
+   - Mostrar: conduccion semanal actualizada, conduccion bisemanal actualizada
+   - Mostrar: extensiones 10h usadas esta semana (x/2)
+   - Mostrar: descansos reducidos usados esta semana (x/3)
+   - Mostrar ALERTA BISENMANAL si restante bisemanal < 10h: “⚠️ Te quedan menos de 10h para el límite bisemanal (90h)”.
+   - Mostrar selector descanso “Hoy haré: [11h] [9h]” (9h solo si quedan reducidos).
+   - Al seleccionar descanso, mostrar:
+     - “Podrás arrancar a las: HH:MM”
+     - “Mañana tendrás disponibilidad: Xh (13h o 15h según si descanso es 11h o 9h)”
+     - “Mañana podrás conducir: 9h (o 10h si aún quedan extensiones disponibles)”
+   - Botones: “Guardar jornada” (persistir) y “Cancelar”.
+
+Reglas disponibilidad (simplificadas y consistentes con tu lógica actual):
+- Si el descanso elegido es 11h → disponibilidad máxima mañana = 13h
+- Si el descanso elegido es 9h → disponibilidad máxima mañana = 15h
+(Esto es lo que ya estás aplicando en tu sistema.)
+
+B) PANEL AL INICIAR JORNADA
+Cuando el usuario pulse “Iniciar Jornada”:
+1) Antes de guardar, muestra un resumen arriba del botón “Guardar inicio”:
+   - “Hoy puedes conducir: 9h (o 10h si te quedan extensiones)”
+   - “Debes terminar la jornada antes de: HH:MM” (hora límite de fin de servicio dentro del ciclo de disponibilidad)
+   - “Restante semanal: XXh (56h - conduccion semana actual)”
+   - “Restante bisemanal: XXh (90h - conduccion 2 semanas)”
+2) IMPORTANTE: si hoy es LUNES, el contador de extensiones y descansos reducidos debe mostrarse reseteado (0/2 y 0/3), pero los cálculos deben usar semana lunes-domingo.
+
+C) MOTOR LEGAL (legalEngine)
+Crea un módulo /lib/legalEngine.ts con funciones puras (sin UI):
+- getWeekKey(date): devuelve una clave tipo YYYY-WW con semana lunes-domingo.
+- getWeekRange(date): mondayStart, sundayEnd
+- sumDrivingInWeek(journeys, date): minutos
+- sumDrivingBiweekly(journeys, date): minutos (semana actual + anterior)
+- count10hExtensionsInWeek(journeys, date): número de días con drivingMinutes > 9h (y <= 10h)
+- countReducedDailyRestsInWeek(journeys, date): número de descansos reducidos detectados (9-11h) en esa semana.
+  REGLA ESPECIAL: si una jornada tuvo serviceMinutes > 13h (o > 13h20 si tienes esa regla) entonces el descanso posterior debe contarse como “reducido” aunque el usuario haga 11h. 
+  Implementa esto como: markRestAsReducedIfServiceExceeded = true.
+- calcRestStartEnd(endDateTime, chosenRestHours): devuelve startRest, endRest (arranque = end + rest).
+- calcTomorrowAvailability(chosenRestHours): 13h si 11h, 15h si 9h.
+- calcTomorrowDriveCap(extensionsUsed, restReducedUsed): por defecto 9h, y si extensionsUsed < 2 permitir 10h como “opción disponible”.
+
+D) ALERTAS
+- En cierre jornada: si conducción semanal > 56h → rojo “INFRACCIÓN”
+- si bisemanal > 90h → rojo “INFRACCIÓN”
+- si restante bisemanal < 10h → warning amarillo
+- si extensionesUsed > 2 → rojo
+- si reducedRestsUsed > 3 → rojo
+
+E) PERSISTENCIA
+- No guardar el descanso elegido como jornada nueva, pero sí guardar en la jornada:
+  - legalSummary: { weeklyDrivingMin, biweeklyDrivingMin, extensionsUsed, reducedRestsUsed, chosenRestHours, nextStartTime, tomorrowAvailabilityHours, tomorrowDriveCapHours, alerts[] }
+Esto permitirá mostrarlo luego en historial.
+
+F) HISTORIAL (MEJORA PEQUEÑA)
+En la tarjeta de la jornada cerrada, añade una línea pequeña:
+- “Próximo arranque: HH:MM · Mañana: disp Xh · cond Yh”
+
+IMPLEMENTACIÓN
+1) Localiza el componente/pantalla donde se cierra jornada (fin de jornada).
+2) Inserta el modal “Resultado legal” antes de persistir.
+3) Localiza el componente/pantalla de inicio de jornada y añade el resumen calculado antes de guardar.
+4) Añade legalEngine.ts y tests básicos (aunque sea con logs).
+5) Asegura que los cálculos usan fechas correctas y soportan cruce medianoche.
+
+IMPORTANTE SOBRE FECHAS/HORAS
+- Usa Date ISO con timezone local.
+- Convierte startDate+startTime y endDate+endTime a Date.
+- Si endDate está vacío, asumir mismo día; si endTime < startTime, asumir día siguiente (pero si hay endDate explícito, respétalo).
+
+ENTREGABLE
+- Archivos modificados + nuevos módulos
+- Explicación breve en comentarios de cómo funciona el motor legal
+- No cambies visual general, solo añade lo pedido.

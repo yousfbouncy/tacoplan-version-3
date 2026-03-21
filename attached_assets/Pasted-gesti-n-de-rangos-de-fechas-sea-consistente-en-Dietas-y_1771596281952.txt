@@ -1,0 +1,49 @@
+gestión de rangos de fechas sea consistente en Dietas y Historial y para añadir un flujo de configuración inicial del periodo cuando el usuario entra por primera vez.
+
+1) Rango por defecto (modo automático)
+	•	El rango por defecto del sistema debe ser del día 01 al día 30 (o hasta el último día del mes si el mes no tiene 30; es decir, si el mes tiene 31, el rango por defecto sigue siendo 01→30, y si tiene 28/29, el rango será 01→último día del mes).
+	•	El rango automático debe recalcularse cuando cambia el mes, sin romper el rango manual.
+
+2) Rango manual (selector “Día desde” / “Día hasta”)
+	•	Mantén el selector manual de rango que ya existe.
+	•	Asegura que el rango manual se aplica igual en todas las pantallas (Dietas e Historial) y que ambas usan exactamente la misma fuente de verdad (estado global o storage), sin recalcular por separado.
+	•	Aclara si el rango es inclusivo o exclusivo internamente, pero a nivel visual debe mostrarse como “desde X hasta Y” inclusivo.
+
+3) Persistencia y fuente única de verdad
+	•	Debe existir una configuración única del rango seleccionada por el usuario:
+	•	rangeMode: AUTO o MANUAL
+	•	rangeFrom
+	•	rangeTo
+	•	Esta configuración debe guardarse en storage local y (si existe backend) en la nube asociado al usuario.
+	•	Dietas e Historial deben leer siempre de esa misma configuración, nunca recalcular rangos cada pantalla por su cuenta.
+	•	Si hay conflicto entre nube y local, la nube debe tener prioridad (salvo si la nube está vacía).
+
+4) Mejora: configuración inicial (primer uso)
+
+Quiero que cuando un usuario se registra por primera vez y:
+	•	no hay datos del usuario en la nube (config vacía / no existe documento de configuración),
+	•	y tampoco hay configuración guardada en storage local,
+entonces la app muestre un flujo obligatorio de “Configuración inicial del periodo”.
+
+Este flujo debe:
+	•	Mostrar una pantalla o modal “Configura tu periodo por defecto”
+	•	Ofrecer al usuario elegir:
+	•	Modo AUTO con rango fijo 01→30 (por defecto)
+	•	o MANUAL seleccionando “día desde” y “día hasta”
+	•	Guardar esa configuración en local y en nube
+	•	Después redirigir al Dashboard y ya usar ese rango en Dietas e Historial
+
+5) Comportamientos esperados
+	•	Si el usuario elige AUTO: siempre se muestra el rango del mes actual (01→30 o 01→último día si no hay 30).
+	•	Si el usuario elige MANUAL: se respeta su rango elegido hasta que lo cambie.
+	•	Al entrar en Dietas o Historial, el rango mostrado debe ser exactamente el mismo y nunca debe aparecer un rango incorrecto como “20/01/2026 al 20/01/2026”.
+	•	Si el usuario cierra sesión y vuelve a entrar, debe mantenerse su configuración sin volver a pedirla (a menos que no exista en ninguna parte).
+
+6) Entregables
+	•	Ajusta la app para implementar este flujo y corrige la lógica de rangos.
+	•	Asegura que el rango se muestra y filtra correctamente en Dietas e Historial.
+	•	Añade pruebas simples o logs para verificar:
+	•	“primer uso sin config” => muestra setup
+	•	“ya hay config” => no muestra setup
+	•	“AUTO” => rango correcto 01→30/fin de mes
+	•	“MANUAL” => respeta fechas seleccionadas

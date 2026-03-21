@@ -1,0 +1,107 @@
+Eres un desarrollador senior Expo/React Native con Supabase. 
+Quiero implementar una mejora en mi app Tacoplan con estas reglas:
+
+OBJETIVO
+- La app por defecto se mantiene EXACTAMENTE igual (modo España / dietas normales).
+- Añadir en Configuración un apartado “Cruce en ferry / fronteras” que al activarlo adapte la app:
+  1) Modo Ferry: cálculo de descanso diario en ferry con interrupciones.
+  2) Modo Marruecos: opción de forma de pago (por viaje / por pernocta / por dieta).
+- No debe mezclarse el cálculo de España con Marruecos. El usuario elige el modo y la app cambia formularios y cálculos.
+
+REQUISITOS DE DISEÑO
+1) Configuración (Settings)
+   - Nuevo bloque “Perfil del conductor”
+     - toggle: “Cruzo en ferry” (default OFF)
+     - si ON: mostrar selector “Ruta principal”:
+        a) “Europa/España (convenio)” (default)
+        b) “España–Marruecos”
+     - si selecciona “España–Marruecos” mostrar:
+        - selector “Forma de pago” (radio):
+           1) Por viaje (trip)
+           2) Por pernocta (pernight)
+           3) Por dieta (diet)  [usa dietas como el modo España]
+        - campos según opción:
+           - si “Por viaje”: precio_por_viaje (number)
+           - si “Por pernocta”: precio_por_pernocta (number)
+           - si “Por dieta”: reutilizar precios de dieta actuales (sin cambios)
+     - si “Cruzo en ferry” ON, mostrar además:
+        - toggle “Hago descanso diario dentro del ferry” (default OFF)
+        - si ON: activar “Modo descanso ferry” en la app.
+
+2) Lógica de descanso ferry
+   - Nuevo tipo de descanso: Ferry Daily Rest
+   - Input: hora inicio descanso, tipo descanso (9h o 11h), hasta 2 interrupciones (embarque/desembarque) con inicio/fin
+   - Validación:
+       - max 2 interrupciones
+       - suma interrupciones <= 60 minutos
+   - Cálculo:
+       end_time = start_time + (9h o 11h) + total_interrupciones
+   - La app debe mostrar “Válido/No válido” con motivo y guardar todos esos datos.
+   - Importante: evitar errores de fin de jornada e inicio: si el usuario cambia de actividad, la app debe cerrar la anterior y abrir la nueva como ya hace actualmente.
+
+3) Adaptación de la app según modo de pago (sin mezclar)
+   - Definir una variable global “payment_mode”:
+       - "spain_diet" (default)
+       - "morocco_trip"
+       - "morocco_pernight"
+       - "morocco_diet"
+   - Si payment_mode es morocco_trip:
+       - ocultar cálculos de dietas por horas/porcentaje
+       - mostrar formulario sencillo de “Viaje Marruecos” con:
+           - fecha
+           - origen/destino (opcional)
+           - estado (ida, vuelta, completo) (opcional)
+           - importe = precio_por_viaje (editable)
+       - sumar por mes/periodo en resumen.
+   - Si morocco_pernight:
+       - detectar pernocta (o permitir marcar “he dormido fuera”)
+       - total = nº pernoctas * precio_por_pernocta
+   - Si morocco_diet:
+       - comportarse como spain_diet (sin cambios), solo cambia etiquetas a “Internacional Marruecos” si quieres.
+
+4) Persistencia (Supabase) y sincronización
+   - Todo se guarda por usuario (auth.uid) con RLS.
+   - Guardar preferencias de configuración en una tabla user_settings (1 fila por usuario):
+       - user_id uuid pk
+       - crosses_ferry boolean
+       - route_mode enum ("spain","morocco")
+       - payment_mode enum ("spain_diet","morocco_trip","morocco_pernight","morocco_diet")
+       - trip_rate numeric
+       - pernight_rate numeric
+       - ferry_rest_enabled boolean
+   - Guardar eventos de descanso ferry en una tabla ferry_rests:
+       - id uuid pk
+       - user_id uuid
+       - start_time timestamptz
+       - rest_type text ("9h"|"11h")
+       - interruption1_start/ end timestamptz nullable
+       - interruption2_start/ end timestamptz nullable
+       - interruption_total_minutes int
+       - computed_end_time timestamptz
+       - is_valid boolean
+       - invalid_reason text nullable
+   - RLS:
+       - SELECT/INSERT/UPDATE/DELETE where user_id = auth.uid()
+
+5) UI/UX
+   - Por defecto no se muestra nada de Marruecos ni ferry si el toggle está OFF.
+   - En Configuración todo debe quedar claro y con textos cortos.
+   - En pantallas de resumen, mostrar según modo:
+       - España: dietas como siempre
+       - Marruecos: “Viajes” o “Pernoctas” según forma de pago
+       - Ferry: mostrar si el descanso ferry fue válido y la hora final calculada.
+
+ENTREGABLE
+- Implementa los cambios completos:
+  - migraciones SQL para Supabase (create table + policies)
+  - cambios en frontend (settings screen, state management, forms)
+  - funciones de cálculo (ferry rest validation & compute)
+  - asegurar que no se rompe nada existente
+  - añade tests simples o logs de verificación si hay.
+- No introduzcas dependencia de Replit ni EXPO_PUBLIC_API_URL. La app debe usar Supabase directo y AsyncStorage para sesión.
+
+Antes de escribir código:
+- analiza estructura actual del proyecto
+- identifica dónde están settings, modelos, cálculos de dietas y resúmenes
+- propone un plan de cambios en 6-10 bullets
+Luego implementa.

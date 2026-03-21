@@ -1,0 +1,95 @@
+Necesito corregir el sistema de dietas de mi app Tacoplan (React Native + Expo + Supabase).
+
+PROBLEMA ACTUAL
+Ahora mismo las dietas de jornadas antiguas cambian cuando el usuario modifica las tarifas en Configuración. Esto NO debe ocurrir.
+
+OBJETIVO
+Cada jornada debe guardar un “snapshot” (foto congelada) del cálculo de dieta en el momento exacto en que se cierra la jornada. 
+Las tarifas configurables solo deben afectar a jornadas FUTURAS, nunca a jornadas pasadas.
+
+REQUISITO CLAVE
+El historial debe ser INMUTABLE por defecto.
+
+IMPLEMENTACIÓN OBLIGATORIA
+
+1) MODIFICAR TABLA JOURNEYS (Supabase)
+Añadir columnas nuevas:
+
+diet_base_eur numeric default 0
+diet_extra_eur numeric default 0
+diet_total_eur numeric default 0
+diet_percent int
+diet_scope text
+diet_rule text
+diet_calculated_at timestamptz
+
+Estas columnas serán el snapshot permanente.
+
+2) CUANDO SE CIERRA UNA JORNADA
+En el momento de pulsar “Guardar jornada”:
+
+- Leer las tarifas actuales del usuario (tabla diet_rates y day_extras)
+- Calcular la dieta completa:
+  base + extra_día (sábado/domingo/festivo)
+- Guardar el resultado FINAL dentro de la jornada:
+
+diet_base_eur = importe base
+diet_extra_eur = recargo día
+diet_total_eur = suma final
+diet_percent = 100/60/30
+diet_scope = NACIONAL o INTERNACIONAL
+diet_rule = texto explicativo (ejemplo: "NACIONAL 60% + DOMINGO")
+diet_calculated_at = now()
+
+IMPORTANTE:
+El cálculo debe hacerse SOLO al cerrar jornada.
+NO debe recalcularse automáticamente nunca más.
+
+3) MOSTRAR HISTORIAL
+El historial y la pantalla Dietas deben leer SIEMPRE:
+
+journeys.diet_total_eur
+
+NO deben volver a consultar diet_rates ni recalcular.
+
+4) CAMBIAR TARIFAS EN CONFIGURACIÓN
+Cuando el usuario cambie tarifas:
+- NO modificar ninguna jornada existente
+- SOLO afectará a nuevas jornadas
+
+5) EDITAR JORNADA
+Al editar una jornada:
+- Por defecto NO recalcular dietas
+- Añadir botón opcional:
+  “Recalcular dieta con tarifas actuales”
+  Solo si el usuario lo confirma, volver a calcular y sobrescribir el snapshot.
+
+6) SEGURIDAD
+Si una jornada ya tiene diet_calculated_at:
+→ no volver a ejecutar cálculo automático nunca.
+
+7) MIGRACIÓN
+Para jornadas antiguas que no tengan diet_total_eur:
+- calcular una sola vez
+- guardar snapshot
+- marcar diet_calculated_at
+- después nunca recalcular
+
+8) UI
+En la vista detalle de jornada mostrar desglose:
+
+Base: XX,XX €
+Extra día: XX,XX €
+Total dieta: XX,XX €
+Regla aplicada: diet_rule
+
+RESULTADO ESPERADO
+Si cierro una jornada con dieta 32,58€ y después cambio la tarifa a 40€:
+
+La jornada antigua debe seguir mostrando 32,58€.
+Las nuevas jornadas deben mostrar 40€.
+
+NO se debe modificar el pasado automáticamente bajo ningún concepto.
+
+No rompas ninguna otra funcionalidad de la app.
+Mantén compatibilidad con sincronización offline y Supabase RLS.

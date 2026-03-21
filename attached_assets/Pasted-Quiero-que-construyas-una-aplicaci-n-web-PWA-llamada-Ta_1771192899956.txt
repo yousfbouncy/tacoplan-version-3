@@ -1,0 +1,281 @@
+Quiero que construyas una aplicación web (PWA) llamada Tacoplan para camioneros en España (Reglamento 561/2006). Debe replicar un sistema tipo Google Sheets, pero como una app real con Dashboard, registro diario, compensaciones y dietas. La app debe funcionar perfectamente en móvil.
+
+Tech stack (usa este)
+
+Frontend: React + Vite + TypeScript
+
+Backend: Node.js + Express + TypeScript
+
+DB: SQLite + Prisma (todo dentro de Replit)
+
+PWA: manifest + service worker básico para “Añadir a pantalla de inicio”
+
+1) Modelo de datos
+Tabla jornadas
+
+Cada fila representa una jornada cerrada (inicio+fin). También debe permitir “jornada abierta” (solo inicio, sin fin aún).
+
+Campos:
+
+id (uuid)
+
+fecha_inicio (YYYY-MM-DD)
+
+hora_inicio (HH:MM)
+
+lugar_inicio (string)
+
+fecha_fin (YYYY-MM-DD, nullable hasta cerrar)
+
+hora_fin (HH:MM, nullable)
+
+lugar_fin (string, nullable)
+
+conduccion_min (int, nullable) — opcional si no se quiere al principio
+
+tipo_ruta enum:
+
+REGIONAL_INTL
+
+NAC_INTL
+
+NACIONAL (opcional si lo quieres)
+
+INTERNACIONAL (opcional si lo quieres)
+
+pernocta boolean (nullable hasta cerrar)
+
+dieta_modo enum: AUTO | MANUAL (por defecto AUTO)
+
+dieta_manual_tipo enum nullable: NACIONAL | INTERNACIONAL
+
+dieta_manual_pct enum nullable: 100 | 60 | 30
+
+dieta_importe_eur (decimal, calculado)
+
+Campos calculados (se pueden calcular al vuelo en backend):
+
+descanso_anterior_min (int)
+
+tipo_descanso_anterior enum:
+
+DESCANSO_DIARIO_COMPLETO
+
+DESCANSO_DIARIO_REDUCIDO
+
+DESCANSO_SEMANAL_COMPLETO
+
+DESCANSO_SEMANAL_REDUCIDO
+
+INFRACCION_DESCANSO (si <9h)
+
+2) Lógica clave
+2.1 Flujo de registro en Dashboard
+
+El dashboard debe tener SIEMPRE arriba:
+
+A) “INICIO DE JORNADA” (primero)
+
+Campos:
+
+fecha_inicio (por defecto hoy)
+
+hora_inicio
+
+lugar_inicio
+Botón: Guardar Inicio
+
+Al pulsarlo:
+
+crea una fila en jornadas con estado “abierta” (sin fin).
+
+En el dashboard desaparece el formulario de inicio y aparece el de fin.
+
+B) “FIN DE JORNADA” (solo si hay jornada abierta)
+
+Campos:
+
+fecha_fin (por defecto hoy)
+
+hora_fin
+
+lugar_fin
+
+tipo_ruta (selector con 2 opciones obligatorias):
+
+REGIONAL_INTL
+
+NAC_INTL
+
+pernocta (Sí/No)
+
+dieta_modo AUTO/MANUAL
+
+Si MANUAL: elegir tipo (NACIONAL/INTERNACIONAL) y % (100/60/30)
+Botón: Cerrar Jornada
+
+Al pulsarlo:
+
+completa la jornada abierta y recalcula:
+
+descanso_anterior (comparando fin anterior con inicio actual)
+
+tipo_descanso_anterior
+
+dieta_importe_eur (AUTO o MANUAL)
+
+C) “AÑADIR JORNADA COMPLETA”
+
+Botón visible siempre: Añadir jornada completa
+Al pulsarlo abre un modal o página con un formulario “todo en uno”:
+
+fecha_inicio, hora_inicio, lugar_inicio
+
+fecha_fin, hora_fin, lugar_fin
+
+tipo_ruta, pernocta
+
+dieta modo auto/manual
+Botón: Guardar Jornada Completa
+Esto sirve para cuando el usuario olvidó registrar una jornada.
+
+2.2 Cálculo de descanso anterior
+
+Para cada jornada cerrada:
+
+tomar la jornada anterior cerrada por fecha/hora de fin
+
+descanso_anterior_min = (fecha_inicio + hora_inicio) - (fecha_fin_anterior + hora_fin_anterior)
+
+si no existe anterior: null
+
+2.3 Clasificación tipo de descanso anterior (simplificada)
+
+< 9h => INFRACCION_DESCANSO
+
+9–<11 => DESCANSO_DIARIO_REDUCIDO
+
+11–<24 => DESCANSO_DIARIO_COMPLETO
+
+24–<45 => DESCANSO_SEMANAL_REDUCIDO
+
+=45 => DESCANSO_SEMANAL_COMPLETO
+
+(La lógica avanzada de “dos descansos largos en semana” se puede dejar como mejora futura.)
+
+3) Dietas (lo más importante)
+
+Importes (EUR):
+
+INTERNACIONAL: 100% = 72.77, 60% = 43.66, 30% = 21.83
+
+NACIONAL: 100% = 54.30, 60% = 32.58, 30% = 16.29
+
+3.1 Reglas AUTO para dieta según tipo_ruta (y tu requisito)
+
+Cuando dieta_modo=AUTO, el cálculo debe seguir estas reglas:
+
+Tipo ruta REGIONAL_INTL
+
+Por defecto aplica INTERNACIONAL 60% (43.66)
+
+Si pernocta=true, entonces se puede elevar a INTERNACIONAL 100% (72.77) (opcional, pero implementa: pernocta => 100%, sin pernocta => 60%)
+
+Tipo ruta NAC_INTL
+
+Esta ruta cuenta como dos dietas:
+
+NACIONAL 60% (32.58)
+
+INTERNACIONAL 60% (43.66)
+
+Total auto = 32.58 + 43.66 = 76.24
+
+Si pernocta=true, permite elevar la internacional a 100% (opcional) y la nacional a 100% si el día es completo (implementa una regla simple: pernocta => internacional 100%, nacional sigue 60% por defecto; deja un setting para ajustar)
+
+3.2 Modo MANUAL
+
+Si el usuario elige MANUAL, entonces:
+
+elige tipo: NACIONAL o INTERNACIONAL
+
+elige porcentaje 100/60/30
+
+la app calcula el importe exacto y lo guarda
+
+4) Dashboard (debajo del bloque de registro)
+
+Debe mostrar tarjetas con:
+
+Dietas periodo actual (20→20): total €
+
+Conteo de dietas por tipo (INTERNACIONAL_100/60/30 y NACIONAL_100/60/30) en el periodo 20→20
+
+Próximo límite de compensación (si implementas compensaciones)
+
+Extensiones 10h usadas esta semana (si implementas conducción luego)
+
+Periodo dietas 20→20
+
+Implementa un selector de periodo:
+
+“Periodo actual” basado en hoy:
+
+si hoy >= 20: periodo = 20 del mes actual → 20 del mes siguiente (excluyendo el final)
+
+si hoy < 20: periodo = 20 del mes anterior → 20 del mes actual
+Mostrar:
+
+Total €
+
+Tabla por tipo con:
+
+tipo
+
+cantidad
+
+total €
+
+5) Vistas
+
+Dashboard (con el flujo Inicio/Fin + KPIs)
+
+Historial (tabla de jornadas con filtros por fecha, semana, periodo 20→20)
+
+Dietas (detalle y resumen del periodo)
+
+Compensaciones (opcional en esta versión si no quieres aún)
+
+6) API endpoints (backend)
+
+POST /api/jornadas/inicio crea jornada abierta
+
+POST /api/jornadas/:id/cierre cierra jornada
+
+POST /api/jornadas/completa crea jornada completa
+
+GET /api/jornadas/abierta devuelve jornada abierta si existe
+
+GET /api/jornadas lista con filtros
+
+GET /api/dietas/resumen?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+devuelve total y desglose por tipo/%
+
+7) Requisitos UI/UX
+
+Todo en español
+
+Inputs amigables móvil (hora con input type time)
+
+Botones grandes
+
+Confirmación “Guardado”
+
+Prevención de errores:
+
+no permitir cerrar sin hora/lugar fin
+
+no permitir dos jornadas abiertas
+
+Responsive y PWA

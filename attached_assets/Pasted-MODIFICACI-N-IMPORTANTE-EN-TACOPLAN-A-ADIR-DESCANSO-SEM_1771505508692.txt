@@ -1,0 +1,168 @@
+MODIFICACIÓN IMPORTANTE EN TACOPLAN — AÑADIR DESCANSO SEMANAL (45h / 24h) CORRECTO SEGÚN REGLAMENTO 561/2006
+
+Quiero modificar la pantalla "Cerrar Jornada".
+
+Actualmente ya existe la selección de descanso diario:
+- 11h
+- 9h
+
+Quiero añadir DEBAJO un nuevo bloque llamado:
+
+DESCANSO SEMANAL (OPCIONAL)
+
+con dos botones grandes:
+
+[ SEMANAL 45h ]     [ SEMANAL 24h ]
+
+IMPORTANTE:
+Esto NO debe crear deuda ni calcular compensaciones en este momento.
+La selección aquí es SOLO una planificación visual para el conductor.
+
+-------------------------------------
+COMPORTAMIENTO AL SELECCIONAR
+-------------------------------------
+
+Cuando el usuario seleccione:
+Diario 11h:
+
+rest_end = journey.end_at + 11horas
+Diario 9h:
+
+rest_end = journey.end_at + 9horas
+
+SEMANA 45h:
+calcular:
+rest_end = journey.end_at + 45 horas
+
+SEMANA 24h:
+calcular:
+rest_end = journey.end_at + 24 horas
+
+y mostrar inmediatamente un panel debajo:
+
+"Podrás iniciar jornada:"
+DD/MM/YYYY HH:mm
+
+(Este dato debe recalcularse si cambia entre 9h, 11h, 24h o 45h)
+En panel Dashboard mostrar contador en tiempo real del descanso + el descanso seleccionado y la hora de fin legal
+-------------------------------------
+NO HACER TODAVÍA
+-------------------------------------
+
+NO crear compensaciones
+NO crear deuda
+NO tocar tabla compensations
+NO guardar deuda semanal
+NO mostrar deuda al cerrar jornada
+
+Esto es CRÍTICO.
+
+La deuda semanal SOLO se calculará al INICIAR la siguiente jornada usando el descanso REAL.
+
+-------------------------------------
+INICIO DE NUEVA JORNADA (AQUÍ SÍ SE CALCULA)
+-------------------------------------
+
+Al crear una nueva jornada (start_at):
+
+buscar la jornada anterior cerrada:
+previous_journey.end_at
+
+calcular:
+previous_rest_minutes = start_at - previous_journey.end_at
+
+clasificar:
+
+< 9h → infracción
+9h–11h → descanso diario reducido
+11h–24h → descanso diario normal
+24h–45h → descanso semanal reducido
+>=45h → descanso semanal completo
+
+-------------------------------------
+CREAR DEUDA SOLO AQUÍ
+-------------------------------------
+
+SI previous_rest_minutes está entre 24h y 45h:
+
+debt_minutes = 45h - previous_rest_minutes
+
+crear registro en tabla:
+compensations
+
+columnas:
+id
+user_id
+source_journey_id (la jornada anterior)
+debt_minutes
+rest_end_at = start_at
+deadline_at = start_at + 14 días
+status = "PENDING"
+
+-------------------------------------
+COMPENSACIÓN AUTOMÁTICA
+-------------------------------------
+
+SI previous_rest_minutes >= 45h:
+
+marcar todas las compensaciones pendientes del usuario:
+
+status = "COMPENSATED"
+compensated_at = start_at
+compensated_by_journey_id = current_journey.id
+
+-------------------------------------
+DASHBOARD
+-------------------------------------
+
+Añadir widget:
+
+DEUDA DE DESCANSO SEMANAL
+SUM(debt_minutes) donde status = PENDING
+
+PRÓXIMO LÍMITE
+MIN(deadline_at) donde status = PENDING
+
+-------------------------------------
+INTERFAZ
+-------------------------------------
+
+En "Cerrar jornada":
+
+Debajo de los botones de descanso diario:
+añadir bloque visual tipo tarjeta:
+
+Título:
+"Descanso semanal (si vas a hacer descanso largo)"
+
+Botones:
+45h (verde)
+24h (naranja)
+
+y debajo:
+
+Etiqueta:
+"Hora legal de arranque"
+
+Mostrando fecha y hora calculada.
+
+-------------------------------------
+IMPORTANTE
+-------------------------------------
+
+La app debe usar SIEMPRE el descanso REAL medido al iniciar jornada.
+La selección de 24h/45h es solo ayuda visual para el conductor.
+Nunca debe crear deuda al cerrar jornada.
+
+-------------------------------------
+ENTREGA
+-------------------------------------
+
+Implementa:
+- cambios UI
+- cálculo de hora de arranque
+- cálculo real al iniciar jornada
+- creación de compensaciones
+- compensación automática
+
+Indícame archivos modificados y nuevas funciones creadas.

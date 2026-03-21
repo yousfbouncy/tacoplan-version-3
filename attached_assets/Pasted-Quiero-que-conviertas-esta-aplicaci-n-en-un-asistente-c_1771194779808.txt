@@ -1,0 +1,216 @@
+Quiero que conviertas esta aplicación en un asistente completo de control de tacógrafo europeo para conductores profesionales de camión.
+
+La app debe simular la lógica real del Reglamento CE 561/2006.
+
+La aplicación ya guarda jornadas, pero ahora debe ANALIZARLAS y generar estado legal del conductor.
+
+1️⃣ DASHBOARD (PANTALLA PRINCIPAL)
+
+La pantalla principal debe dejar de ser solo un resumen económico.
+Debe convertirse en un panel de cumplimiento legal.
+
+Mostrar SIEMPRE:
+
+Conducción
+
+Horas conducidas esta semana (lunes 00:00 → domingo 23:59)
+
+Horas conducidas en las últimas 2 semanas (90h máx)
+
+Horas restantes hasta 56h semanales
+
+Horas restantes hasta 90h bisemanal
+
+Extensiones de conducción
+
+Calcular automáticamente:
+
+EXTENSIÓN A 10H
+Regla:
+
+máximo 2 veces por semana
+
+se reinicia cada lunes
+
+Mostrar:
+"Extensiones 10h usadas: X / 2"
+
+(Detectar cuando un día la conducción > 9:00)
+
+Descanso diario reducido (9h)
+
+Regla:
+
+máximo 3 veces por semana
+
+IMPORTANTE:
+Si la jornada (inicio → fin) dura más de 13 horas,
+aunque el conductor duerma 11h, ese descanso cuenta como reducido (9h).
+
+La app debe detectar:
+duración_jornada = hora_fin - hora_inicio
+
+Si duración_jornada > 13h
+→ marcar descanso reducido automáticamente.
+
+Mostrar:
+"Descansos diarios reducidos usados: X / 3"
+
+Descanso semanal y compensaciones
+
+Detectar:
+
+descanso semanal normal ≥ 45h
+
+descanso semanal reducido ≥ 24h
+
+Si es reducido:
+crear automáticamente una deuda de horas:
+
+deuda = 45h - descanso_real
+
+Guardar:
+
+horas pendientes de recuperar
+
+fecha límite de recuperación (antes de 3 semanas)
+
+Mostrar en dashboard:
+
+COMPENSACIONES PENDIENTES
+
+horas a recuperar
+
+fecha límite
+
+Si pasa la fecha → mostrar ALERTA ROJA:
+"INFRACCIÓN: descanso reducido no compensado"
+
+2️⃣ FLUJO DE REGISTRO
+Botón 1 — INICIO DE JORNADA
+
+Formulario:
+
+fecha inicio (auto: hoy)
+
+hora inicio
+
+lugar inicio
+
+Botón: GUARDAR INICIO
+
+Después de guardarlo:
+aparece botón → FINALIZAR JORNADA
+
+Botón 2 — FIN DE JORNADA
+
+Formulario:
+
+fecha fin
+
+hora fin
+
+lugar fin
+
+tipo de viaje (selector)
+
+Tipos de viaje:
+• Nacional
+• Internacional
+• Regional/Internacional
+• Nacional/Internacional
+
+pernocta (SI/NO)
+
+Dietas automáticas
+
+Reglas:
+
+Regional/Internacional → Internacional 60%
+Nacional/Internacional → Nacional 60% + Internacional 60%
+Nacional → Nacional 100%
+Internacional → Internacional 100%
+
+Dieta manual (opcional)
+
+Activar interruptor:
+"Usar dieta manual"
+
+Si activado:
+Elegir:
+Tipo:
+• Nacional
+• Internacional
+
+Porcentaje:
+• 100%
+• 60%
+• 30%
+
+3️⃣ FORMULARIO EXTRA
+
+Botón:
+"Registrar jornada manual"
+
+Permite introducir jornada completa por si olvidó registrar.
+
+Campos:
+fecha incio+hora inicio+lugar inicio +fecha fin+hora fin+luagar fin + tipo viaje + pernocta + dieta manual.
+
+4️⃣ HISTORIAL
+
+Lista de jornadas:
+
+Cada registro debe mostrar:
+
+ruta (inicio → fin)
+
+duración jornada
+
+horas conducción estimada
+
+tipo de dieta
+
+importe
+
+icono legal:
+
+🟢 Legal
+🟡 Advertencia
+🔴 Infracción
+
+5️⃣ MOTOR LEGAL (MUY IMPORTANTE)
+
+La app debe recalcular automáticamente después de cada jornada:
+
+conducción semanal
+
+conducción bisemanal
+
+descansos reducidos
+
+extensiones 10h
+
+compensaciones pendientes
+
+Debe funcionar sin conexión (offline first).
+Guardar todo en base de datos local.
+
+6️⃣ ALERTAS AUTOMÁTICAS
+
+Crear sistema de avisos:
+
+Ejemplos:
+
+"hoy te quedan <10h de conduccion semanal"
+"Hoy no puedes hacer jornada de 15h"
+"Has usado las 2 extensiones de 10h esta semana"
+"Debes compensar descanso antes del 23/02"
+"hoy te quedan <10 de conduccion bisemanal"
+IMPORTANTE PARA REPLIT
+
+No quiero una app de tareas.
+Quiero una app estilo:
+tacógrafo digital + gestor de dietas + inspector de transporte.
+
+La app debe ser pensada para usarla un conductor desde el móvil mientras trabaja.

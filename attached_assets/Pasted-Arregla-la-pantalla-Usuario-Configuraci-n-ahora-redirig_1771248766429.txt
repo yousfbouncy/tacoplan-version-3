@@ -1,0 +1,58 @@
+Arregla la pantalla Usuario/Configuración: ahora redirige bien a usuarios nuevos, pero NO deja editar los precios de referencia y muestra mensajes tipo “No hay dietas configuradas” porque la pantalla está implementada como listas/tarifas. Quiero que Configuración sea un formulario editable (1 registro por usuario) para “precios de referencia”.
+
+OBJETIVO:
+1) Cambiar la lógica de Configuración para que NO sea “tarifas” ni “lista de dietas configuradas”, sino un único objeto/registro por usuario:
+   - user_settings (1 fila por user_id)
+   - Campos editables en UI:
+     * dieta_base_nac
+     * dieta_base_intl
+     * (si hay más tipos, incluirlos)
+     * extra_sab
+     * extra_dom
+     * extra_fest
+   - Mostrar valores actuales y permitir editar SIEMPRE.
+
+2) UI/UX:
+   - Secciones:
+     A) “Precios de referencia Dietas”
+        - Inputs numéricos (EUR) con botón “Editar” (o editable directo) y botón “Guardar”.
+     B) “Precios de referencia Día especial”
+        - Inputs numéricos (Sábado/Domingo/Festivo) con botón “Guardar”.
+   - El texto “No hay dietas configuradas” debe desaparecer. En su lugar:
+        - Si no existe user_settings aún -> crear automáticamente con defaults (de JSON local) y mostrarlo en inputs.
+   - “Extras Día” NO debe decir “Guardar extras para añadir un día especial”. Debe decir “Guardar precios de referencia” y actualizar user_settings.
+
+3) Estado/Deshabilitado:
+   - Identifica por qué los inputs están bloqueados (disabled / readOnly / form state) y corrígelo:
+     - Modo “view” -> permitir “edit”
+     - o por falta de settings cargados -> inicializar state con valores.
+
+4) Persistencia offline-first:
+   - Al abrir Configuración:
+     - cargar settings desde SQLite local
+     - si no existe: cargar defaults desde JSON local, guardar en SQLite, intentar upsert a Supabase
+     - renderizar inputs con esos valores
+   - Al guardar:
+     - validar números (>=0)
+     - guardar en SQLite inmediatamente
+     - upsert a Supabase (user_id = auth.uid())
+     - actualizar updated_at
+     - set setup_completed=true si dieta_base_nac > 0 (y/o intl)
+   - Si falla red, mantener cambios locales y reintentar sync luego.
+
+5) Base de datos:
+   - Asegura que Supabase tiene tabla user_settings con columnas:
+     user_id (PK), dieta_base_nac, dieta_base_intl, extra_sab, extra_dom, extra_fest, setup_completed, updated_at
+   - Asegura que SQLite local tiene la misma estructura (tabla local o key-value).
+   - Si actualmente existe una tabla “tarifas_dietas” o “extras_dia” por filas, NO la uses para la configuración (puede quedar para histórico, pero la UI debe usar user_settings).
+
+6) Entregables:
+   - Corrige los componentes para que:
+     - siempre aparezcan los precios de referencia y sean editables
+     - haya botón Guardar funcional
+     - desaparezca “no hay dietas configuradas”
+     - “Extras Día” sea edición de referencias (no insert)
+   - Devuelve:
+     a) archivos modificados
+     b) explicación del bug (por qué estaba readOnly / por qué salía “no hay dietas configuradas”)
+     c) SQL de migración si añadiste/ajustaste columnas

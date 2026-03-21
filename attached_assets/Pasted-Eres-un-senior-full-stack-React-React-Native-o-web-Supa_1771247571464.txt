@@ -1,0 +1,69 @@
+Eres un senior full-stack (React/React Native o web + Supabase + SQLite local + JSON local). En mi app de dietas de camionero ya calculo bien la “dieta” en el formulario del Dashboard, pero falta que el “Día especial” (Sáb/Dom/Fest/Auto) NO suma nada al total. Quiero que lo arregles y mejores el onboarding.
+
+CONTEXTO (lo que se ve en UI):
+- En Dashboard (formulario dietas) hay:
+  - tipo de viaje (Nac/Intl/RegI/N+I/N-R)
+  - pernocta (Sí/No)
+  - dieta (Auto/Manual)
+  - % dieta (100/60/30)
+  - día especial (Auto/Sab/Dom/Fest)
+  - abajo muestra “Dieta base” y “Total dieta”
+- En Usuario/Configuración tengo “Tarifas Dietas” y “Extras Día” con inputs Sábado/Domingo/Festivo (ej: Domingo 80€).
+Problema actual: aunque marque “Dom” en Dashboard, el total sigue siendo solo la dieta (p.ej 54,30€). Necesito que se sume el extra correspondiente.
+
+OBJETIVO FUNCIONAL:
+1) Añadir al cálculo del Dashboard:
+   - dietaAmount = baseDieta(tripType, pernocta, etc.) * (percent/100)
+   - extraAmount = según día especial:
+       - si modo = sab/dom/fest => usar extra_sab/extra_dom/extra_fest desde settings del usuario
+       - si modo = auto => resolver:
+           a) si la fecha está en la lista de festivos del usuario -> fest
+           b) si es sábado -> sab
+           c) si es domingo -> dom
+           d) si no -> none (0)
+   - totalAmount = dietaAmount + extraAmount
+2) Mostrar en UI:
+   - “Dieta base” (o “Dieta” calculada) 
+   - “Extra día especial” (0€ o +80€)
+   - “Total” (suma final)
+3) Persistencia:
+   - En cada jornada/registro guardar dietaAmount, extraAmount y totalAmount “congelados” (para que si cambian tarifas en el futuro no cambie el histórico).
+4) Configuración:
+   - En Usuario/Configuración, “Extras Día” NO es para “añadir días”, sino para editar precios de referencia (extra_sab, extra_dom, extra_fest). Igual con tarifas base de dieta.
+   - Al guardar: guardar en SQLite local inmediatamente y sincronizar (upsert) a Supabase.
+5) Onboarding:
+   - Cuando un usuario nuevo se registra o inicia sesión por primera vez:
+       - si no existe user_settings o setup_completed=false -> llevarlo automáticamente a la pantalla Usuario/Configuración y bloquear Dashboard/Historial/Dietas hasta completar.
+       - setup_completed pasa a true cuando al menos dieta_base_nac (y/o intl) tenga valor válido (>0).
+6) Offline-first:
+   - La app siempre debe calcular usando settings/holidays desde SQLite local (rápido y offline).
+   - Si no hay settings locales, cargar defaults desde JSON local, guardar en SQLite, y luego sync a Supabase cuando haya red.
+   - Si hay red, al arrancar: comparar updated_at de Supabase vs local y aplicar el más reciente a SQLite.
+
+REQUISITOS TÉCNICOS:
+- Revisa el repositorio actual y encuentra:
+  - dónde se calcula “Total dieta” en el Dashboard (componente/función)
+  - dónde se guardan/leen settings del usuario (Supabase/SQLite/JSON)
+  - dónde se maneja el “Día especial”
+- Implementa funciones limpias:
+  - detectSpecialDay(date, holidaysSet) -> "fest"|"sab"|"dom"|"none"
+  - getExtraAmount(mode, date, settings, holidaysSet) -> number
+  - calcDietaAmount(input, settings) -> number
+  - calcTotal(input, settings, holidaysSet) -> {dieta, extra, total}
+- Asegura recalculo reactivo:
+  - cuando cambie date/tripType/pernocta/percent/specialDayMode/settings/holidays debe recalcularse el total.
+- Ajusta UI para mostrar extra y total.
+- Migra/añade campos si faltan en DB (Supabase) y en SQLite:
+  - user_settings: dieta_base_nac, dieta_base_intl, extra_sab, extra_dom, extra_fest, setup_completed, updated_at
+  - entries: dieta_amount, extra_amount, total_amount, special_day_mode, date
+  - holidays: date, name
+- Añade RLS/policies mínimas si aplica (user_id = auth.uid()).
+- Entrega cambios completos con:
+  1) lista de archivos modificados
+  2) explicación breve del bug y el arreglo
+  3) SQL de migración Supabase si hace falta
+  4) migración/upgrade SQLite si hace falta
+
+IMPORTANTE:
+- No me pidas más detalles: inspecciona el código y aplica la solución.
+- Prioriza corregir el bug del cálculo del “día especial” y su suma al total.

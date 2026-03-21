@@ -1,0 +1,44 @@
+En mi app Tacoplan (React Native + Expo), actualmente al cerrar jornada se muestra un modal “Resultado del análisis legal” como el de la captura, con: conducción semanal/bisemanal, extensiones 10h, descansos reducidos y advertencias.
+
+NECESITO CAMBIOS:
+1) AL INICIAR JORNADA (al pulsar “Guardar Inicio”):
+- Mostrar un panel/modal “Plan de hoy” con:
+  a) Conducción disponible hoy (9h o 10h si aún quedan extensiones 10h esta semana y el usuario decide usarla hoy)
+  b) Hora límite recomendada para cerrar jornada (inicio + disponibilidad máxima del día)
+  c) Si hoy es LUNES: mostrar “restante 56h semana” y “restante 90h bisemanal”
+- Este panel debe salir justo después de guardar el inicio. Debe basarse en los datos reales acumulados de lunes a domingo y 2 semanas.
+
+2) AL CERRAR JORNADA:
+- Mantener el modal “Resultado del análisis legal”, pero AÑADIR debajo una sección obligatoria “Plan de descanso de hoy”:
+  - Mostrar selector de descanso: 11h o 9h SOLO si aún no se han usado 3/3 descansos reducidos esta semana.
+  - Si ya se usaron 3/3, solo permitir 11h.
+  - Al elegir 9h u 11h, mostrar inmediatamente:
+    * “Podrás arrancar a las: HH:MM” (finJornada + descansoElegido)
+    * “Disponibilidad mañana: 13h si descanso 11h / 15h si descanso 9h”
+    * “Conducción mañana: 9h (o 10h si quedan extensiones 10h y el usuario decide usarla mañana)”
+- También añadir alerta bisemanal: si tras cerrar jornada el restante bisemanal < 10h, mostrar warning destacado.
+
+3) REGLA ESPECIAL (muy importante):
+- Un descanso diario se considera REDUCIDO no solo por duración (9h–<11h) sino también si la jornada anterior supera 13h.
+  Es decir: si la jornada de hoy > 13h, entonces el descanso de hoy cuenta como uno de los 3 descansos reducidos, aunque el usuario haga 11h o más.
+- Ajustar el contador semanal “Desc. reducidos (x/3)” para reflejar esto.
+
+4) FECHAS CRUZADAS (turno nocturno):
+- Si una jornada empieza un día y termina al siguiente (ej. 15/02 22:30 a 16/02 01:30), la duración debe ser correcta (3h).
+- Asegurar que los cálculos usen DateTime completo (fecha+hora) y no solo hora.
+
+IMPLEMENTACIÓN:
+- Localiza los componentes/screens actuales de Dashboard y cierre de jornada. Implementa:
+  - una función única: computeLegalStatusAndPlan(journeys, openShift, userSettings, now)
+    que devuelva: weeklyDrive, biweeklyDrive, extensionsUsed, reducedRestsUsed, warnings,
+    y también: restOptions, tomorrowStartTime, tomorrowMaxDuty, tomorrowMaxDrive, biweeklyRemaining.
+- Conectar esa función al flujo:
+  - After start shift saved -> show StartPlanModal
+  - After close shift saved -> show LegalResultModalExtended con selector de descanso
+
+UI:
+- No cambies el estilo general, solo añade estas secciones.
+- El selector de descanso debe ser tipo botones 9h / 11h, con 9h deshabilitado si no disponible.
+- Guardar la elección del descanso en la jornada cerrada (campo: chosen_daily_rest_minutes) para auditar.
+
+No elimines funcionalidades existentes.

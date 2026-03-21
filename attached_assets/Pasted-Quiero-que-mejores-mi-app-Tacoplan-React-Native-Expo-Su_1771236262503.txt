@@ -1,0 +1,49 @@
+Quiero que mejores mi app Tacoplan (React Native + Expo + Supabase) añadiendo un menú de Usuario/Settings con configuración personal por usuario.
+
+OBJETIVO
+- Cada usuario debe tener sus propios precios de dietas por tipo de viaje y % (100/60/30)
+- Cada usuario debe configurar recargos para Sábado/Domingo/Festivo (importe extra en €)
+- Cada usuario debe gestionar una lista de festivos (fechas)
+- Debe existir Cerrar sesión
+- En Dashboard > Fin de jornada: el usuario debe poder elegir tipo de viaje + % dieta + día especial (vacío/sábado/domingo/festivo) a la vez.
+- La dieta final se calcula como: dieta_base(trip_type+percent) + extra(día especial)
+- Guardar diet_amount final en la jornada.
+
+SUPABASE (crear tablas + RLS)
+1) profiles(id uuid pk = auth.users.id, name text, created_at)
+2) user_diet_rates(id uuid pk, user_id uuid, trip_type text, percent int, amount numeric, updated_at)
+3) user_day_extras(user_id uuid pk, extra_saturday numeric, extra_sunday numeric, extra_holiday numeric)
+4) user_holidays(id uuid pk, user_id uuid, date date, name text)
+5) journeys(id uuid pk, user_id uuid, start_at timestamptz, end_at timestamptz, trip_type text, diet_percent int, day_flag text nullable, diet_amount numeric, notes text)
+
+- Activar RLS en todas. Políticas: user_id = auth.uid().
+- Insertar defaults por usuario al registrarse:
+  Dietas base por defecto:
+   NACIONAL 100=54.30, 60=32.58, 30=16.29
+   INTERNACIONAL 100=72.77, 60=43.66, 30=21.83
+   REGIONAL_INTL 60=43.66 (si no hay pernocta)
+   NACIONAL_INTL 60=32.58 (y si aplica también internacional 60 según lógica actual si existe)
+  Extras por defecto: 0
+
+UI/UX
+- Añadir pestaña “Usuario” en el bottom tab:
+  A) Perfil (email, nombre editable, botón cerrar sesión)
+  B) Tarifas dietas: lista editable (trip_type, percent, amount) con guardar en Supabase
+  C) Extras día: sábado/domingo/festivo (inputs €) con guardar
+  D) Festivos: lista de fechas, añadir/eliminar
+
+DASHBOARD > FIN DE JORNADA
+- Añadir campos:
+  - trip_type: Nacional / Internacional / Regional-Internacional / Nacional-Internacional
+  - diet_percent: 100/60/30
+  - day_flag: vacío / Sábado / Domingo / Festivo (opcional)
+- Mostrar “Dieta calculada” en tiempo real.
+- Si day_flag está vacío, detectar automáticamente: si la fecha de fin cae sábado/domingo o está en user_holidays.
+- Guardar journeys con diet_amount final.
+
+IMPORTANTE
+- Manejar jornadas que cruzan de día: start_at y end_at son timestamps completos, no solo hora.
+- Añadir pantalla “Editar jornada” desde Historial para cambiar trip_type, percent, day_flag y recalcular diet_amount.
+
+ENTREGABLE
+- Código implementado, migraciones SQL para Supabase, y explicación breve de dónde editar tarifas/extras.

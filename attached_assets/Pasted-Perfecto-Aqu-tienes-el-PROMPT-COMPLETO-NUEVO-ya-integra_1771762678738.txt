@@ -1,0 +1,240 @@
+Perfecto 👍
+Aquí tienes el PROMPT COMPLETO NUEVO (ya integrado todo, no es parche).
+Cópialo entero y pégalo en Replit AI.
+
+⸻
+
+PROMPT COMPLETO PARA REPLIT AI — Rediseño módulo VIAJES (Tacoplan)
+
+Quiero rediseñar completamente la pestaña “Viajes” de mi aplicación Tacoplan (app móvil para conductores de camión).
+El objetivo es que el conductor pueda registrar un viaje en menos de 30 segundos y luego, durante el día, solo tenga que pulsar botones de llegada y salida.
+
+La interfaz actual es demasiado compleja y con demasiados campos obligatorios.
+
+⸻
+
+1. Concepto general
+
+El módulo “Viajes” debe servir para controlar:
+	•	Citas planificadas de carga y descarga
+	•	Hora real de llegada
+	•	Hora real de salida
+	•	Varias cargas o varias descargas
+	•	Viajes solo de carga o solo de descarga
+
+NO debe existir el concepto de “campa”.
+En su lugar el viaje tendrá un modo de viaje.
+
+⸻
+
+2. Modo de viaje
+
+Al crear un viaje, el usuario debe elegir obligatoriamente:
+
+modoViaje
+	•	COMPLETO (carga + descarga)
+	•	SOLO_CARGA
+	•	SOLO_DESCARGA
+
+Reglas
+	•	COMPLETO → mínimo 1 carga y 1 descarga
+	•	SOLO_CARGA → solo cargas (mínimo 1)
+	•	SOLO_DESCARGA → solo descargas (mínimo 1)
+
+⸻
+
+3. Estructura de datos
+
+Viaje
+	•	id
+	•	cliente (opcional, no obligatorio)
+	•	modoViaje
+	•	notas (opcional)
+	•	finLugar (opcional)
+	•	finHora (editable)
+	•	finViajeNota (opcional)
+	•	estado: EN_CURSO / COMPLETADO
+	•	createdAt
+	•	updatedAt
+	•	paradas[]
+
+Parada
+	•	id
+	•	tipo: CARGA o DESCARGA
+	•	lugar (obligatorio)
+	•	citaFecha (opcional)
+	•	citaHora (opcional)
+	•	llegadaReal (datetime)
+	•	salidaReal (datetime)
+	•	llegadaConfirmada (boolean)
+	•	salidaConfirmada (boolean)
+
+⸻
+
+4. Pantalla “Viajes” (lista)
+
+Mostrar:
+	•	Botón grande: + Nuevo viaje
+	•	Sección “En curso” (arriba)
+	•	Sección “Completados”
+
+Cada tarjeta debe mostrar:
+	•	Fecha creación
+	•	Cliente (si existe)
+	•	Número de cargas y descargas
+	•	Estado
+
+Al pulsar → abrir detalle del viaje.
+
+⸻
+
+5. Crear viaje (formulario rápido)
+
+Campos:
+
+Cliente (opcional)
+
+Paradas
+
+Bloque PARADA #1:
+	•	Selector tipo: CARGA / DESCARGA
+	•	Lugar
+	•	Cita (fecha + hora opcional)
+
+Botones rápidos:
+	•		•	Añadir carga
+	•		•	Añadir descarga
+
+Debe permitir:
+	•	varias cargas
+	•	varias descargas
+
+Validación:
+Debe existir al menos una parada obligatoria según modoViaje.
+
+Botón: Guardar viaje
+
+Al guardar:
+	•	estado = EN_CURSO
+	•	abrir automáticamente el detalle del viaje
+
+⸻
+
+6. Detalle del viaje (pantalla operativa)
+
+Encabezado:
+	•	Cliente
+	•	Modo de viaje
+	•	Estado
+	•	Botón editar
+
+Para cada parada mostrar:
+
+CARGA 1 — Lugar
+Cita: dd/mm/aaaa hh:mm o “Sin cita”
+
+Llegada real
+Botón: “Llegada a cargar”
+	•	Guarda fecha y hora actual
+	•	Permite editar
+
+Salida real
+Botón: “Salida de carga”
+	•	Solo habilitado si existe llegada
+	•	Guarda hora actual
+	•	Editable
+
+Para DESCARGA igual:
+	•	Llegada a descargar
+	•	Salida de descarga
+
+⸻
+
+7. Caso “solo cargo y dejo remolque”
+
+Si modoViaje = SOLO_CARGA:
+El usuario puede completar el viaje sin descarga.
+
+En el viaje se pueden rellenar:
+	•	finLugar
+	•	finHora
+	•	finViajeNota (ejemplo: “Dejado en base”, “Intercambio”, etc.)
+
+Estos campos deben verse en el detalle y en exportación.
+
+⸻
+
+8. Completar viaje
+
+Botón grande al final: Completar viaje
+
+Condición:
+Todas las paradas deben tener al menos llegadaReal registrada.
+
+Al completar:
+estado = COMPLETADO
+
+⸻
+
+9. Autocompletar lugares
+
+El campo lugar debe:
+	•	recordar últimos 20 lugares usados
+	•	sugerirlos al escribir
+	•	permitir escribir libremente
+
+⸻
+
+10. Sincronización
+	•	Guardar local inmediatamente
+	•	Sincronizar con la nube automáticamente
+	•	Al abrir en otro dispositivo descargar automáticamente los últimos datos
+	•	No preguntar “descargar datos”
+	•	Resolver conflictos por última modificación (updatedAt)
+
+⸻
+
+11. Exportación
+
+El viaje debe aparecer en el PDF de exportación incluyendo:
+	•	cliente
+	•	modoViaje
+	•	todas las paradas
+	•	citas planificadas
+	•	llegada y salida real
+	•	finLugar / finHora / finViajeNota (si existen)
+
+⸻
+
+12. UX obligatoria
+	•	Cliente NO obligatorio
+	•	Campos mínimos obligatorios
+	•	Botones grandes para usar en cabina
+	•	Flujo rápido
+	•	Diseñado para móvil
+
+⸻
+
+13. Migración
+
+Si existen viajes antiguos:
+	•	origen → convertir en CARGA
+	•	destino → convertir en DESCARGA
+	•	mantener datos existentes
+
+⸻
+
+Implementar todo esto sin romper otras partes de la app.
+
+⸻
+
+Cuando Replit termine, no pruebes primero creando 10 viajes.
+Prueba esto (muy importante):
+	1.	Crear SOLO_CARGA
+	2.	Crear COMPLETO con 2 cargas
+	3.	Marcar llegadas y salidas
+	4.	Abrir en otro dispositivo
+
+Ahí es donde suelen aparecer los bugs 👀.
+
+Cuando lo tengas, enséñame la pantalla de detalle del viaje — ahí es donde puedo mejorarte muchísimo la usabilidad.
