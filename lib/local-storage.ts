@@ -1191,6 +1191,101 @@ export function findRate(customRates: UserDietRate[] | null, scope: string, pct:
   return fallback[scope]?.[pct] ?? 0;
 }
 
+export function resolveNaturalDayDietFinancials(
+  nd: NaturalDayDietEntry,
+  jornadas: Jornada[],
+  customRates: UserDietRate[] | null,
+  extrasCfg?: UserDayExtras | null,
+): {
+  dietAmount: number;
+  plusItems: Array<{ concepto: string; amount: number; id: string }>;
+  plusTotal: number;
+} {
+  const configured = findRate(customRates, nd.type, nd.percentage);
+  const explicitPluses = Array.isArray(nd.plusItems)
+    ? nd.plusItems
+        .filter((p) => p && Number.isFinite(Number(p.amount)) && Number(p.amount) > 0)
+        .map((p) => ({
+          concepto: String(p.concepto || "Plus").trim() || "Plus",
+          amount: Math.round(Number(p.amount) * 100) / 100,
+          id: String(p.id || `${nd.date}_${p.concepto || "plus"}`),
+        }))
+    : [];
+
+  const explicitPlusTotal = Math.round(
+    explicitPluses.reduce((sum, p) => sum + p.amount, 0) * 100,
+  ) / 100;
+
+  const rawAmount = Number.isFinite(Number(nd.amount)) ? Number(nd.amount) : 0;
+  const dietAmount =
+    Number.isFinite(configured) && configured > 0
+      ? Math.round(configured * 100) / 100
+      : Math.max(0, Math.round((rawAmount - explicitPlusTotal) * 100) / 100);
+
+  // Compatibilidad con registros antiguos: algunas dietas naturales guardaron
+  // dieta + plus dentro de amount y dejaron plusItems vacío. Solo recuperamos
+  // ese plus cuando la diferencia coincide con conceptos reales vinculados al
+  // día (jornada anterior/siguiente o Domingo/Festivo). Nunca inventamos pluses.
+  if (explicitPluses.length === 0) {
+    const legacyExcess = Math.round((rawAmount - dietAmount) * 100) / 100;
+    if (legacyExcess > 0.009) {
+      const candidates: Array<{ concepto: string; amount: number; id: string }> = [];
+      const linkedIds = new Set(
+        [nd.previousJourneyId, nd.nextJourneyId].filter((id): id is string => Boolean(id)),
+      );
+      for (const j of jornadas) {
+        if (!linkedIds.has(j.id)) continue;
+        for (const p of j.plusItems || []) {
+          const amount = Math.round((Number(p.importe) || 0) * 100) / 100;
+          if (amount <= 0) continue;
+          candidates.push({
+            concepto: String(p.concepto || "Plus").trim() || "Plus",
+            amount,
+            id: `legacy_${nd.date}_${j.id}_${String(p.concepto || "plus")}`,
+          });
+        }
+      }
+      if (nd.isDomingo === true && Number(extrasCfg?.extra_sunday || 0) > 0) {
+        candidates.push({
+          concepto: "Domingo",
+          amount: Math.round(Number(extrasCfg!.extra_sunday) * 100) / 100,
+          id: `legacy_${nd.date}_domingo`,
+        });
+      }
+      if (nd.isFestivo === true && Number(extrasCfg?.extra_holiday || 0) > 0) {
+        candidates.push({
+          concepto: "Festivo",
+          amount: Math.round(Number(extrasCfg!.extra_holiday) * 100) / 100,
+          id: `legacy_${nd.date}_festivo`,
+        });
+      }
+
+      // Busca una combinación pequeña que cuadre exactamente con el exceso.
+      // Normalmente será un único plus (p.ej. Formación 14 €).
+      const maxMask = Math.min(1 << Math.min(candidates.length, 12), 1 << 12);
+      for (let mask = 1; mask < maxMask; mask++) {
+        let sum = 0;
+        const picked: typeof candidates = [];
+        for (let i = 0; i < Math.min(candidates.length, 12); i++) {
+          if ((mask & (1 << i)) === 0) continue;
+          sum += candidates[i].amount;
+          picked.push(candidates[i]);
+        }
+        if (Math.abs(sum - legacyExcess) < 0.011) {
+          const plusTotal = Math.round(sum * 100) / 100;
+          return { dietAmount, plusItems: picked, plusTotal };
+        }
+      }
+    }
+  }
+
+  return {
+    dietAmount,
+    plusItems: explicitPluses,
+    plusTotal: explicitPlusTotal,
+  };
+}
+
 export function calcDietaWithCustomRates(
   tipoRuta: string,
   pernocta: boolean,
@@ -2872,34 +2967,23 @@ export async function getResumenDietas(
     if (nd.date < from || nd.date > to) continue;
     if (!nd.confirmedByUser || nd.dismissedAt) continue;
 
-    // La dieta base y los pluses son conceptos separados. Algunos registros
-    // antiguos guardaron en nd.amount la suma dieta + pluses; para el resumen
-    // recalculamos siempre la dieta desde la tarifa vigente del tipo/porcentaje.
-    const configuredDietAmount = findRate(naturalDayRates, nd.type, nd.percentage);
-    const dietAmount =
-      Number.isFinite(configuredDietAmount) && configuredDietAmount > 0
-        ? configuredDietAmount
-        : Math.max(
-            0,
-            Number(nd.amount || 0) -
-              (nd.plusItems || []).reduce((sum, pi) => sum + (Number(pi.amount) || 0), 0),
-          );
+    const resolved = resolveNaturalDayDietFinancials(nd, all, naturalDayRates, extrasCfg);
+    const dietAmount = resolved.dietAmount;
 
     totalGeneral = Math.round((totalGeneral + dietAmount) * 100) / 100;
     const key = `${nd.type}_${nd.percentage}`;
     if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
     desglose[key].cantidad++;
     desglose[key].total = Math.round((desglose[key].total + dietAmount) * 100) / 100;
-    if (nd.plusItems && nd.plusItems.length > 0) {
-      for (const pi of nd.plusItems) {
-        const amt = Number.isFinite(Number(pi.amount)) ? Number(pi.amount) : 0;
-        if (amt <= 0) continue;
-        totalPlus = Math.round((totalPlus + amt) * 100) / 100;
-        const concepto = String(pi.concepto || "Plus").trim().slice(0, 100) || "Plus";
-        if (!plusDesglose[concepto]) plusDesglose[concepto] = { cantidad: 0, total: 0 };
-        plusDesglose[concepto].cantidad++;
-        plusDesglose[concepto].total = Math.round((plusDesglose[concepto].total + amt) * 100) / 100;
-      }
+
+    for (const pi of resolved.plusItems) {
+      const amt = Number.isFinite(Number(pi.amount)) ? Number(pi.amount) : 0;
+      if (amt <= 0) continue;
+      totalPlus = Math.round((totalPlus + amt) * 100) / 100;
+      const concepto = String(pi.concepto || "Plus").trim().slice(0, 100) || "Plus";
+      if (!plusDesglose[concepto]) plusDesglose[concepto] = { cantidad: 0, total: 0 };
+      plusDesglose[concepto].cantidad++;
+      plusDesglose[concepto].total = Math.round((plusDesglose[concepto].total + amt) * 100) / 100;
     }
   }
 
