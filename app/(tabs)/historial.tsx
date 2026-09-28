@@ -47,7 +47,6 @@ import {
   updateJornadaFerryData,
   splitOffsiteWeeklyRestEntry,
   calcDayExtra,
-  getResumenDietas,
   resolveNaturalDayDietFinancials,
   type UserDietRate,
   type UserDayExtras,
@@ -1184,12 +1183,6 @@ export default function HistorialScreen() {
     queryFn: () => listarJornadas(periodo.from, periodo.to),
   });
 
-  const dietSummaryQuery = useQuery({
-    queryKey: ["dietas-resumen", periodo.from, periodo.to, syncVersion],
-    queryFn: () => getResumenDietas(periodo.from, periodo.to),
-    enabled: billingMode === "dietas",
-  });
-
   const compsQuery = useQuery<Compensacion[]>({
     queryKey: ["compensaciones", syncVersion],
     queryFn: () => listarCompensaciones(),
@@ -1813,21 +1806,16 @@ export default function HistorialScreen() {
     return acc + (Number.isFinite(base) ? base : 0);
   }, 0) + (extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal;
 
-  const totalBaseBilling =
-    billingMode === "dietas" && dietSummaryQuery.data
-      ? Number(dietSummaryQuery.data.total || 0)
-      : fallbackBaseBilling;
-
-  const fallbackExtras = jornadasData.reduce((acc, j) => {
-    const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
-    const plus = j.plusItems ? j.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
-    return acc + dayExtra + plus;
-  }, 0) + (extraDaysSplit.totalExtras || 0) + naturalDayPlusesTotal;
+  const totalBaseBilling = fallbackBaseBilling;
 
   const totalExtras =
-    billingMode === "dietas" && dietSummaryQuery.data
-      ? Number(dietSummaryQuery.data.extras?.totalExtras || 0) + Number(dietSummaryQuery.data.plus?.totalPlus || 0)
-      : fallbackExtras;
+    jornadasData.reduce((acc, j) => {
+      const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+      const plus = j.plusItems ? j.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
+      return acc + dayExtra + plus;
+    }, 0) +
+    (extraDaysSplit.totalExtras || 0) +
+    naturalDayPlusesTotal;
   const totalFerryExtras = useMemo(() => {
     let total = 0;
     const linkedJornadaIds = new Set<string>();
