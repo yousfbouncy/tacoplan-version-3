@@ -2,14 +2,10 @@ import React from "react";
 import { View, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSync } from "@/lib/sync-context";
-import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 
 export default function SyncStatusBadge() {
   const { syncStatus } = useSync();
-  const { isGuest } = useAuth();
-
-  if (isGuest) return null;
 
   let iconName: keyof typeof Ionicons.glyphMap = "cloud-outline";
   let color = Colors.light.textSecondary;

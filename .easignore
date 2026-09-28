@@ -1,0 +1,103 @@
+# ============================================================
+# EAS Build ignore - managed workflow Expo - Tacoplan
+# OBJETIVO: tarball < 20 MB (antes 352 MB → EPIPE upload Google)
+# ============================================================
+
+# --- Caches y entorno local (NO VAN NUNCA) ---
+.home/
+.dbg/
+.expo/
+.vscode/
+.trae/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- EAS local caches (SUBIDOS DOBLES!) ---
+.eas/
+.expo-dev-client/
+.expo-dev/
+.turtle/
+.webpack/
+.rncache/
+.gradle/
+
+# --- Git (EAS ya no lo necesita en el tarball) ---
+.git/
+.gitignore
+.gitattributes
+
+# --- Builds locales ANTERIORES (ROOT CAUSE EPIPE!) ---
+*.apk
+*.aab
+*.ipa
+*.app
+*.dmg
+*.tar.gz
+*.tgz
+build-*.apk
+android-build/
+ios-build/
+
+# --- Prebuild folders (managed = EAS hace el prebuild en cloud) ---
+android/
+ios/
+
+# --- Distribución web / Node server local ---
+dist/
+static-build/
+server_dist/
+build/
+out/
+export-web/
+web-build/
+.expo-shared/
+.expo-source-maps/
+.expo-static-assets/
+expo-export-*.log
+
+# --- Assets adjuntos de sesiones anteriores (capturas, prompts, TXT) ---
+attached_assets/
+capturas/
+screenshots/
+*.png
+*.jpg
+*.jpeg
+!assets/**/*
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.jpeg
+!assets/**/*.svg
+
+# --- Scripts / tests / server (nunca se compilan en RN) ---
+scripts/
+tests/
+server/
+replit.md
+Create
+Deploy
+Invoke
+README*.md
+CHANGELOG*.md
+
+# --- SQLs y Supabase local (dashboard, NO build RN) ---
+supabase/
+*.sql
+schema.sql
+drizzle.config.*
+debug-*.md
+
+# --- Firebase service account PRIVADAS - ¡NUNCA SUBIR! - service keys
+tacoplan-ac581-firebase-adminsdk-*.json
+*.service-account.json
+# NOTA: google-services.json y GoogleService-Info.plist SÍ van al tarball
+# (son configuraciones cliente PÚBLICAS que necesita RN build en Android/iOS)
+
+# --- Entorno ---
+.env
+.env.*
+!.env.example
+tmp/
+temp/
+credentials/
+node_modules/

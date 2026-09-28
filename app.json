@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tacoplan",
     "slug": "tacoplan",
-    "version": "2.0.0",
+    "version": "2.2.8",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tacoplan",
@@ -15,12 +15,29 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.tacoplan"
+      "bundleIdentifier": "com.tacoplan",
+      "buildNumber": "9",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para autocompletar el lugar de fin de jornada (provincia y país).",
+        "NSBluetoothAlwaysUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2 y registrar automáticamente conducciones, pausas y países.",
+        "NSBluetoothPeripheralUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2."
+      }
     },
     "android": {
-      "package": "com.yousefbouncy.tacoplan",
-      "versionCode": 20001,
-      "permissions": [],
+      "package": "com.yousfbouncy.tacoplanv2",
+      "versionCode": 20207,
+      "googleServicesFile": "./app/google-services.json",
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_ADVERTISE",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0F4C75",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -39,8 +56,19 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-updates",
+      "expo-notifications"
     ],
+    "updates": {
+      "enabled": true,
+      "url": "https://u.expo.dev/e8c809db-2b37-4d49-88aa-1e8b49a3ef6d",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "experiments": {
       "typedRoutes": true
     },
@@ -50,7 +78,9 @@
       },
       "eas": {
         "projectId": "e8c809db-2b37-4d49-88aa-1e8b49a3ef6d"
-      }
+      },
+      "supabaseUrl": "https://dutgxjwfjtqxmqonnjlp.supabase.co/",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1dGd4andmanRxeG1xb25uamxwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMTczNDIsImV4cCI6MjA4Njc5MzM0Mn0.-ZMc99z9_OBsvDgszIZ8c_y4RfS8B79D7c7hpGio7HA"
     },
     "owner": "yousfbouncy"
   }

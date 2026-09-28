@@ -6,11 +6,52 @@ import { createServer } from "node:http";
 
 // server/supabase.ts
 import { createClient } from "@supabase/supabase-js";
-var supabaseUrl = process.env.SUPABASE_URL;
-var supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-var supabase = createClient(supabaseUrl, supabaseAnonKey);
+import * as fs from "fs";
+import * as path from "path";
+function loadDotEnvIfPresent() {
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (!fs.existsSync(envPath)) return;
+    const content = fs.readFileSync(envPath, "utf-8");
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const idx = line.indexOf("=");
+      if (idx <= 0) continue;
+      const key = line.slice(0, idx).trim();
+      let value = line.slice(idx + 1).trim();
+      if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] == null) process.env[key] = value;
+    }
+  } catch {
+  }
+}
+loadDotEnvIfPresent();
+var supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+var supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+var supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE;
+if (!supabaseUrl) {
+  throw new Error("supabaseUrl is required (set SUPABASE_URL or EXPO_PUBLIC_SUPABASE_URL)");
+}
+if (!supabaseAnonKey) {
+  throw new Error("supabaseAnonKey is required (set SUPABASE_ANON_KEY or EXPO_PUBLIC_SUPABASE_ANON_KEY)");
+}
+var SUPABASE_URL = supabaseUrl;
+var SUPABASE_ANON_KEY = supabaseAnonKey;
+var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+var supabaseAdmin = supabaseServiceRoleKey ? createClient(SUPABASE_URL, supabaseServiceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+}) : null;
+function requireSupabaseAdmin() {
+  if (!supabaseAdmin) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY (required for admin auth operations on the server).");
+  }
+  return supabaseAdmin;
+}
 function createUserClient(accessToken) {
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } }
   });
 }
@@ -21,6 +62,20 @@ async function getUserFromToken(accessToken) {
 }
 
 // server/routes.ts
+function decodeJwtRole(jwt) {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length < 2) return null;
+    const payloadB64Url = parts[1];
+    const pad = "=".repeat((4 - payloadB64Url.length % 4) % 4);
+    const payloadB64 = (payloadB64Url + pad).replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(payloadB64, "base64").toString("utf-8");
+    const payload = JSON.parse(json);
+    return typeof payload?.role === "string" ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
 async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith("Bearer ")) {
@@ -42,17 +97,23 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/register", async (req, res) => {
     try {
       const { email, password, name } = req.body;
-      if (!email || !password) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const passwordStr = typeof password === "string" ? password : "";
+      const nameStr = typeof name === "string" ? name : "";
+      if (!emailStr || !passwordStr) {
         return res.status(400).json({ message: "Email y contrasena requeridos" });
       }
-      if (password.length < 6) {
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
+      if (passwordStr.length < 6) {
         return res.status(400).json({ message: "La contrasena debe tener al menos 6 caracteres" });
       }
       const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
+        email: emailStr,
+        password: passwordStr,
         options: {
-          data: { full_name: name || "" }
+          data: { full_name: nameStr || "" }
         }
       });
       if (error) {
@@ -77,7 +138,7 @@ async function registerRoutes(app2) {
         return res.json({
           ok: true,
           needsVerification: false,
-          user: { id: data.user.id, email: data.user.email, name: data.user.user_metadata?.full_name || name || "" },
+          user: { id: data.user.id, email: data.user.email, name: data.user.user_metadata?.full_name || nameStr || "" },
           session: {
             access_token: data.session.access_token,
             refresh_token: data.session.refresh_token,
@@ -93,10 +154,15 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
-      if (!email || !password) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const passwordStr = typeof password === "string" ? password : "";
+      if (!emailStr || !passwordStr) {
         return res.status(400).json({ message: "Email y contrasena requeridos" });
       }
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
+      const { data, error } = await supabase.auth.signInWithPassword({ email: emailStr, password: passwordStr });
       if (error) {
         console.error("Supabase login error:", error);
         if (error.message.includes("Invalid login credentials")) {
@@ -129,10 +195,14 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/reset-password", async (req, res) => {
     try {
       const { email } = req.body;
-      if (!email) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (!emailStr) {
         return res.status(400).json({ message: "Email requerido" });
       }
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(emailStr, {
         redirectTo: void 0
       });
       if (error) {
@@ -147,16 +217,19 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/update-password", async (req, res) => {
     try {
       const { access_token, new_password } = req.body;
-      if (!access_token || !new_password) {
+      const accessTokenStr = typeof access_token === "string" ? access_token : "";
+      const newPasswordStr = typeof new_password === "string" ? new_password : "";
+      if (!accessTokenStr || !newPasswordStr) {
         return res.status(400).json({ message: "Token y nueva contrasena requeridos" });
       }
-      if (new_password.length < 6) {
+      if (newPasswordStr.length < 6) {
         return res.status(400).json({ message: "La contrasena debe tener al menos 6 caracteres" });
       }
-      const { error } = await supabase.auth.admin.updateUserById(
-        (await supabase.auth.getUser(access_token)).data.user?.id || "",
-        { password: new_password }
-      );
+      const { data: userData, error: userError } = await supabase.auth.getUser(accessTokenStr);
+      if (userError || !userData?.user?.id) {
+        return res.status(401).json({ message: "Token invalido o expirado" });
+      }
+      const { error } = await requireSupabaseAdmin().auth.admin.updateUserById(userData.user.id, { password: newPasswordStr });
       if (error) {
         console.error("Supabase update password error:", error);
         return res.status(400).json({ message: error.message });
@@ -169,12 +242,17 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/verify-email", async (req, res) => {
     try {
       const { email, token } = req.body;
-      if (!email || !token) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const tokenStr = typeof token === "string" ? token.trim() : "";
+      if (!emailStr || !tokenStr) {
         return res.status(400).json({ message: "Email y codigo requeridos" });
       }
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
       const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token,
+        email: emailStr,
+        token: tokenStr,
         type: "signup"
       });
       if (error) {
@@ -196,8 +274,10 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/resend-verification", async (req, res) => {
     try {
       const { email } = req.body;
-      if (!email) return res.status(400).json({ message: "Email requerido" });
-      const { error } = await supabase.auth.resend({ type: "signup", email });
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (!emailStr) return res.status(400).json({ message: "Email requerido" });
+      if (!emailStr.includes("@")) return res.status(400).json({ message: "Email invalido" });
+      const { error } = await supabase.auth.resend({ type: "signup", email: emailStr });
       if (error) {
         console.error("Resend error:", error);
         return res.status(400).json({ message: error.message });
@@ -208,18 +288,25 @@ async function registerRoutes(app2) {
     }
   });
   app2.get("/api/auth/config", async (_req, res) => {
-    res.json({
-      supabaseUrl: process.env.SUPABASE_URL,
-      supabaseAnonKey: process.env.SUPABASE_ANON_KEY
-    });
+    const supabaseUrl2 = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey2 = process.env.SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl2 || !supabaseAnonKey2) {
+      return res.status(500).json({ message: "Missing Supabase public config on server" });
+    }
+    const role = decodeJwtRole(supabaseAnonKey2);
+    if (role && role !== "anon") {
+      return res.status(500).json({ message: "Invalid SUPABASE_ANON_KEY (must be anon key)" });
+    }
+    res.json({ supabaseUrl: supabaseUrl2, supabaseAnonKey: supabaseAnonKey2 });
   });
   app2.post("/api/auth/refresh", async (req, res) => {
     try {
       const { refresh_token } = req.body;
-      if (!refresh_token) {
+      const refreshTokenStr = typeof refresh_token === "string" ? refresh_token : "";
+      if (!refreshTokenStr) {
         return res.status(400).json({ message: "Refresh token requerido" });
       }
-      const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+      const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshTokenStr });
       if (error || !data.session) {
         return res.status(401).json({ message: "No se pudo renovar la sesion" });
       }
@@ -256,7 +343,10 @@ async function registerRoutes(app2) {
           { trip_type: "NACIONAL", percent: 30, amount: 16.29 },
           { trip_type: "INTERNACIONAL", percent: 100, amount: 72.77 },
           { trip_type: "INTERNACIONAL", percent: 60, amount: 43.66 },
-          { trip_type: "INTERNACIONAL", percent: 30, amount: 21.83 }
+          { trip_type: "INTERNACIONAL", percent: 30, amount: 21.83 },
+          { trip_type: "REGIONAL", percent: 100, amount: 0 },
+          { trip_type: "REGIONAL", percent: 60, amount: 0 },
+          { trip_type: "REGIONAL", percent: 30, amount: 0 }
         ];
         const rows = defaults.map((d) => ({ ...d, user_id: userId }));
         const { data: inserted, error: insertErr } = await client.from("user_diet_rates").insert(rows).select();
@@ -294,13 +384,13 @@ async function registerRoutes(app2) {
       const token = req.accessToken;
       const userId = req.user.id;
       const client = createUserClient(token);
-      const { data, error } = await client.from("user_day_extras").select("*").eq("user_id", userId).single();
-      if (error && error.code === "PGRST116") {
-        const { data: inserted, error: insertErr } = await client.from("user_day_extras").insert({ user_id: userId, extra_saturday: 10, extra_sunday: 15, extra_holiday: 20 }).select().single();
+      const { data, error } = await client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle();
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) {
+        const { data: inserted, error: insertErr } = await client.from("user_day_extras").insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).select().single();
         if (insertErr) return res.status(500).json({ message: insertErr.message });
         return res.json({ extras: inserted });
       }
-      if (error) return res.status(500).json({ message: error.message });
       res.json({ extras: data });
     } catch (e) {
       res.status(500).json({ message: e.message });
@@ -363,7 +453,7 @@ async function registerRoutes(app2) {
     try {
       const token = req.accessToken;
       const { name } = req.body;
-      const { data, error } = await supabase.auth.admin.updateUserById(req.user.id, {
+      const { data, error } = await requireSupabaseAdmin().auth.admin.updateUserById(req.user.id, {
         user_metadata: { full_name: name }
       });
       if (error) return res.status(500).json({ message: error.message });
@@ -410,6 +500,8 @@ async function registerRoutes(app2) {
             updated_at: j.updatedAt
           };
           const optionalFields = {
+            conduccion_domingo_min: j.conduccionDomingoMin ?? null,
+            conduccion_lunes_min: j.conduccionLunesMin ?? null,
             diet_base_eur: j.dietBaseEur || null,
             diet_rule: j.dietRule || null,
             diet_calculated_at: j.dietCalculatedAt || null,
@@ -417,15 +509,23 @@ async function registerRoutes(app2) {
             plus_items: j.plusItems || null,
             planned_rest_min: j.plannedRestMin ?? null,
             planned_rest_type: j.plannedRestType || null,
-            legal_summary: j.legalSummary || null
+            legal_summary: j.legalSummary || null,
+            observaciones: j.observaciones || null,
+            previous_rest_source: j.previousRestSource || null,
+            previous_rest_id: j.previousRestId || null,
+            previous_rest_valid: j.previousRestValid ?? null,
+            morocco_payment_mode: j.moroccoPaymentMode || null,
+            morocco_trip_rate: j.moroccoTripRate ?? null,
+            morocco_pernight_rate: j.moroccoPernightRate ?? null,
+            ferry_pending: j.ferryPending ?? false,
+            ferry_rest_type: j.ferryRestType || null,
+            ferry_destination: j.ferryDestination || null,
+            ferry_extras: j.ferryExtras || null,
+            ferry_interruptions: j.ferryInterruptions || null,
+            ferry_rest_completed: j.ferryRestCompleted ?? false
           };
-          let row = { ...baseRow, ...optionalFields };
-          let { error } = await client.from("jornadas").upsert(row, { onConflict: "id" });
-          if (error && error.code === "PGRST204") {
-            row = { ...baseRow };
-            const retry = await client.from("jornadas").upsert(row, { onConflict: "id" });
-            error = retry.error;
-          }
+          const row = { ...baseRow, ...optionalFields };
+          const { error } = await client.from("jornadas").upsert(row, { onConflict: "id" });
           if (error) {
             console.error("[Sync Push] jornada upsert error:", error);
             jErrors++;
@@ -457,8 +557,8 @@ async function registerRoutes(app2) {
           }
         }
       }
-      console.log(`[Sync Push] Done: ${jPushed} jornadas ok, ${jErrors} errors; ${cPushed} compensaciones ok, ${cErrors} errors`);
-      res.json({ ok: true });
+      const hasErrors = jErrors > 0 || cErrors > 0;
+      res.json({ ok: !hasErrors, pushed: { jornadas: jPushed, compensaciones: cPushed }, errors: { jornadas: jErrors, compensaciones: cErrors } });
     } catch (e) {
       console.error("Sync push error:", e);
       res.status(500).json({ message: e.message });
@@ -491,6 +591,8 @@ async function registerRoutes(app2) {
         startAt: j.start_at,
         endAt: j.end_at,
         conduccionMin: j.conduccion_min,
+        conduccionDomingoMin: j.conduccion_domingo_min ?? null,
+        conduccionLunesMin: j.conduccion_lunes_min ?? null,
         tipoRuta: j.tipo_ruta,
         pernocta: j.pernocta,
         dietaModo: j.dieta_modo,
@@ -511,7 +613,20 @@ async function registerRoutes(app2) {
         plannedRestMin: j.planned_rest_min ?? null,
         plannedRestType: j.planned_rest_type ?? null,
         plusItems: j.plus_items ?? null,
+        observaciones: j.observaciones ?? null,
         legalSummary: j.legal_summary ?? null,
+        previousRestSource: j.previous_rest_source ?? null,
+        previousRestId: j.previous_rest_id ?? null,
+        previousRestValid: j.previous_rest_valid ?? null,
+        moroccoPaymentMode: j.morocco_payment_mode ?? null,
+        moroccoTripRate: j.morocco_trip_rate ?? null,
+        moroccoPernightRate: j.morocco_pernight_rate ?? null,
+        ferryPending: j.ferry_pending != null ? j.ferry_pending : null,
+        ferryRestType: j.ferry_rest_type ?? null,
+        ferryDestination: j.ferry_destination ?? null,
+        ferryExtras: j.ferry_extras ?? null,
+        ferryInterruptions: j.ferry_interruptions ?? null,
+        ferryRestCompleted: j.ferry_rest_completed != null ? j.ferry_rest_completed : null,
         updatedAt: j.updated_at,
         syncStatus: "synced"
       }));
@@ -543,13 +658,386 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: e.message });
     }
   });
+  app2.get("/api/user/ferry-config", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { data, error } = await client.from("user_ferry_config").select("*").eq("user_id", userId).maybeSingle();
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) {
+        const defaults = {
+          user_id: userId,
+          crosses_ferry: false,
+          route_mode: "spain",
+          payment_mode: "spain_diet",
+          trip_rate: 0,
+          pernight_rate: 0,
+          ferry_rest_enabled: false,
+          ferry_transit_rate: 54.3,
+          ferry_cabin_rate: 54.3,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        const { data: inserted, error: insertErr } = await client.from("user_ferry_config").insert(defaults).select().single();
+        if (insertErr) return res.status(500).json({ message: insertErr.message });
+        return res.json({ config: inserted });
+      }
+      res.json({ config: data });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.put("/api/user/ferry-config", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { crosses_ferry, route_mode, payment_mode, trip_rate, pernight_rate, ferry_rest_enabled, ferry_transit_rate, ferry_cabin_rate } = req.body;
+      const { error } = await client.from("user_ferry_config").upsert(
+        {
+          user_id: userId,
+          crosses_ferry: crosses_ferry ?? false,
+          route_mode: route_mode ?? "spain",
+          payment_mode: payment_mode ?? "spain_diet",
+          trip_rate: trip_rate ?? 0,
+          pernight_rate: pernight_rate ?? 0,
+          ferry_rest_enabled: ferry_rest_enabled ?? false,
+          ferry_transit_rate: ferry_transit_rate ?? 54.3,
+          ferry_cabin_rate: ferry_cabin_rate ?? 54.3,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        { onConflict: "user_id" }
+      );
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.get("/api/user/ferry-rests", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { data, error } = await client.from("ferry_rests").select("*").eq("user_id", userId).order("fecha", { ascending: false });
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ferryRests: data || [] });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.post("/api/user/ferry-rests", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { id, fecha, start_time, rest_type, interruptions, computed_end, valid, reason } = req.body;
+      if (!fecha || !start_time || !rest_type) {
+        return res.status(400).json({ message: "fecha, start_time y rest_type requeridos" });
+      }
+      const row = {
+        id: id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        user_id: userId,
+        fecha,
+        start_time,
+        rest_type,
+        interruptions: interruptions || [],
+        computed_end: computed_end || null,
+        valid: valid ?? true,
+        reason: reason || null,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const { data, error } = await client.from("ferry_rests").upsert(row, { onConflict: "id" }).select().single();
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ferryRest: data });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.delete("/api/user/ferry-rests/:id", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const client = createUserClient(token);
+      const { error } = await client.from("ferry_rests").delete().eq("id", req.params.id);
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.get("/api/user/morocco-trips", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { data, error } = await client.from("morocco_trips").select("*").eq("user_id", userId).order("fecha", { ascending: false });
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ moroccoTrips: data || [] });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.post("/api/user/morocco-trips", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { id, fecha, origen, destino, estado, importe } = req.body;
+      if (!fecha || !origen || !destino) {
+        return res.status(400).json({ message: "fecha, origen y destino requeridos" });
+      }
+      const row = {
+        id: id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        user_id: userId,
+        fecha,
+        origen,
+        destino,
+        estado: estado || "completed",
+        importe: importe ?? 0,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const { data, error } = await client.from("morocco_trips").upsert(row, { onConflict: "id" }).select().single();
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ moroccoTrip: data });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.delete("/api/user/morocco-trips/:id", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const client = createUserClient(token);
+      const { error } = await client.from("morocco_trips").delete().eq("id", req.params.id);
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.get("/api/sync/profile", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const userEmail = req.user.email;
+      const client = createUserClient(token);
+      const { data, error } = await client.from("profiles").select("*").eq("id", userId).maybeSingle();
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) {
+        const { data: insertedProfile, error: insertProfileError } = await client.from("profiles").insert({
+          id: userId,
+          email: userEmail || "",
+          display_name: "",
+          language: "es",
+          period_type: "AUTO_01_30",
+          period_start_day: 1,
+          period_end_day: 30,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (insertProfileError) return res.status(500).json({ message: insertProfileError.message });
+        return res.json({ profile: insertedProfile });
+      }
+      res.json({ profile: data });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.put("/api/sync/profile", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { display_name, language, period_type, period_start_day, period_end_day } = req.body;
+      const { error } = await client.from("profiles").upsert({
+        id: userId,
+        display_name: display_name ?? null,
+        language: language ?? "es",
+        period_type: period_type ?? "AUTO_01_30",
+        period_start_day: period_start_day ?? 1,
+        period_end_day: period_end_day ?? 30,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      }, { onConflict: "id" });
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.get("/api/sync/dietas-config", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const [ratesRes, extrasRes, holidaysRes] = await Promise.all([
+        client.from("user_diet_rates").select("*").eq("user_id", userId),
+        client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
+        client.from("user_holidays").select("*").eq("user_id", userId).order("date")
+      ]);
+      const rates = ratesRes.data || [];
+      const extras = extrasRes.error ? null : extrasRes.data;
+      const holidays = holidaysRes.data || [];
+      const { data: dietasConfigData, error: dietasConfigError } = await client.from("dietas_config").select("*").eq("user_id", userId).maybeSingle();
+      if (dietasConfigError) return res.status(500).json({ message: dietasConfigError.message });
+      let dietasConfig = dietasConfigData;
+      if (!dietasConfig) {
+        const { data: newConfig, error: insertError } = await client.from("dietas_config").insert({
+          user_id: userId,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (insertError) return res.status(500).json({ message: insertError.message });
+        dietasConfig = newConfig;
+      }
+      res.json({ rates, extras, holidays, dietasConfig });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.put("/api/sync/dietas-config", authMiddleware, async (req, res) => {
+    try {
+      const token = req.accessToken;
+      const userId = req.user.id;
+      const client = createUserClient(token);
+      const { rates, extras, dietasConfig } = req.body;
+      if (rates && Array.isArray(rates)) {
+        for (const r of rates) {
+          await client.from("user_diet_rates").upsert(
+            { user_id: userId, trip_type: r.trip_type, percent: r.percent, amount: r.amount, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
+            { onConflict: "user_id,trip_type,percent" }
+          );
+        }
+      }
+      if (extras) {
+        await client.from("user_day_extras").upsert(
+          { user_id: userId, extra_saturday: extras.extra_saturday, extra_sunday: extras.extra_sunday, extra_holiday: extras.extra_holiday, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
+          { onConflict: "user_id" }
+        );
+      }
+      if (dietasConfig) {
+        await client.from("dietas_config").upsert({
+          user_id: userId,
+          ...dietasConfig,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }, { onConflict: "user_id" });
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+  app2.post("/api/sync/all", authMiddleware, async (req, res) => {
+    try {
+      const user = req.user;
+      const token = req.accessToken;
+      const client = createUserClient(token);
+      const userId = user.id;
+      const [profileRes, jornadasRes, compensacionesRes, ratesRes, extrasRes, holidaysRes] = await Promise.all([
+        client.from("profiles").select("*").eq("id", userId).maybeSingle(),
+        client.from("jornadas").select("*").order("start_at", { ascending: false }),
+        client.from("compensaciones").select("*").order("fecha_limite", { ascending: true }),
+        client.from("user_diet_rates").select("*").eq("user_id", userId),
+        client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
+        client.from("user_holidays").select("*").eq("user_id", userId).order("date")
+      ]);
+      let profile = profileRes.error ? null : profileRes.data;
+      if (!profile) {
+        const { data: insertedProfile, error: insertProfileError } = await client.from("profiles").insert({
+          id: userId,
+          email: user.email || "",
+          display_name: "",
+          language: "es",
+          period_type: "AUTO_01_30",
+          period_start_day: 1,
+          period_end_day: 30,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).select().single();
+        if (!insertProfileError) profile = insertedProfile;
+      }
+      const mappedJornadas = (jornadasRes.data || []).map((j) => ({
+        id: j.id,
+        fechaInicio: j.fecha_inicio,
+        horaInicio: j.hora_inicio,
+        lugarInicio: j.lugar_inicio,
+        fechaFin: j.fecha_fin,
+        horaFin: j.hora_fin,
+        lugarFin: j.lugar_fin,
+        startAt: j.start_at,
+        endAt: j.end_at,
+        conduccionMin: j.conduccion_min,
+        conduccionDomingoMin: j.conduccion_domingo_min ?? null,
+        conduccionLunesMin: j.conduccion_lunes_min ?? null,
+        tipoRuta: j.tipo_ruta,
+        pernocta: j.pernocta,
+        dietaModo: j.dieta_modo,
+        dietaManualTipo: j.dieta_manual_tipo,
+        dietaManualPct: j.dieta_manual_pct,
+        dietaImporteEur: j.dieta_importe_eur,
+        dietasItems: j.dietas_items,
+        dietaPercent: j.dieta_percent ?? null,
+        dayFlag: j.day_flag ?? null,
+        dayExtraEur: j.day_extra_eur ?? null,
+        dietBaseEur: j.diet_base_eur ?? null,
+        dietRule: j.diet_rule ?? null,
+        dietCalculatedAt: j.diet_calculated_at ?? null,
+        descansoAnteriorMin: j.descanso_anterior_min,
+        tipoDescansoAnterior: j.tipo_descanso_anterior,
+        duracionJornadaMin: j.duracion_jornada_min,
+        countsAsDailyReduced: j.counts_as_daily_reduced || false,
+        plannedRestMin: j.planned_rest_min ?? null,
+        plannedRestType: j.planned_rest_type ?? null,
+        plusItems: j.plus_items ?? null,
+        observaciones: j.observaciones ?? null,
+        legalSummary: j.legal_summary ?? null,
+        previousRestSource: j.previous_rest_source ?? null,
+        previousRestId: j.previous_rest_id ?? null,
+        previousRestValid: j.previous_rest_valid ?? null,
+        moroccoPaymentMode: j.morocco_payment_mode ?? null,
+        moroccoTripRate: j.morocco_trip_rate ?? null,
+        moroccoPernightRate: j.morocco_pernight_rate ?? null,
+        ferryPending: j.ferry_pending != null ? j.ferry_pending : null,
+        ferryRestType: j.ferry_rest_type ?? null,
+        ferryDestination: j.ferry_destination ?? null,
+        ferryExtras: j.ferry_extras ?? null,
+        ferryInterruptions: j.ferry_interruptions ?? null,
+        ferryRestCompleted: j.ferry_rest_completed != null ? j.ferry_rest_completed : null,
+        updatedAt: j.updated_at,
+        syncStatus: "synced"
+      }));
+      const mappedCompensaciones = (compensacionesRes.data || []).map((c) => ({
+        id: c.id,
+        jornadaId: c.jornada_id,
+        horasDeuda: c.horas_deuda,
+        minutosDeuda: c.minutos_deuda,
+        fechaLimite: c.fecha_limite,
+        compensada: c.compensada,
+        fechaCompensacion: c.fecha_compensacion,
+        updatedAt: c.updated_at,
+        syncStatus: "synced"
+      }));
+      const rates = ratesRes.data || [];
+      let extras = extrasRes.error ? null : extrasRes.data;
+      if (!extras) {
+        const { data: insertedExtras, error: insertExtrasError } = await client.from("user_day_extras").insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).select().single();
+        if (!insertExtrasError) extras = insertedExtras;
+      }
+      const holidays = holidaysRes.data || [];
+      res.json({
+        profile,
+        jornadas: mappedJornadas,
+        compensaciones: mappedCompensaciones,
+        dietasConfig: { rates, extras, holidays }
+      });
+    } catch (e) {
+      console.error("[Sync All] error:", e);
+      res.status(500).json({ message: e.message });
+    }
+  });
   const httpServer = createServer(app2);
   return httpServer;
 }
 
 // server/index.ts
-import * as fs from "fs";
-import * as path from "path";
+import * as fs2 from "fs";
+import * as path2 from "path";
+import * as http from "http";
 var app = express();
 var log = console.log;
 function setupCors(app2) {
@@ -566,13 +1054,13 @@ function setupCors(app2) {
     const origin = req.header("origin");
     const isLocalhost = origin?.startsWith("http://localhost:") || origin?.startsWith("http://127.0.0.1:");
     if (origin && (origins.has(origin) || isLocalhost)) {
+      res.header("Vary", "Origin");
       res.header("Access-Control-Allow-Origin", origin);
       res.header(
         "Access-Control-Allow-Methods",
         "GET, POST, PUT, DELETE, OPTIONS"
       );
       res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.header("Access-Control-Allow-Credentials", "true");
     }
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
@@ -583,6 +1071,7 @@ function setupCors(app2) {
 function setupBodyParsing(app2) {
   app2.use(
     express.json({
+      limit: "1mb",
       verify: (req, _res, buf) => {
         req.rawBody = buf;
       }
@@ -591,9 +1080,32 @@ function setupBodyParsing(app2) {
   app2.use(express.urlencoded({ extended: false }));
 }
 function setupRequestLogging(app2) {
+  const sensitiveKeys = /* @__PURE__ */ new Set([
+    "access_token",
+    "refresh_token",
+    "password",
+    "new_password",
+    "token",
+    "authorization"
+  ]);
+  function redact(value, depth = 0) {
+    if (depth > 8) return "[REDACTED]";
+    if (value == null) return value;
+    if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+    if (typeof value === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (sensitiveKeys.has(String(k).toLowerCase())) out[k] = "[REDACTED]";
+        else out[k] = redact(v, depth + 1);
+      }
+      return out;
+    }
+    if (typeof value === "string" && value.length > 2e3) return value.slice(0, 2e3) + "\u2026";
+    return value;
+  }
   app2.use((req, res, next) => {
     const start = Date.now();
-    const path2 = req.path;
+    const path3 = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -601,11 +1113,11 @@ function setupRequestLogging(app2) {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
-      if (!path2.startsWith("/api")) return;
+      if (!path3.startsWith("/api")) return;
       const duration = Date.now() - start;
-      let logLine = `${req.method} ${path2} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      let logLine = `${req.method} ${path3} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse && !path3.startsWith("/api/auth")) {
+        logLine += ` :: ${JSON.stringify(redact(capturedJsonResponse))}`;
       }
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "\u2026";
@@ -617,8 +1129,8 @@ function setupRequestLogging(app2) {
 }
 function getAppName() {
   try {
-    const appJsonPath = path.resolve(process.cwd(), "app.json");
-    const appJsonContent = fs.readFileSync(appJsonPath, "utf-8");
+    const appJsonPath = path2.resolve(process.cwd(), "app.json");
+    const appJsonContent = fs2.readFileSync(appJsonPath, "utf-8");
     const appJson = JSON.parse(appJsonContent);
     return appJson.expo?.name || "App Landing Page";
   } catch {
@@ -626,19 +1138,19 @@ function getAppName() {
   }
 }
 function serveExpoManifest(platform, res) {
-  const manifestPath = path.resolve(
+  const manifestPath = path2.resolve(
     process.cwd(),
     "static-build",
     platform,
     "manifest.json"
   );
-  if (!fs.existsSync(manifestPath)) {
+  if (!fs2.existsSync(manifestPath)) {
     return res.status(404).json({ error: `Manifest not found for platform: ${platform}` });
   }
   res.setHeader("expo-protocol-version", "1");
   res.setHeader("expo-sfv-version", "0");
   res.setHeader("content-type", "application/json");
-  const manifest = fs.readFileSync(manifestPath, "utf-8");
+  const manifest = fs2.readFileSync(manifestPath, "utf-8");
   res.send(manifest);
 }
 function serveLandingPage({
@@ -659,17 +1171,48 @@ function serveLandingPage({
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.status(200).send(html);
 }
+function proxyToMetro(req, res, metroPort) {
+  const proxyHeaders = { ...req.headers };
+  proxyHeaders.host = `localhost:${metroPort}`;
+  proxyHeaders.origin = `http://localhost:${metroPort}`;
+  delete proxyHeaders.referer;
+  const options = {
+    hostname: "127.0.0.1",
+    port: metroPort,
+    path: req.originalUrl,
+    method: req.method,
+    headers: proxyHeaders
+  };
+  const proxyReq = http.request(options, (proxyRes) => {
+    const responseHeaders = {};
+    for (const [key, value] of Object.entries(proxyRes.headers)) {
+      if (value !== void 0) {
+        responseHeaders[key] = value;
+      }
+    }
+    delete responseHeaders["access-control-allow-origin"];
+    res.writeHead(proxyRes.statusCode || 502, responseHeaders);
+    proxyRes.pipe(res, { end: true });
+  });
+  proxyReq.on("error", () => {
+    res.writeHead(502, { "Content-Type": "text/plain" });
+    res.end("Metro bundler not ready yet");
+  });
+  req.pipe(proxyReq, { end: true });
+}
 function configureExpoAndLanding(app2) {
-  const templatePath = path.resolve(
+  const templatePath = path2.resolve(
     process.cwd(),
     "server",
     "templates",
     "landing-page.html"
   );
-  const landingPageTemplate = fs.readFileSync(templatePath, "utf-8");
+  const landingPageTemplate = fs2.readFileSync(templatePath, "utf-8");
   const appName = getAppName();
-  const distPath = path.resolve(process.cwd(), "dist");
-  const hasWebBuild = fs.existsSync(path.join(distPath, "index.html"));
+  const distPath = path2.resolve(process.cwd(), "dist");
+  const hasWebBuild = fs2.existsSync(path2.join(distPath, "index.html"));
+  const isDev = process.env.NODE_ENV !== "production";
+  const metroPort = 8082;
   log("Serving static Expo files with dynamic manifest routing");
   if (hasWebBuild) {
     log("Web build found in dist/ - serving app at /");
@@ -686,9 +1229,10 @@ function configureExpoAndLanding(app2) {
     }
     next();
   });
-  app2.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
-  app2.use(express.static(path.resolve(process.cwd(), "static-build")));
+  app2.use("/assets", express.static(path2.resolve(process.cwd(), "assets")));
+  app2.use(express.static(path2.resolve(process.cwd(), "static-build")));
   if (hasWebBuild) {
+    log("Serving static web build from dist/");
     app2.use(express.static(distPath));
     app2.use((req, res, next) => {
       if (req.path.startsWith("/api")) {
@@ -699,9 +1243,21 @@ function configureExpoAndLanding(app2) {
         return next();
       }
       if (req.method === "GET" && req.accepts("html")) {
-        return res.sendFile(path.join(distPath, "index.html"));
+        return res.sendFile(path2.join(distPath, "index.html"));
       }
       next();
+    });
+  } else if (isDev) {
+    log(`Dev mode: proxying web requests to Metro on port ${metroPort}`);
+    app2.use((req, res, next) => {
+      if (req.path.startsWith("/api")) {
+        return next();
+      }
+      const platform = req.header("expo-platform");
+      if (platform && (platform === "ios" || platform === "android")) {
+        return next();
+      }
+      return proxyToMetro(req, res, metroPort);
     });
   } else {
     app2.use((req, res, next) => {
@@ -722,7 +1278,8 @@ function setupErrorHandler(app2) {
   app2.use((err, _req, res, next) => {
     const error = err;
     const status = error.status || error.statusCode || 500;
-    const message = error.message || "Internal Server Error";
+    const isProd = process.env.NODE_ENV === "production";
+    const message = isProd && status >= 500 ? "Internal Server Error" : error.message || "Internal Server Error";
     console.error("Internal Server Error:", err);
     if (res.headersSent) {
       return next(err);
@@ -738,14 +1295,14 @@ function setupErrorHandler(app2) {
   const server = await registerRoutes(app);
   setupErrorHandler(app);
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
   server.listen(
     {
       port,
-      host: "0.0.0.0",
-      reusePort: true
+      host
     },
     () => {
-      log(`express server serving on port ${port}`);
+      log(`express server serving on http://${host}:${port}`);
     }
   );
   if (process.env.NODE_ENV === "production" && port !== 8081) {

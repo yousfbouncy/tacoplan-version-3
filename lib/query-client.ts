@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 
 export function getApiUrl(): string {
   const apiUrl = process.env.EXPO_PUBLIC_API_URL;
@@ -15,6 +16,24 @@ export function getApiUrl(): string {
       const clean = stripped.includes("://") ? stripped : `https://${stripped}`;
       return clean.replace(/\/$/, "");
     }
+    const extra: any = (Constants.expoConfig as any)?.extra ?? {};
+    const extraApiUrl = extra.EXPO_PUBLIC_API_URL ?? extra.apiUrl ?? null;
+    if (extraApiUrl) {
+      const clean = String(extraApiUrl).includes("://") ? String(extraApiUrl) : `https://${extraApiUrl}`;
+      return clean.replace(/\/$/, "");
+    }
+
+    const hostUri =
+      (Constants.expoConfig as any)?.hostUri ||
+      (Constants as any)?.manifest?.debuggerHost ||
+      (Constants as any)?.manifest2?.extra?.expoClient?.hostUri ||
+      null;
+    if (hostUri && typeof hostUri === "string") {
+      const hostPart = hostUri.includes("://") ? hostUri.split("://")[1] : hostUri;
+      const hostname = hostPart.split("/")[0].split(":")[0];
+      if (hostname) return `http://${hostname}:5000`;
+    }
+
     return "http://localhost:5000";
   }
 

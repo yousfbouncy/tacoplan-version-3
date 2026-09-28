@@ -14,6 +14,7 @@ ios/
 android/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
@@ -34,8 +35,16 @@ yarn-error.*
 # local env files
 .env*.local
 
+# EAS local credentials
+credentials.json
+credentials/
+
 # typescript
 *.tsbuildinfo
 .vercel
 
 .env
+*.apk
+tacoplan-ac581-firebase-adminsdk-fbsvc-a7964a5695.json
+tacoplan-ac581-firebase-adminsdk-fbsvc-a7964a5695.json
+*.apk

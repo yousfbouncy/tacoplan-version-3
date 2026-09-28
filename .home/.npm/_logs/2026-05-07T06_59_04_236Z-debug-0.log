@@ -1,0 +1,24 @@
+0 verbose cli /Users/ejaremtchuk/.nvm/versions/node/v23.11.0/bin/node /Users/ejaremtchuk/.nvm/versions/node/v23.11.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.6.1
+2 info using node@v23.11.0
+3 silly config load:file:/Users/ejaremtchuk/.nvm/versions/node/v23.11.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/ejaremtchuk/Downloads/tacoplan version 3/.npmrc
+5 silly config load:file:/Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npmrc
+6 silly config load:file:/Users/ejaremtchuk/.nvm/versions/node/v23.11.0/etc/npmrc
+7 verbose title npm exec expo start --go
+8 verbose argv "exec" "--" "expo" "start" "--go"
+9 verbose logfile logs-max:10 dir:/Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npm/_logs/2026-05-07T06_59_04_236Z-
+10 verbose logfile /Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npm/_logs/2026-05-07T06_59_04_236Z-debug-0.log
+11 silly logfile done cleaning log files
+12 http fetch GET 200 https://registry.npmjs.org/npm 3700ms
+13 verbose cwd /Users/ejaremtchuk/Downloads/tacoplan version 3
+14 verbose os Darwin 21.6.0
+15 verbose node v23.11.0
+16 verbose npm  v11.6.1
+17 notice
+17 notice New [33mminor[39m version of npm available! [33m11.6.1[39m -> [34m11.14.0[39m
+17 notice Changelog: [34mhttps://github.com/npm/cli/releases/tag/v11.14.0[39m
+17 notice To update run: [4mnpm install -g npm@11.14.0[24m
+17 notice  { force: true, [Symbol(proc-log.meta)]: true }
+18 verbose exit 7
+19 verbose code 7

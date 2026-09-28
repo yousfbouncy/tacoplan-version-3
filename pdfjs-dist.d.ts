@@ -1,0 +1,9 @@
+declare module "pdfjs-dist/legacy/build/pdf.mjs";
+declare module "pdfjs-dist/legacy/build/pdf.worker.mjs";
+declare module "pdfjs-dist/webpack.mjs";
+declare module "pdfjs-dist/build/pdf.mjs";
+declare module "pdfjs-dist/build/pdf.min.mjs";
+declare module "pdfjs-dist/legacy/build/pdf.min.mjs";
+declare module "pdfjs-dist/build/pdf.worker.mjs";
+declare module "pdfjs-dist/build/pdf.worker.min.mjs";
+declare module "pdfjs-dist/legacy/build/pdf.worker.min.mjs";

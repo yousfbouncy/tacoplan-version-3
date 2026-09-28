@@ -1,12 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { userScopedKey } from "@/lib/user-scope";
+import { useSync } from "@/lib/sync-context";
 
-export type PeriodMode = "AUTO_01_30" | "AUTO_20_20" | "MANUAL";
+export type PeriodMode = "AUTO_01_30" | "AUTO_20_20" | "AUTO_MONTH" | "MANUAL";
 
 export interface PeriodConfig {
   mode: PeriodMode;
   manualFrom: number;
   manualTo: number;
+  _updated_at?: string;
 }
 
 export interface PeriodRange {
@@ -48,7 +51,14 @@ function computeRange(mode: PeriodMode, manualFrom: number, manualTo: number, re
   let fromYear: number, fromMonth1: number, fromDay: number;
   let toYear: number, toMonth1: number, toDay: number;
 
-  if (mode === "AUTO_01_30") {
+  if (mode === "AUTO_MONTH") {
+    fromYear = year;
+    fromMonth1 = month0 + 1;
+    fromDay = 1;
+    toYear = year;
+    toMonth1 = month0 + 1;
+    toDay = lastDayOfMonth(year, month0 + 1);
+  } else if (mode === "AUTO_01_30") {
     fromYear = year;
     fromMonth1 = month0 + 1;
     fromDay = 1;
@@ -182,14 +192,22 @@ export function PeriodProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<PeriodConfig>(DEFAULT_CONFIG);
   const [isLoaded, setIsLoaded] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const { syncVersion } = useSync();
 
   useEffect(() => {
-    AsyncStorage.getItem(PERIOD_KEY).then((raw) => {
+    let cancelled = false;
+    (async () => {
+      const raw = await AsyncStorage.getItem(await userScopedKey(PERIOD_KEY));
+      if (cancelled) return;
       if (raw) {
         try {
           const parsed = JSON.parse(raw) as PeriodConfig;
           if (parsed.mode) {
-            setConfig(parsed);
+            const mode =
+              parsed.mode === "AUTO_01_30" || parsed.mode === "AUTO_20_20" || parsed.mode === "AUTO_MONTH" || parsed.mode === "MANUAL"
+                ? parsed.mode
+                : "AUTO_01_30";
+            setConfig({ ...parsed, mode });
             setNeedsSetup(false);
           } else {
             setNeedsSetup(true);
@@ -198,36 +216,40 @@ export function PeriodProvider({ children }: { children: React.ReactNode }) {
           setNeedsSetup(true);
         }
       } else {
-        AsyncStorage.getItem("tacoplan_user_settings").then((oldRaw) => {
-          if (oldRaw) {
-            try {
-              const old = JSON.parse(oldRaw);
-              const sd = parseInt(old.period_start_day, 10);
-              const ed = parseInt(old.period_end_day, 10);
-              if (!isNaN(sd) && !isNaN(ed)) {
-                const migrated: PeriodConfig = { mode: "MANUAL", manualFrom: sd, manualTo: ed };
-                setConfig(migrated);
-                AsyncStorage.setItem(PERIOD_KEY, JSON.stringify(migrated));
-                setNeedsSetup(false);
-              } else {
-                setNeedsSetup(true);
-              }
-            } catch {
+        const oldRaw = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings"));
+        if (cancelled) return;
+        if (oldRaw) {
+          try {
+            const old = JSON.parse(oldRaw);
+            const sd = parseInt(old.period_start_day, 10);
+            const ed = parseInt(old.period_end_day, 10);
+            if (!isNaN(sd) && !isNaN(ed)) {
+              const migrated: PeriodConfig = { mode: "MANUAL", manualFrom: sd, manualTo: ed };
+              setConfig(migrated);
+              await AsyncStorage.setItem(await userScopedKey(PERIOD_KEY), JSON.stringify(migrated));
+              setNeedsSetup(false);
+            } else {
               setNeedsSetup(true);
             }
-          } else {
+          } catch {
             setNeedsSetup(true);
           }
-        });
+        } else {
+          setNeedsSetup(true);
+        }
       }
       setIsLoaded(true);
-    });
-  }, []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [syncVersion]);
 
   const saveConfig = useCallback(async (cfg: PeriodConfig) => {
-    setConfig(cfg);
+    const next: PeriodConfig = { ...cfg, _updated_at: new Date().toISOString() };
+    setConfig(next);
     setNeedsSetup(false);
-    await AsyncStorage.setItem(PERIOD_KEY, JSON.stringify(cfg));
+    await AsyncStorage.setItem(await userScopedKey(PERIOD_KEY), JSON.stringify(next));
   }, []);
 
   const getPeriod = useCallback((offset: number = 0) => {

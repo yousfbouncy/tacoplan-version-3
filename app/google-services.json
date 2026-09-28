@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "703051765922",
+    "project_id": "tacoplan-ac581",
+    "storage_bucket": "tacoplan-ac581.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:703051765922:android:059c8f11bbc6fcf37f1ffb",
+        "android_client_info": {
+          "package_name": "com.yousfbouncy.tacoplanv2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiCJryZGpM5GdzXWrfPgIFVc8AaYd5GEw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

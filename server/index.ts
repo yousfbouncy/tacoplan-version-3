@@ -36,13 +36,13 @@ function setupCors(app: express.Application) {
       origin?.startsWith("http://127.0.0.1:");
 
     if (origin && (origins.has(origin) || isLocalhost)) {
+      res.header("Vary", "Origin");
       res.header("Access-Control-Allow-Origin", origin);
       res.header(
         "Access-Control-Allow-Methods",
         "GET, POST, PUT, DELETE, OPTIONS",
       );
       res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.header("Access-Control-Allow-Credentials", "true");
     }
 
     if (req.method === "OPTIONS") {
@@ -56,6 +56,7 @@ function setupCors(app: express.Application) {
 function setupBodyParsing(app: express.Application) {
   app.use(
     express.json({
+      limit: "1mb",
       verify: (req, _res, buf) => {
         req.rawBody = buf;
       },
@@ -66,6 +67,31 @@ function setupBodyParsing(app: express.Application) {
 }
 
 function setupRequestLogging(app: express.Application) {
+  const sensitiveKeys = new Set([
+    "access_token",
+    "refresh_token",
+    "password",
+    "new_password",
+    "token",
+    "authorization",
+  ]);
+
+  function redact(value: unknown, depth = 0): unknown {
+    if (depth > 8) return "[REDACTED]";
+    if (value == null) return value;
+    if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+    if (typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (sensitiveKeys.has(String(k).toLowerCase())) out[k] = "[REDACTED]";
+        else out[k] = redact(v, depth + 1);
+      }
+      return out;
+    }
+    if (typeof value === "string" && value.length > 2000) return value.slice(0, 2000) + "…";
+    return value;
+  }
+
   app.use((req, res, next) => {
     const start = Date.now();
     const path = req.path;
@@ -83,8 +109,8 @@ function setupRequestLogging(app: express.Application) {
       const duration = Date.now() - start;
 
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (capturedJsonResponse && !path.startsWith("/api/auth")) {
+        logLine += ` :: ${JSON.stringify(redact(capturedJsonResponse))}`;
       }
 
       if (logLine.length > 80) {
@@ -284,7 +310,9 @@ function setupErrorHandler(app: express.Application) {
     };
 
     const status = error.status || error.statusCode || 500;
-    const message = error.message || "Internal Server Error";
+    const isProd = process.env.NODE_ENV === "production";
+    const message =
+      isProd && status >= 500 ? "Internal Server Error" : (error.message || "Internal Server Error");
 
     console.error("Internal Server Error:", err);
 
@@ -308,14 +336,16 @@ function setupErrorHandler(app: express.Application) {
   setupErrorHandler(app);
 
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host =
+    process.env.HOST ||
+    (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
   server.listen(
     {
       port,
-      host: "0.0.0.0",
-      reusePort: true,
+      host,
     },
     () => {
-      log(`express server serving on port ${port}`);
+      log(`express server serving on http://${host}:${port}`);
     },
   );
 

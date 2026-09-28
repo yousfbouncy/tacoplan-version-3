@@ -77,6 +77,12 @@ function formatDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function formatFechaES(dateStr: string): string {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return String(dateStr || "");
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + days);
@@ -596,15 +602,19 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   if (compensacionAgregada) {
+    const totalMin = Number(compensacionAgregada.totalDeudaHoras || 0) * 60 + Number(compensacionAgregada.totalDeudaMinutos || 0);
+    const hTot = Math.floor(totalMin / 60);
+    const mTot = totalMin % 60;
+    const fmtTot = mTot > 0 ? `${hTot}h ${mTot}m` : `${hTot}h`;
     if (compensacionAgregada.vencida) {
       alertas.push({
         tipo: "danger",
-        mensaje: `INFRACCION: ${compensacionAgregada.totalDeudaHoras}h ${compensacionAgregada.totalDeudaMinutos}m de descanso reducido no compensado (limite: ${compensacionAgregada.fechaLimite})`,
+        mensaje: `INFRACCION: ${fmtTot} de descanso reducido no compensado (limite: ${formatFechaES(compensacionAgregada.fechaLimite)})`,
       });
     } else {
       alertas.push({
         tipo: "warning",
-        mensaje: `Compensar ${compensacionAgregada.totalDeudaHoras}h ${compensacionAgregada.totalDeudaMinutos}m antes del ${compensacionAgregada.fechaLimite}`,
+        mensaje: `Compensar ${fmtTot} antes del ${formatFechaES(compensacionAgregada.fechaLimite)}`,
       });
     }
   }

@@ -114,7 +114,7 @@ export default function FerryRestForm({ visible, onClose, onSaved }: Props) {
         restType,
         interruptions: ferryRest.interruptions,
         interruptionTotalMin: totalInterruptionMin,
-        computedEnd: validation.computedEnd || "",
+        endTime: validation.computedEnd || undefined,
         isValid: true,
         invalidReason: null,
       });

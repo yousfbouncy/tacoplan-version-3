@@ -324,6 +324,25 @@ export default function ViajesScreen() {
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t("viajes.title")}</Text>
+        <Pressable
+          onPress={() => router.push("/usuario")}
+          hitSlop={8}
+          style={({ pressed }) => [
+            {
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              borderWidth: 1,
+              borderColor: Colors.light.border,
+              backgroundColor: Colors.light.surface,
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: pressed ? 0.9 : 1,
+            },
+          ]}
+        >
+          <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
+        </Pressable>
       </View>
 
       <ScrollView

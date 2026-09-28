@@ -15,7 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
-import { todayStr, nowTimeStr, detectCrossSundayMonday, isSpainSummerTime } from "@/lib/utils";
+import { todayStr, nowTimeStr, detectCrossSundayMonday, isSpainSummerTime, formatDateForDisplay, parseDisplayDateToISO } from "@/lib/utils";
 import {
   crearJornadaCompleta,
   getLastLugarFin,
@@ -136,9 +136,11 @@ export default function JornadaCompletaScreen() {
   const qc = useQueryClient();
   const { triggerSync } = useSync();
   const [fechaInicio, setFechaInicio] = useState(todayStr());
+  const [fechaInicioInput, setFechaInicioInput] = useState(formatDateForDisplay(todayStr()));
   const [horaInicio, setHoraInicio] = useState("06:00");
   const [lugarInicio, setLugarInicio] = useState("");
   const [fechaFin, setFechaFin] = useState(todayStr());
+  const [fechaFinInput, setFechaFinInput] = useState(formatDateForDisplay(todayStr()));
   const [horaFin, setHoraFin] = useState(nowTimeStr());
   const [lugarFin, setLugarFin] = useState("");
   const [tipoRuta, setTipoRuta] = useState<TipoRuta>("NACIONAL");
@@ -186,11 +188,15 @@ export default function JornadaCompletaScreen() {
 
   const mutation = useMutation({
     mutationFn: async () => {
+      const resolvedFechaInicio = parseDisplayDateToISO(fechaInicioInput);
+      if (!resolvedFechaInicio) throw new Error(t("common.invalidDate"));
+      const resolvedFechaFin = parseDisplayDateToISO(fechaFinInput);
+      if (!resolvedFechaFin) throw new Error(t("common.invalidDate"));
       const body: any = {
-        fechaInicio,
+        fechaInicio: resolvedFechaInicio,
         horaInicio,
         lugarInicio,
-        fechaFin,
+        fechaFin: resolvedFechaFin,
         horaFin,
         lugarFin,
         tipoRuta,
@@ -227,7 +233,12 @@ export default function JornadaCompletaScreen() {
     },
   });
 
-  const canSave = lugarInicio.trim() && lugarFin.trim() && !mutation.isPending;
+  const canSave =
+    lugarInicio.trim() &&
+    lugarFin.trim() &&
+    !!parseDisplayDateToISO(fechaInicioInput) &&
+    !!parseDisplayDateToISO(fechaFinInput) &&
+    !mutation.isPending;
 
   return (
     <ScrollView
@@ -240,7 +251,17 @@ export default function JornadaCompletaScreen() {
       <View style={styles.fieldRow}>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.date")}</Text>
-          <TextInput style={styles.input} value={fechaInicio} onChangeText={setFechaInicio} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" />
+          <TextInput
+            style={styles.input}
+            value={fechaInicioInput}
+            onChangeText={(v) => {
+              setFechaInicioInput(v);
+              const iso = parseDisplayDateToISO(v);
+              if (iso) setFechaInicio(iso);
+            }}
+            placeholder="DD/MM/YYYY"
+            placeholderTextColor="#9CA3AF"
+          />
         </View>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.time")}</Text>
@@ -273,7 +294,17 @@ export default function JornadaCompletaScreen() {
       <View style={styles.fieldRow}>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.date")}</Text>
-          <TextInput style={styles.input} value={fechaFin} onChangeText={setFechaFin} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" />
+          <TextInput
+            style={styles.input}
+            value={fechaFinInput}
+            onChangeText={(v) => {
+              setFechaFinInput(v);
+              const iso = parseDisplayDateToISO(v);
+              if (iso) setFechaFin(iso);
+            }}
+            placeholder="DD/MM/YYYY"
+            placeholderTextColor="#9CA3AF"
+          />
         </View>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.time")}</Text>

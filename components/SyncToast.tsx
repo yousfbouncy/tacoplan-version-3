@@ -46,7 +46,7 @@ export default function SyncToast() {
   if (!syncToast) return null;
 
   const bgColor = syncToast.type === "error" ? Colors.light.danger
-    : syncToast.type === "info" ? Colors.light.primary
+    : syncToast.type === "info" ? Colors.light.tint
     : Colors.light.success;
 
   const iconName = syncToast.type === "error" ? "cloud-offline-outline"

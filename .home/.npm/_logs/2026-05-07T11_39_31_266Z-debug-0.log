@@ -1,0 +1,12 @@
+0 verbose cli /Users/ejaremtchuk/.nvm/versions/node/v23.11.0/bin/node /Users/ejaremtchuk/.nvm/versions/node/v23.11.0/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@11.6.1
+2 info using node@v23.11.0
+3 silly config load:file:/Users/ejaremtchuk/.nvm/versions/node/v23.11.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/ejaremtchuk/Downloads/tacoplan version 3/.npmrc
+5 silly config load:file:/Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npmrc
+6 silly config load:file:/Users/ejaremtchuk/.nvm/versions/node/v23.11.0/etc/npmrc
+7 verbose title npm exec expo start --go --localhost --port 8085
+8 verbose argv "exec" "--" "expo" "start" "--go" "--localhost" "--port" "8085"
+9 verbose logfile logs-max:10 dir:/Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npm/_logs/2026-05-07T11_39_31_266Z-
+10 verbose logfile /Users/ejaremtchuk/Downloads/tacoplan version 3/.home/.npm/_logs/2026-05-07T11_39_31_266Z-debug-0.log
+11 silly logfile done cleaning log files

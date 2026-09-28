@@ -86,9 +86,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="tacografo"
+        options={{
+          title: t("tabs.tacografo"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="speedometer" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="usuario"
         options={{
           title: t("tabs.settings"),
+          href: null,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="settings-outline" size={size} color={color} />
           ),

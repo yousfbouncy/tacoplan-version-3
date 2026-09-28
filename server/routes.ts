@@ -1,6 +1,21 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
-import { supabase, getUserFromToken, createUserClient } from "./supabase";
+import { supabase, getUserFromToken, createUserClient, requireSupabaseAdmin } from "./supabase";
+
+function decodeJwtRole(jwt: string): string | null {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length < 2) return null;
+    const payloadB64Url = parts[1];
+    const pad = "=".repeat((4 - (payloadB64Url.length % 4)) % 4);
+    const payloadB64 = (payloadB64Url + pad).replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(payloadB64, "base64").toString("utf-8");
+    const payload = JSON.parse(json) as any;
+    return typeof payload?.role === "string" ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
 
 async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
@@ -25,18 +40,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
       const { email, password, name } = req.body;
-      if (!email || !password) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const passwordStr = typeof password === "string" ? password : "";
+      const nameStr = typeof name === "string" ? name : "";
+      if (!emailStr || !passwordStr) {
         return res.status(400).json({ message: "Email y contrasena requeridos" });
       }
-      if (password.length < 6) {
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
+      if (passwordStr.length < 6) {
         return res.status(400).json({ message: "La contrasena debe tener al menos 6 caracteres" });
       }
 
       const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
+        email: emailStr,
+        password: passwordStr,
         options: {
-          data: { full_name: name || "" },
+          data: { full_name: nameStr || "" },
         },
       });
 
@@ -65,7 +86,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({
           ok: true,
           needsVerification: false,
-          user: { id: data.user.id, email: data.user.email, name: data.user.user_metadata?.full_name || name || "" },
+          user: { id: data.user.id, email: data.user.email, name: data.user.user_metadata?.full_name || nameStr || "" },
           session: {
             access_token: data.session.access_token,
             refresh_token: data.session.refresh_token,
@@ -83,11 +104,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body;
-      if (!email || !password) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const passwordStr = typeof password === "string" ? password : "";
+      if (!emailStr || !passwordStr) {
         return res.status(400).json({ message: "Email y contrasena requeridos" });
       }
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: emailStr, password: passwordStr });
 
       if (error) {
         console.error("Supabase login error:", error);
@@ -124,11 +150,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
     try {
       const { email } = req.body;
-      if (!email) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (!emailStr) {
         return res.status(400).json({ message: "Email requerido" });
       }
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
+      }
 
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error } = await supabase.auth.resetPasswordForEmail(emailStr, {
         redirectTo: undefined,
       });
 
@@ -146,17 +176,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/update-password", async (req: Request, res: Response) => {
     try {
       const { access_token, new_password } = req.body;
-      if (!access_token || !new_password) {
+      const accessTokenStr = typeof access_token === "string" ? access_token : "";
+      const newPasswordStr = typeof new_password === "string" ? new_password : "";
+      if (!accessTokenStr || !newPasswordStr) {
         return res.status(400).json({ message: "Token y nueva contrasena requeridos" });
       }
-      if (new_password.length < 6) {
+      if (newPasswordStr.length < 6) {
         return res.status(400).json({ message: "La contrasena debe tener al menos 6 caracteres" });
       }
 
-      const { error } = await supabase.auth.admin.updateUserById(
-        (await supabase.auth.getUser(access_token)).data.user?.id || "",
-        { password: new_password }
-      );
+      const { data: userData, error: userError } = await supabase.auth.getUser(accessTokenStr);
+      if (userError || !userData?.user?.id) {
+        return res.status(401).json({ message: "Token invalido o expirado" });
+      }
+
+      const { error } = await requireSupabaseAdmin().auth.admin.updateUserById(userData.user.id, { password: newPasswordStr });
 
       if (error) {
         console.error("Supabase update password error:", error);
@@ -172,13 +206,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/verify-email", async (req: Request, res: Response) => {
     try {
       const { email, token } = req.body;
-      if (!email || !token) {
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const tokenStr = typeof token === "string" ? token.trim() : "";
+      if (!emailStr || !tokenStr) {
         return res.status(400).json({ message: "Email y codigo requeridos" });
+      }
+      if (!emailStr.includes("@")) {
+        return res.status(400).json({ message: "Email invalido" });
       }
 
       const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token,
+        email: emailStr,
+        token: tokenStr,
         type: "signup",
       });
 
@@ -204,9 +243,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/resend-verification", async (req: Request, res: Response) => {
     try {
       const { email } = req.body;
-      if (!email) return res.status(400).json({ message: "Email requerido" });
+      const emailStr = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (!emailStr) return res.status(400).json({ message: "Email requerido" });
+      if (!emailStr.includes("@")) return res.status(400).json({ message: "Email invalido" });
 
-      const { error } = await supabase.auth.resend({ type: "signup", email });
+      const { error } = await supabase.auth.resend({ type: "signup", email: emailStr });
       if (error) {
         console.error("Resend error:", error);
         return res.status(400).json({ message: error.message });
@@ -218,20 +259,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/config", async (_req: Request, res: Response) => {
-    res.json({
-      supabaseUrl: process.env.SUPABASE_URL,
-      supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
-    });
+    const supabaseUrl =
+      process.env.SUPABASE_URL ||
+      process.env.EXPO_PUBLIC_SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+    const supabaseAnonKey =
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return res.status(500).json({ message: "Missing Supabase public config on server" });
+    }
+    const role = decodeJwtRole(supabaseAnonKey);
+    if (role && role !== "anon") {
+      return res.status(500).json({ message: "Invalid SUPABASE_ANON_KEY (must be anon key)" });
+    }
+
+    res.json({ supabaseUrl, supabaseAnonKey });
   });
 
   app.post("/api/auth/refresh", async (req: Request, res: Response) => {
     try {
       const { refresh_token } = req.body;
-      if (!refresh_token) {
+      const refreshTokenStr = typeof refresh_token === "string" ? refresh_token : "";
+      if (!refreshTokenStr) {
         return res.status(400).json({ message: "Refresh token requerido" });
       }
 
-      const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+      const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshTokenStr });
       if (error || !data.session) {
         return res.status(401).json({ message: "No se pudo renovar la sesion" });
       }
@@ -337,12 +394,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from("user_day_extras")
         .select("*")
         .eq("user_id", userId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === "PGRST116") {
+      if (error) return res.status(500).json({ message: error.message });
+
+      if (!data) {
         const { data: inserted, error: insertErr } = await client
           .from("user_day_extras")
-          .insert({ user_id: userId, extra_saturday: 10, extra_sunday: 15, extra_holiday: 20 })
+          .insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: new Date().toISOString() })
           .select()
           .single();
 
@@ -350,7 +409,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ extras: inserted });
       }
 
-      if (error) return res.status(500).json({ message: error.message });
       res.json({ extras: data });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -437,7 +495,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const token = (req as any).accessToken;
       const { name } = req.body;
 
-      const { data, error } = await supabase.auth.admin.updateUserById((req as any).user.id, {
+      const { data, error } = await requireSupabaseAdmin().auth.admin.updateUserById((req as any).user.id, {
         user_metadata: { full_name: name },
       });
 
@@ -685,9 +743,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from("user_ferry_config")
         .select("*")
         .eq("user_id", userId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === "PGRST116") {
+      if (error) return res.status(500).json({ message: error.message });
+
+      if (!data) {
         const defaults = {
           user_id: userId,
           crosses_ferry: false,
@@ -696,6 +756,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           trip_rate: 0,
           pernight_rate: 0,
           ferry_rest_enabled: false,
+          ferry_transit_rate: 54.30,
+          ferry_cabin_rate: 54.30,
+          updated_at: new Date().toISOString(),
         };
         const { data: inserted, error: insertErr } = await client
           .from("user_ferry_config")
@@ -707,7 +770,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ config: inserted });
       }
 
-      if (error) return res.status(500).json({ message: error.message });
       res.json({ config: data });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -719,7 +781,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const token = (req as any).accessToken;
       const userId = (req as any).user.id;
       const client = createUserClient(token);
-      const { crosses_ferry, route_mode, payment_mode, trip_rate, pernight_rate, ferry_rest_enabled } = req.body;
+      const { crosses_ferry, route_mode, payment_mode, trip_rate, pernight_rate, ferry_rest_enabled, ferry_transit_rate, ferry_cabin_rate } = req.body;
 
       const { error } = await client
         .from("user_ferry_config")
@@ -732,6 +794,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             trip_rate: trip_rate ?? 0,
             pernight_rate: pernight_rate ?? 0,
             ferry_rest_enabled: ferry_rest_enabled ?? false,
+            ferry_transit_rate: ferry_transit_rate ?? 54.30,
+            ferry_cabin_rate: ferry_cabin_rate ?? 54.30,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id" }
@@ -884,18 +948,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const token = (req as any).accessToken;
       const userId = (req as any).user.id;
+      const userEmail = (req as any).user.email;
       const client = createUserClient(token);
 
       const { data, error } = await client
         .from("profiles")
         .select("*")
         .eq("id", userId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === "PGRST116") {
-        return res.json({ profile: null });
-      }
       if (error) return res.status(500).json({ message: error.message });
+
+      if (!data) {
+        const { data: insertedProfile, error: insertProfileError } = await client
+          .from("profiles")
+          .insert({
+            id: userId,
+            email: userEmail || "",
+            display_name: "",
+            language: "es",
+            period_type: "AUTO_01_30",
+            period_start_day: 1,
+            period_end_day: 30,
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (insertProfileError) return res.status(500).json({ message: insertProfileError.message });
+        return res.json({ profile: insertedProfile });
+      }
+
       res.json({ profile: data });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -936,17 +1019,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const [ratesRes, extrasRes, holidaysRes] = await Promise.all([
         client.from("user_diet_rates").select("*").eq("user_id", userId),
-        client.from("user_day_extras").select("*").eq("user_id", userId).single(),
+        client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
         client.from("user_holidays").select("*").eq("user_id", userId).order("date"),
       ]);
 
       const rates = ratesRes.data || [];
-      const extras = extrasRes.error?.code === "PGRST116" ? null : extrasRes.data;
+      const extras = extrasRes.error ? null : extrasRes.data;
       const holidays = holidaysRes.data || [];
 
-      let dietasConfig = null;
-      const dcRes = await client.from("dietas_config").select("*").eq("user_id", userId).single();
-      if (!dcRes.error) dietasConfig = dcRes.data;
+      const { data: dietasConfigData, error: dietasConfigError } = await client
+        .from("dietas_config")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (dietasConfigError) return res.status(500).json({ message: dietasConfigError.message });
+
+      let dietasConfig = dietasConfigData;
+      if (!dietasConfig) {
+        const { data: newConfig, error: insertError } = await client
+          .from("dietas_config")
+          .insert({
+            user_id: userId,
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (insertError) return res.status(500).json({ message: insertError.message });
+        dietasConfig = newConfig;
+      }
 
       res.json({ rates, extras, holidays, dietasConfig });
     } catch (e: any) {
@@ -1005,15 +1106,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = user.id;
 
       const [profileRes, jornadasRes, compensacionesRes, ratesRes, extrasRes, holidaysRes] = await Promise.all([
-        client.from("profiles").select("*").eq("id", userId).single(),
+        client.from("profiles").select("*").eq("id", userId).maybeSingle(),
         client.from("jornadas").select("*").order("start_at", { ascending: false }),
         client.from("compensaciones").select("*").order("fecha_limite", { ascending: true }),
         client.from("user_diet_rates").select("*").eq("user_id", userId),
-        client.from("user_day_extras").select("*").eq("user_id", userId).single(),
+        client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
         client.from("user_holidays").select("*").eq("user_id", userId).order("date"),
       ]);
 
-      const profile = profileRes.error ? null : profileRes.data;
+      let profile = profileRes.error ? null : profileRes.data;
+      if (!profile) {
+        const { data: insertedProfile, error: insertProfileError } = await client
+          .from("profiles")
+          .insert({
+            id: userId,
+            email: user.email || "",
+            display_name: "",
+            language: "es",
+            period_type: "AUTO_01_30",
+            period_start_day: 1,
+            period_end_day: 30,
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (!insertProfileError) profile = insertedProfile;
+      }
 
       const mappedJornadas = (jornadasRes.data || []).map((j: any) => ({
         id: j.id,
@@ -1079,7 +1197,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
 
       const rates = ratesRes.data || [];
-      const extras = extrasRes.error ? null : extrasRes.data;
+      let extras = extrasRes.error ? null : extrasRes.data;
+      if (!extras) {
+        const { data: insertedExtras, error: insertExtrasError } = await client
+          .from("user_day_extras")
+          .insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: new Date().toISOString() })
+          .select()
+          .single();
+        if (!insertExtrasError) extras = insertedExtras;
+      }
       const holidays = holidaysRes.data || [];
 
       res.json({

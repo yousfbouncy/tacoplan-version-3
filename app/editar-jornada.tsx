@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -18,6 +18,9 @@ import Colors from "@/constants/colors";
 import {
   detectCrossSundayMonday,
   isSpainSummerTime,
+  formatDateForDisplay,
+  formatMinutosHoras,
+  parseDisplayDateToISO,
 } from "@/lib/utils";
 import {
   editarJornada,
@@ -35,11 +38,41 @@ import {
 } from "@/lib/local-storage";
 import { useAuth } from "@/lib/auth-context";
 import { useSync } from "@/lib/sync-context";
-import { getApiUrl } from "@/lib/query-client";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useI18n } from "@/lib/i18n-context";
+import { userScopedKey } from "@/lib/user-scope";
+import { fetchDayExtras, fetchDietRates, fetchHolidays } from "@/lib/user-cloud";
 
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
+const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
+const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
+const JORNADA_DATE_DEBUG_RUN = "pre-fix";
+
+function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
+  if (typeof fetch !== "function") return;
+  let timezone: string | null = null;
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {}
+  fetch(JORNADA_DATE_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: JORNADA_DATE_DEBUG_SESSION,
+      runId: JORNADA_DATE_DEBUG_RUN,
+      hypothesisId,
+      location,
+      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
+      data: {
+        timezone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        platform: Platform.OS,
+        ...data,
+      },
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
 
 function parseConduccion(text: string): number | undefined {
   if (!text.trim()) return undefined;
@@ -80,6 +113,13 @@ function minutosToStr(min: number | null): string {
   const m = min % 60;
   if (m === 0) return String(h);
   return `${h}:${String(m).padStart(2, "0")}`;
+}
+
+function parseNumberOrNull(text: string): number | null {
+  const cleaned = text.trim().replace(",", ".");
+  if (!cleaned) return null;
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 function PlaceSuggestions({
@@ -156,7 +196,7 @@ export default function EditarJornadaScreen() {
   const { t } = useI18n();
   const { id } = useLocalSearchParams<{ id: string }>();
   const qc = useQueryClient();
-  const { user, isGuest, getAccessToken } = useAuth();
+  const { user } = useAuth();
   const { triggerSync } = useSync();
 
   const jornadaQuery = useQuery<Jornada | null>({
@@ -166,11 +206,14 @@ export default function EditarJornadaScreen() {
   });
 
   const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaInicioInput, setFechaInicioInput] = useState("");
   const [horaInicio, setHoraInicio] = useState("");
   const [lugarInicio, setLugarInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  const [fechaFinInput, setFechaFinInput] = useState("");
   const [horaFin, setHoraFin] = useState("");
   const [lugarFin, setLugarFin] = useState("");
+  const [splitRestManual, setSplitRestManual] = useState(false);
   const [tipoRuta, setTipoRuta] = useState<TipoRuta>("NACIONAL");
   const [conduccionHoras, setConduccionHoras] = useState("");
   const [conduccionDomingoHoras, setConduccionDomingoHoras] = useState("");
@@ -189,9 +232,32 @@ export default function EditarJornadaScreen() {
   const [plusConcepto, setPlusConcepto] = useState("");
   const [plusImporte, setPlusImporte] = useState("");
   const [observaciones, setObservaciones] = useState("");
+  const [paymentMode, setPaymentMode] = useState<"dietas" | "km" | "viaje">("dietas");
+  const [defaultPricePerKmNac, setDefaultPricePerKmNac] = useState(0);
+  const [defaultPricePerKmIntl, setDefaultPricePerKmIntl] = useState(0);
+  const [defaultPricePerKmReg, setDefaultPricePerKmReg] = useState(0);
+  const [defaultPricePerTripNac, setDefaultPricePerTripNac] = useState(0);
+  const [defaultPricePerTripIntl, setDefaultPricePerTripIntl] = useState(0);
+  const [defaultPricePerTripReg, setDefaultPricePerTripReg] = useState(0);
+  const [kmInicio, setKmInicio] = useState("");
+  const [kmFin, setKmFin] = useState("");
+  const [pricePerKm, setPricePerKm] = useState("");
+  const [importeKm, setImporteKm] = useState("");
+  const [importeKmTouched, setImporteKmTouched] = useState(false);
+  const [pricePerTrip, setPricePerTrip] = useState("");
+  const [importeViaje, setImporteViaje] = useState("");
+  const [importeViajeTouched, setImporteViajeTouched] = useState(false);
 
   const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
-  const [dayExtras, setDayExtras] = useState<UserDayExtras>({ extra_saturday: 10, extra_sunday: 15, extra_holiday: 20 });
+  const [dayExtras, setDayExtras] = useState<UserDayExtras>({
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  });
   const [userHolidays, setUserHolidays] = useState<string[]>([]);
 
   const [recentPlaces, setRecentPlaces] = useState<string[]>([]);
@@ -205,78 +271,77 @@ export default function EditarJornadaScreen() {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const local = await AsyncStorage.getItem("tacoplan_user_settings");
+        const local = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings", user?.id));
         if (local) {
           const s = JSON.parse(local);
+          const pm = s.payment_mode === "km" || s.payment_mode === "viaje" || s.payment_mode === "dietas" ? s.payment_mode : "dietas";
+          setPaymentMode(pm);
+          const fallbackKm = Number.isFinite(parseFloat(s.price_per_km)) ? parseFloat(s.price_per_km) : 0;
+          setDefaultPricePerKmNac(Number.isFinite(parseFloat(s.price_per_km_nacional)) ? parseFloat(s.price_per_km_nacional) : fallbackKm);
+          setDefaultPricePerKmIntl(Number.isFinite(parseFloat(s.price_per_km_internacional)) ? parseFloat(s.price_per_km_internacional) : fallbackKm);
+          setDefaultPricePerKmReg(Number.isFinite(parseFloat(s.price_per_km_regional)) ? parseFloat(s.price_per_km_regional) : fallbackKm);
+          const tripFallback = Number.isFinite(parseFloat(s.price_per_trip)) ? parseFloat(s.price_per_trip) : 0;
+          setDefaultPricePerTripNac(Number.isFinite(parseFloat(s.price_per_trip_nacional)) ? parseFloat(s.price_per_trip_nacional) : tripFallback);
+          setDefaultPricePerTripIntl(Number.isFinite(parseFloat(s.price_per_trip_internacional)) ? parseFloat(s.price_per_trip_internacional) : tripFallback);
+          setDefaultPricePerTripReg(Number.isFinite(parseFloat(s.price_per_trip_regional)) ? parseFloat(s.price_per_trip_regional) : tripFallback);
           setCustomRates([
-            { trip_type: "NACIONAL", percent: 100, amount: parseFloat(s.nac_100) || 54.30 },
-            { trip_type: "NACIONAL", percent: 60, amount: parseFloat(s.nac_60) || 32.58 },
-            { trip_type: "NACIONAL", percent: 30, amount: parseFloat(s.nac_30) || 16.29 },
-            { trip_type: "INTERNACIONAL", percent: 100, amount: parseFloat(s.intl_100) || 72.77 },
-            { trip_type: "INTERNACIONAL", percent: 60, amount: parseFloat(s.intl_60) || 43.66 },
-            { trip_type: "INTERNACIONAL", percent: 30, amount: parseFloat(s.intl_30) || 21.83 },
+            { trip_type: "NACIONAL", percent: 100, amount: Number.isFinite(parseFloat(s.nac_100)) ? parseFloat(s.nac_100) : 0 },
+            { trip_type: "NACIONAL", percent: 60, amount: Number.isFinite(parseFloat(s.nac_60)) ? parseFloat(s.nac_60) : 0 },
+            { trip_type: "NACIONAL", percent: 30, amount: Number.isFinite(parseFloat(s.nac_30)) ? parseFloat(s.nac_30) : 0 },
+            { trip_type: "INTERNACIONAL", percent: 100, amount: Number.isFinite(parseFloat(s.intl_100)) ? parseFloat(s.intl_100) : 0 },
+            { trip_type: "INTERNACIONAL", percent: 60, amount: Number.isFinite(parseFloat(s.intl_60)) ? parseFloat(s.intl_60) : 0 },
+            { trip_type: "INTERNACIONAL", percent: 30, amount: Number.isFinite(parseFloat(s.intl_30)) ? parseFloat(s.intl_30) : 0 },
             { trip_type: "REGIONAL", percent: 100, amount: parseFloat(s.reg_100) || 0 },
             { trip_type: "REGIONAL", percent: 60, amount: parseFloat(s.reg_60) || 0 },
             { trip_type: "REGIONAL", percent: 30, amount: parseFloat(s.reg_30) || 0 },
           ]);
           setDayExtras({
-            extra_saturday: parseFloat(s.extra_saturday) || 10,
-            extra_sunday: parseFloat(s.extra_sunday) || 15,
-            extra_holiday: parseFloat(s.extra_holiday) || 20,
+            extra_saturday: Number.isFinite(parseFloat(s.extra_saturday)) ? parseFloat(s.extra_saturday) : 0,
+            extra_sunday: Number.isFinite(parseFloat(s.extra_sunday)) ? parseFloat(s.extra_sunday) : 0,
+            extra_holiday: Number.isFinite(parseFloat(s.extra_holiday)) ? parseFloat(s.extra_holiday) : 0,
+            offsite_weekly_reduced_nacional: Number.isFinite(parseFloat(s.offsite_weekly_reduced_nacional)) ? parseFloat(s.offsite_weekly_reduced_nacional) : 0,
+            offsite_weekly_reduced_internacional: Number.isFinite(parseFloat(s.offsite_weekly_reduced_internacional)) ? parseFloat(s.offsite_weekly_reduced_internacional) : 0,
+            offsite_weekly_complete_nacional: Number.isFinite(parseFloat(s.offsite_weekly_complete_nacional)) ? parseFloat(s.offsite_weekly_complete_nacional) : 0,
+            offsite_weekly_complete_internacional: Number.isFinite(parseFloat(s.offsite_weekly_complete_internacional)) ? parseFloat(s.offsite_weekly_complete_internacional) : 0,
           });
         }
       } catch (e) {
         console.log("Failed to load local settings:", e);
       }
 
-      if (isGuest || !user) return;
+      if (!user) return;
       try {
-        const token = await getAccessToken();
-        if (!token) return;
-        const base = getApiUrl();
-        const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
-        const [ratesRes, extrasRes, holidaysRes] = await Promise.all([
-          fetch(new URL("/api/user/diet-rates", base).toString(), { headers }),
-          fetch(new URL("/api/user/day-extras", base).toString(), { headers }),
-          fetch(new URL("/api/user/holidays", base).toString(), { headers }),
+        const [rates, extras, holidays] = await Promise.all([
+          fetchDietRates(user.id),
+          fetchDayExtras(user.id),
+          fetchHolidays(user.id),
         ]);
-
-        if (ratesRes.ok) {
-          const d = await ratesRes.json();
-          if (d.rates && d.rates.length > 0) setCustomRates(d.rates);
-        }
-        if (extrasRes.ok) {
-          const d = await extrasRes.json();
-          const ex = d.extras;
-          if (ex) {
-            setDayExtras({
-              extra_saturday: Number(ex.extra_saturday) || 10,
-              extra_sunday: Number(ex.extra_sunday) || 15,
-              extra_holiday: Number(ex.extra_holiday) || 20,
-            });
-          }
-        }
-        if (holidaysRes.ok) {
-          const d = await holidaysRes.json();
-          setUserHolidays((d.holidays || []).map((h: any) => h.date));
-        }
+        if (rates.length > 0) setCustomRates(rates as any);
+        setDayExtras(extras as any);
+        setUserHolidays((holidays || []).map((h: any) => h.date));
       } catch (e) {
-        console.log("Failed to load user config:", e);
+        console.error("[EDITAR JORNADA] Failed to load user config from Supabase", e);
       }
     };
     loadConfig();
-  }, [isGuest, user]);
+  }, [user]);
 
   useEffect(() => {
     const j = jornadaQuery.data;
     if (j && !loaded) {
       setFechaInicio(j.fechaInicio);
+      setFechaInicioInput(formatDateForDisplay(j.fechaInicio));
       setHoraInicio(j.horaInicio);
       setLugarInicio(j.lugarInicio);
       setFechaFin(j.fechaFin || "");
+      setFechaFinInput(formatDateForDisplay(j.fechaFin || ""));
       setHoraFin(j.horaFin || "");
       setLugarFin(j.lugarFin || "");
+      setSplitRestManual(
+        j.splitRestDetected === true &&
+        j.countsAsReducedRest === false &&
+        (j.splitRestFirstPartMin ?? 0) >= 3 * 60,
+      );
       setTipoRuta((j.tipoRuta as TipoRuta) || "NACIONAL");
       setConduccionHoras(minutosToStr(j.conduccionMin));
       if (j.conduccionDomingoMin != null) setConduccionDomingoHoras(minutosToStr(j.conduccionDomingoMin));
@@ -298,6 +363,17 @@ export default function EditarJornadaScreen() {
       }
       setPlusItems(j.plusItems || []);
       setObservaciones(j.observaciones || "");
+      if (j.paymentMode === "km" || j.paymentMode === "viaje" || j.paymentMode === "dietas") {
+        setPaymentMode(j.paymentMode);
+      }
+      setKmInicio(j.kmInicio != null && Number.isFinite(j.kmInicio) ? String(j.kmInicio) : "");
+      setKmFin(j.kmFin != null && Number.isFinite(j.kmFin) ? String(j.kmFin) : "");
+      setPricePerKm(j.pricePerKm != null && Number.isFinite(j.pricePerKm) ? String(j.pricePerKm) : "");
+      setImporteKm(j.importeKm != null && Number.isFinite(j.importeKm) ? String(j.importeKm) : "");
+      setImporteKmTouched(false);
+      setPricePerTrip(j.pricePerTrip != null && Number.isFinite(j.pricePerTrip) ? String(j.pricePerTrip) : "");
+      setImporteViaje(j.importeViaje != null && Number.isFinite(j.importeViaje) ? String(j.importeViaje) : "");
+      setImporteViajeTouched(false);
       setLoaded(true);
     }
   }, [jornadaQuery.data, loaded]);
@@ -336,14 +412,83 @@ export default function EditarJornadaScreen() {
     return parseDrivingInput(cleaned);
   }, [conduccionLunesHoras]);
 
+  const suggestedPricePerKm = useMemo(() => {
+    if (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL") return defaultPricePerKmIntl;
+    if (tipoRuta === "REGIONAL" || tipoRuta === "NAC_REGIONAL") return defaultPricePerKmReg;
+    return defaultPricePerKmNac;
+  }, [tipoRuta, defaultPricePerKmNac, defaultPricePerKmIntl, defaultPricePerKmReg]);
+
+  const defaultTripRate = useMemo(() => {
+    if (tipoRuta === "REGIONAL") return defaultPricePerTripReg;
+    if (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL") return defaultPricePerTripIntl;
+    return defaultPricePerTripNac;
+  }, [tipoRuta, defaultPricePerTripNac, defaultPricePerTripIntl, defaultPricePerTripReg]);
+
+  const lastAutoTripRateRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (paymentMode !== "km") return;
+    if (pricePerKm.trim()) return;
+    setPricePerKm(suggestedPricePerKm ? String(suggestedPricePerKm) : "");
+  }, [paymentMode, pricePerKm, suggestedPricePerKm]);
+
+  useEffect(() => {
+    if (paymentMode !== "viaje") return;
+    const current = parseNumberOrNull(pricePerTrip);
+    const lastAuto = lastAutoTripRateRef.current;
+    if (pricePerTrip.trim() && (lastAuto == null || current == null || Math.abs(current - lastAuto) > 0.0001)) {
+      return;
+    }
+    setPricePerTrip(defaultTripRate ? String(defaultTripRate) : "");
+    lastAutoTripRateRef.current = defaultTripRate;
+  }, [paymentMode, pricePerTrip, defaultTripRate]);
+
+  const kmTotal = useMemo(() => {
+    const start = parseNumberOrNull(kmInicio);
+    const end = parseNumberOrNull(kmFin);
+    if (start == null || end == null) return null;
+    const total = end - start;
+    return Number.isFinite(total) ? total : null;
+  }, [kmInicio, kmFin]);
+
+  const suggestedImporteKm = useMemo(() => {
+    if (paymentMode !== "km") return null;
+    if (kmTotal == null) return null;
+    const price = parseNumberOrNull(pricePerKm);
+    if (price == null) return null;
+    return Math.round((kmTotal * price) * 100) / 100;
+  }, [paymentMode, kmTotal, pricePerKm]);
+
+  useEffect(() => {
+    if (paymentMode !== "km") return;
+    if (importeKmTouched) return;
+    if (suggestedImporteKm == null) return;
+    setImporteKm(String(suggestedImporteKm));
+  }, [paymentMode, importeKmTouched, suggestedImporteKm]);
+
+  useEffect(() => {
+    if (paymentMode !== "viaje") return;
+    if (importeViajeTouched) return;
+    const current = parseNumberOrNull(importeViaje);
+    const lastAuto = lastAutoTripRateRef.current;
+    if (current != null && lastAuto != null && Math.abs(current - lastAuto) > 0.0001) return;
+    const price = parseNumberOrNull(pricePerTrip);
+    if (price == null) return;
+    setImporteViaje(String(price));
+  }, [paymentMode, importeViajeTouched, pricePerTrip, importeViaje]);
+
   const mutation = useMutation({
     mutationFn: async () => {
       if (!id) throw new Error("ID no encontrado");
+      const resolvedFechaInicio = parseDisplayDateToISO(fechaInicioInput);
+      if (!resolvedFechaInicio) throw new Error(t("common.invalidDate"));
+      const resolvedFechaFin = parseDisplayDateToISO(fechaFinInput);
+      if (!resolvedFechaFin) throw new Error(t("common.invalidDate"));
       const body: any = {
-        fechaInicio,
+        fechaInicio: resolvedFechaInicio,
         horaInicio,
         lugarInicio,
-        fechaFin,
+        fechaFin: resolvedFechaFin,
         horaFin,
         lugarFin,
         tipoRuta,
@@ -354,22 +499,101 @@ export default function EditarJornadaScreen() {
         customRates: customRates || undefined,
         dayExtras: dayExtras || undefined,
         holidays: userHolidays,
+        splitRestDetected: splitRestManual,
+        splitRestFirstPartMin: splitRestManual
+          ? Math.max(jornadaQuery.data?.splitRestFirstPartMin ?? 0, 3 * 60)
+          : null,
+        splitRestSecondPartMin: splitRestManual
+          ? Math.max(jornadaQuery.data?.splitRestSecondPartMin ?? 0, 9 * 60)
+          : null,
+        countsAsReducedRest: splitRestManual ? false : true,
       };
-      if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
-        body.conduccionDomingoMin = conduccionDomingoParsed.minutes;
-        body.conduccionLunesMin = conduccionLunesParsed.minutes;
-        body.conduccionMin = conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
+
+      // --- BLOQUE MEJORADO VALIDACIÓN + PERSISTENCIA HORAS CONDUCCIÓN ---
+      // Antes: body no enviaba el campo si vacío / parse fallaba. Ahora:
+      // - Validar formato si user escribió algo inválido y bloquear save (no se pierde valor anterior)
+      // - Enviar SIEMPRE conduccionMin / Domingo / Lunes explícitamente (incluso null)
+      //   así computeDerivedFields NO sobreescribe con null al merge si ya es null.
+      if (isCrossSundayMonday) {
+        // CASO CROSS SUNDAY/MONDAY: validar ambos inputs si tienen texto
+        if (conduccionDomingoHoras.trim() && conduccionDomingoParsed.error) {
+          throw new Error(`Horas domingo: ${t(conduccionDomingoParsed.error || "common.invalidFormat")}`);
+        }
+        if (conduccionLunesHoras.trim() && conduccionLunesParsed.error) {
+          throw new Error(`Horas lunes: ${t(conduccionLunesParsed.error || "common.invalidFormat")}`);
+        }
+        const domMin = conduccionDomingoParsed.minutes;
+        const lunMin = conduccionLunesParsed.minutes;
+        body.conduccionDomingoMin = (domMin != null && Number.isFinite(domMin)) ? domMin : null;
+        body.conduccionLunesMin = (lunMin != null && Number.isFinite(lunMin)) ? lunMin : null;
+        // Suma si ambos están presentes; si uno solo → usar solo ese; si ninguno → null
+        body.conduccionMin =
+          ((domMin != null && Number.isFinite(domMin)) || (lunMin != null && Number.isFinite(lunMin)))
+            ? ((Number(domMin) || 0) + (Number(lunMin) || 0))
+            : null;
       } else {
-        const condMin = parseConduccion(conduccionHoras);
-        if (condMin != null) body.conduccionMin = condMin;
+        // CASO JORNADA NORMAL: usar parseConduccion con validación estricta
+        const condRaw = conduccionHoras.trim();
+        let condMin: number | null = null;
+        if (condRaw) {
+          const result = parseDrivingInput(condRaw);
+          if (result.error) {
+            throw new Error(`${t("jornada.driving")}: ${t(result.error)}`);
+          }
+          condMin = (result.minutes != null && Number.isFinite(result.minutes)) ? result.minutes : null;
+        }
+        body.conduccionMin = condMin;
+        // Caso no-crossday: domingo/lunes explícitamente a null para no
+        // heredar del merged anterior cuando user los editó y luego quitó crossday.
+        body.conduccionDomingoMin = null;
+        body.conduccionLunesMin = null;
       }
+
       if (dietaModo === "MANUAL") {
         body.dietaManualTipo = manualTipo;
         body.dietaManualPct = manualPct;
+      } else {
+        // Limpiar manualTipo/Pct al volver a AUTO para que computeDerivedFields no herede del original
+        body.dietaManualTipo = null;
+        body.dietaManualPct = null;
+      }
+      body.paymentMode = paymentMode;
+      if (paymentMode === "km") {
+        body.kmInicio = parseNumberOrNull(kmInicio);
+        body.kmFin = parseNumberOrNull(kmFin);
+        body.kmTotal = kmTotal;
+        body.pricePerKm = parseNumberOrNull(pricePerKm) ?? (suggestedPricePerKm || null);
+        body.importeKm = parseNumberOrNull(importeKm);
+      } else {
+        body.kmInicio = null;
+        body.kmFin = null;
+        body.kmTotal = null;
+        body.pricePerKm = null;
+        body.importeKm = null;
+      }
+      if (paymentMode === "viaje") {
+        body.pricePerTrip = parseNumberOrNull(pricePerTrip) ?? (defaultTripRate || null);
+        body.importeViaje = parseNumberOrNull(importeViaje);
+      } else {
+        body.pricePerTrip = null;
+        body.importeViaje = null;
       }
       body.recalcDiet = recalcDiet;
+      // Siempre explícito (no undefined) para que editarJornada sepa si hay que setear a [] → null
       body.plusItems = plusItems;
-      body.observaciones = observaciones.trim() || undefined;
+      body.observaciones = observaciones.trim().length > 0 ? observaciones.trim() : null;
+      // #region debug-point A:edit-ui-submit
+      reportJornadaDateDebug("A", "editar-jornada:mutationFn", "user submits edited jornada", {
+        jornadaId: id,
+        fechaInicioInputVisible: fechaInicioInput,
+        fechaFinInputVisible: fechaFinInput,
+        fechaInicioSeleccionada: resolvedFechaInicio,
+        horaInicioSeleccionada: horaInicio,
+        fechaFinSeleccionada: resolvedFechaFin,
+        horaFinSeleccionada: horaFin,
+        payload: body,
+      });
+      // #endregion
       const result = await editarJornada(id, body);
       return result;
     },
@@ -397,6 +621,8 @@ export default function EditarJornadaScreen() {
   const isCerrada = !!jornadaQuery.data?.fechaFin;
   const canSave =
     lugarInicio.trim() &&
+    !!parseDisplayDateToISO(fechaInicioInput) &&
+    (!isCerrada || !!parseDisplayDateToISO(fechaFinInput)) &&
     (!isCerrada || (fechaFin.trim() && horaFin.trim() && lugarFin.trim())) &&
     !mutation.isPending;
 
@@ -411,7 +637,17 @@ export default function EditarJornadaScreen() {
       <View style={styles.fieldRow}>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.date")}</Text>
-          <TextInput style={styles.input} value={fechaInicio} onChangeText={setFechaInicio} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" />
+          <TextInput
+            style={styles.input}
+            value={fechaInicioInput}
+            onChangeText={(v) => {
+              setFechaInicioInput(v);
+              const iso = parseDisplayDateToISO(v);
+              if (iso) setFechaInicio(iso);
+            }}
+            placeholder="DD/MM/YYYY"
+            placeholderTextColor="#9CA3AF"
+          />
         </View>
         <View style={styles.fieldHalf}>
           <Text style={styles.fieldLabel}>{t("common.time")}</Text>
@@ -440,13 +676,56 @@ export default function EditarJornadaScreen() {
         </View>
       </View>
 
+      {(jornadaQuery.data as any)?.isDoubleDriving === true && (
+        <View style={{
+          marginTop: 14,
+          padding: 12,
+          borderRadius: 10,
+          backgroundColor: Colors.light.accent + "12",
+          borderWidth: 1,
+          borderColor: Colors.light.accent + "33",
+          gap: 6,
+        }}>
+          <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 8 }}>
+            <Ionicons name="people" size={14} color={Colors.light.accent} />
+            <Text style={{
+              fontFamily: "Inter_600SemiBold",
+              fontSize: 13,
+              color: Colors.light.accent,
+            }}>
+              DOBLE CONDUCCI\u00d3N (conducci\u00f3n en equipo)
+            </Text>
+          </View>
+          {typeof (jornadaQuery.data as any)?.secondDriverName === "string" && (jornadaQuery.data as any).secondDriverName ? (
+            <Text style={{
+              fontSize: 13,
+              fontFamily: "Inter_400Regular",
+              color: Colors.light.textSecondary,
+              paddingLeft: 22,
+            }}>
+              Segundo conductor: {(jornadaQuery.data as any).secondDriverName}
+            </Text>
+          ) : null}
+        </View>
+      )}
+
       {isCerrada && (
         <>
           <Text style={[styles.sectionTitle, { marginTop: 16 }]}>{t("jornada.end")}</Text>
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>{t("common.date")}</Text>
-              <TextInput style={styles.input} value={fechaFin} onChangeText={setFechaFin} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" />
+              <TextInput
+                style={styles.input}
+                value={fechaFinInput}
+                onChangeText={(v) => {
+                  setFechaFinInput(v);
+                  const iso = parseDisplayDateToISO(v);
+                  if (iso) setFechaFin(iso);
+                }}
+                placeholder="DD/MM/YYYY"
+                placeholderTextColor="#9CA3AF"
+              />
             </View>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>{t("common.time")}</Text>
@@ -473,6 +752,30 @@ export default function EditarJornadaScreen() {
                 />
               )}
             </View>
+          </View>
+
+          <View style={[styles.field, { marginTop: 4 }]}>
+            <Pressable
+              onPress={() => setSplitRestManual((prev) => !prev)}
+              style={({ pressed }) => [
+                styles.splitRestToggle,
+                { opacity: pressed ? 0.9 : 1 },
+              ]}
+            >
+              <Ionicons
+                name={splitRestManual ? "checkbox" : "square-outline"}
+                size={20}
+                color={Colors.light.accent}
+              />
+              <Text style={styles.splitRestToggleLabel}>
+                {t("dashboard.splitRestManualLabel")}
+              </Text>
+            </Pressable>
+            {splitRestManual && (
+              <Text style={styles.splitRestHint}>
+                {t("dashboard.splitRestDetected")} {formatMinutosHoras(Math.max(jornadaQuery.data?.splitRestFirstPartMin ?? 0, 3 * 60))} + 9h
+              </Text>
+            )}
           </View>
 
           <Text style={[styles.sectionTitle, { marginTop: 16 }]}>{t("jornada.details")}</Text>
@@ -566,6 +869,110 @@ export default function EditarJornadaScreen() {
                   Total: {Math.floor((conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes) / 60)}h{((conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes) % 60) > 0 ? `:${String((conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes) % 60).padStart(2, "0")}` : ""}
                 </Text>
               )}
+            </View>
+          )}
+
+          <Text style={[styles.sectionTitle, { marginTop: 16 }]}>{t("edit.billing")}</Text>
+          <View style={styles.segmentRow}>
+            {(["dietas", "km", "viaje"] as const).map((pm) => (
+              <Pressable
+                key={pm}
+                style={[styles.segmentSmall, paymentMode === pm && styles.segmentActive]}
+                onPress={() => setPaymentMode(pm)}
+              >
+                <Text style={[styles.segmentText, paymentMode === pm && styles.segmentTextActive]}>
+                  {pm === "dietas" ? t("usuario.paymentModeDietas") : pm === "km" ? t("usuario.paymentModeKm") : t("usuario.paymentModeTrip")}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {paymentMode === "km" && (
+            <>
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldHalf}>
+                  <Text style={styles.fieldLabel}>{t("edit.kmStart")}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={kmInicio}
+                    onChangeText={(v) => { setKmInicio(v); setImporteKmTouched(false); }}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+                <View style={styles.fieldHalf}>
+                  <Text style={styles.fieldLabel}>{t("edit.kmEnd")}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={kmFin}
+                    onChangeText={(v) => { setKmFin(v); setImporteKmTouched(false); }}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+              </View>
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldHalf}>
+                  <Text style={styles.fieldLabel}>{t("edit.pricePerKm")}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={pricePerKm}
+                    onChangeText={(v) => { setPricePerKm(v); setImporteKmTouched(false); }}
+                    keyboardType="decimal-pad"
+                    placeholder={suggestedPricePerKm ? String(suggestedPricePerKm) : "0"}
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+                <View style={styles.fieldHalf}>
+                  <Text style={styles.fieldLabel}>{t("edit.amountKm")}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={importeKm}
+                    onChangeText={(v) => { setImporteKm(v); setImporteKmTouched(true); }}
+                    keyboardType="decimal-pad"
+                    placeholder={suggestedImporteKm != null ? String(suggestedImporteKm) : "0"}
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+              </View>
+              <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+                {t("edit.kmTotal")}: {kmTotal != null ? Math.round(kmTotal).toString() : "-"} km
+              </Text>
+            </>
+          )}
+
+          {paymentMode === "viaje" && (
+            <View style={styles.fieldRow}>
+              <View style={styles.fieldHalf}>
+                <Text style={styles.fieldLabel}>
+                  {tipoRuta === "REGIONAL"
+                    ? t("usuario.pricePerTripRegional")
+                    : (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL")
+                      ? t("usuario.pricePerTripInternacional")
+                      : t("usuario.pricePerTripNacional")}
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={pricePerTrip}
+                  onChangeText={(v) => { setPricePerTrip(v); setImporteViajeTouched(false); }}
+                  keyboardType="decimal-pad"
+                  placeholder={defaultTripRate ? String(defaultTripRate) : "0"}
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+              <View style={styles.fieldHalf}>
+                <Text style={styles.fieldLabel}>{t("edit.amountTrip")}</Text>
+                <TextInput
+                  style={styles.input}
+                  value={importeViaje}
+                  onChangeText={(v) => { setImporteViaje(v); setImporteViajeTouched(true); }}
+                  keyboardType="decimal-pad"
+                  placeholder={defaultTripRate ? String(defaultTripRate) : "0"}
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
             </View>
           )}
 
@@ -756,9 +1163,40 @@ export default function EditarJornadaScreen() {
         <View style={styles.plusSection}>
           <Text style={styles.fieldLabel}>{t("edit.plusExtras")}</Text>
           {plusItems.map((item, idx) => (
-            <View key={idx} style={styles.plusItemRow}>
-              <Text style={styles.plusItemText} numberOfLines={1}>{item.concepto}</Text>
-              <Text style={styles.plusItemAmount}>{item.importe.toFixed(2)} \u20AC</Text>
+            <View key={`pi_${idx}_${item.concepto}`} style={styles.plusItemRow}>
+              <TextInput
+                style={[styles.input, styles.plusItemEditableConcept]}
+                value={item.concepto}
+                onChangeText={(v) => setPlusItems(prev => prev.map((it, i) => i === idx ? { ...it, concepto: v } : it))}
+                onEndEditing={(e) => {
+                  const v = e.nativeEvent.text?.trim();
+                  if (!v) setPlusItems(prev => prev.map((it, i) => i === idx ? { ...it, concepto: "(sin concepto)" } : it));
+                }}
+                placeholder={t("jornada.concept")}
+                placeholderTextColor="#9CA3AF"
+              />
+              <TextInput
+                style={[styles.input, styles.plusItemEditableAmount]}
+                value={String(item.importe)}
+                onChangeText={(raw) => {
+                  const v = parseFloat(raw.replace(",", "."));
+                  if (Number.isFinite(v) && v >= 0) {
+                    setPlusItems(prev => prev.map((it, i) => i === idx ? { ...it, importe: v } : it));
+                  } else if (raw === "" || raw === "." || raw === ",") {
+                    setPlusItems(prev => prev.map((it, i) => i === idx ? { ...it, importe: 0 } : it));
+                  }
+                }}
+                onEndEditing={() => {
+                  setPlusItems(prev => prev.map((it, i) => {
+                    if (i !== idx) return it;
+                    const safe = Number.isFinite(it.importe) && it.importe >= 0 ? it.importe : 0;
+                    return { ...it, importe: Math.round(safe * 100) / 100 };
+                  }));
+                }}
+                placeholder="EUR"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="decimal-pad"
+              />
               <Pressable onPress={() => setPlusItems(prev => prev.filter((_, i) => i !== idx))} hitSlop={6}>
                 <Ionicons name="close-circle" size={18} color={Colors.light.danger} />
               </Pressable>
@@ -863,6 +1301,29 @@ const styles = StyleSheet.create({
   },
   field: {
     marginBottom: 8,
+  },
+  splitRestToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.light.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  splitRestToggleLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
+  },
+  splitRestHint: {
+    marginTop: 6,
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.accent,
   },
   fieldLabel: {
     fontSize: 12,
@@ -1071,6 +1532,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_500Medium",
     color: Colors.light.text,
+  },
+  plusItemEditableConcept: {
+    flex: 1,
+    minHeight: 36,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 13,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    backgroundColor: "#FFFFFF",
+  },
+  plusItemEditableAmount: {
+    width: 88,
+    minHeight: 36,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 13,
+    textAlign: "right" as const,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    backgroundColor: "#FFFFFF",
   },
   plusItemAmount: {
     fontSize: 13,

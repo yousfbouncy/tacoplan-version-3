@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -7,11 +7,13 @@ import {
   Pressable,
   TextInput,
   Alert,
+  Linking,
   Platform,
   ActivityIndicator,
   RefreshControl,
   Modal,
   Switch,
+  useWindowDimensions,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -19,10 +21,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 import Colors from "@/constants/colors";
+import NotificationDetailModal from "@/components/notifications/NotificationDetailModal";
 import { useI18n } from "@/lib/i18n-context";
+import { getNotificationAction } from "@/lib/notification-links";
 import OnboardingGuide from "@/components/OnboardingGuide";
 import DebugSimulator from "@/components/DebugSimulator";
+import PendingNaturalDietsModal, { type DetectedDiet, type PlusItemUi } from "@/components/PendingNaturalDietsModal";
+import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import { useFerry } from "@/lib/ferry-context";
 import {
   addMoroccoTrip,
@@ -54,20 +61,33 @@ import {
   type FerryExtras,
   type FerryInterruption,
   addFerryRest,
+  detectMissingOutOfBaseDietDays,
+  upsertNaturalDayDiets,
+  dismissNaturalDayDiets,
+  getAllNaturalDayDiets,
+  clearDismissedNaturalDayDietsInRange,
+  type DetectedMissingNaturalDay,
+  type NaturalDayDietEntry,
+  addDays,
+  extractYyyyMmDd,
 } from "@/lib/local-storage";
 import {
   todayStr,
   nowTimeStr,
   formatFecha,
   formatMinutosHoras,
+  formatDateForDisplay,
+  parseDisplayDateToISO,
   isSpainSummerTime,
   detectCrossSundayMonday,
 } from "@/lib/utils";
 import {
   getLegalStatusColor,
   getLegalStatusLabel,
+  getQualifiedSplitDailyRestFirstPartMin,
   getSeverityColor,
   getSeverityLabel,
+  getSplitDailyRestComputedTotalMin,
   buildLegalPreview,
   computeLegalPlan,
   formatDateTimeES,
@@ -76,12 +96,56 @@ import {
 } from "@/lib/legalEngine";
 import { useAuth } from "@/lib/auth-context";
 import { useSync } from "@/lib/sync-context";
-import { getApiUrl } from "@/lib/query-client";
+import { useTachograph } from "@/lib/tachograph/tachograph-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { userScopedKey } from "@/lib/user-scope";
+import {
+  fetchDayExtras,
+  fetchDietRates,
+  fetchHolidays,
+  fetchUserNotifications,
+  markUserNotificationRead,
+  markAllUserNotificationsRead,
+  deleteUserNotification,
+  deleteReadUserNotifications,
+  type UserNotificationRow,
+} from "@/lib/user-cloud";
+
+const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
+const SUPPORT_WHATSAPP_URL = "https://wa.me/34656365216";
+const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
+const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
+const JORNADA_DATE_DEBUG_RUN = "pre-fix";
 
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
 
 const LOCALE_MAP: Record<string, string> = { es: "es-ES", en: "en-GB", ar: "ar-SA", fr: "fr-FR" };
+
+function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
+  if (typeof fetch !== "function") return;
+  let timezone: string | null = null;
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {}
+  fetch(JORNADA_DATE_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: JORNADA_DATE_DEBUG_SESSION,
+      runId: JORNADA_DATE_DEBUG_RUN,
+      hypothesisId,
+      location,
+      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
+      data: {
+        timezone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        platform: Platform.OS,
+        ...data,
+      },
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
 
 function formatSyncTime(isoStr: string, t: (key: string) => string, locale: string = "es"): string {
   try {
@@ -219,9 +283,11 @@ const suggestionStyles = StyleSheet.create({
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
+  const { width: viewportWidth } = useWindowDimensions();
+  const isNarrowMobile = viewportWidth <= 430;
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const qc = useQueryClient();
-  const { user, isGuest, logout, getAccessToken } = useAuth();
+  const { user, logout } = useAuth();
   const { t, locale } = useI18n();
   const {
     triggerSync, syncStatus, lastSyncTime, hasPending,
@@ -230,14 +296,19 @@ export default function DashboardScreen() {
     dismissRecovery, dismissRestoreComplete, refreshSyncInfo,
     syncVersion,
   } = useSync();
+  const tacho = useTachograph();
 
   const [inicioFecha, setInicioFecha] = useState(todayStr());
+  const [inicioFechaInput, setInicioFechaInput] = useState(formatDateForDisplay(todayStr()));
   const [inicioHora, setInicioHora] = useState(nowTimeStr());
   const [inicioLugar, setInicioLugar] = useState("");
 
   const [finFecha, setFinFecha] = useState(todayStr());
+  const [finFechaInput, setFinFechaInput] = useState(formatDateForDisplay(todayStr()));
   const [finHora, setFinHora] = useState(nowTimeStr());
   const [finLugar, setFinLugar] = useState("");
+  const [finLugarTouched, setFinLugarTouched] = useState(false);
+  const [resolvingFinLugar, setResolvingFinLugar] = useState(false);
   const [tipoRuta, setTipoRuta] = useState<TipoRuta>("NACIONAL");
   const [conduccionHoras, setConduccionHoras] = useState("");
   const [conduccionDomingoHoras, setConduccionDomingoHoras] = useState("");
@@ -256,10 +327,133 @@ export default function DashboardScreen() {
   const [moroccoPernocta, setMoroccoPernocta] = useState(false);
   const [moroccoDayExtras, setMoroccoDayExtras] = useState<{ saturday: boolean; sunday: boolean; holiday: boolean }>({ saturday: false, sunday: false, holiday: false });
 
+  const [isDoubleChecked, setIsDoubleChecked] = useState(false);
+  const [secondDriverName, setSecondDriverName] = useState("");
+
   const [showInicioForm, setShowInicioForm] = useState(false);
   const [showFinForm, setShowFinForm] = useState(false);
+  const [showTopMenu, setShowTopMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<UserNotificationRow[]>([]);
+  const [selectedNotification, setSelectedNotification] = useState<UserNotificationRow | null>(null);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [closePlanEndAt, setClosePlanEndAt] = useState<string | null>(null);
 
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const resolveFinLugarFromGps = useCallback(async () => {
+    if (resolvingFinLugar) return;
+    if (finLugarTouched) return;
+    setResolvingFinLugar(true);
+    try {
+      if (Platform.OS === "web") return;
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.status !== "granted") {
+        Alert.alert(
+          "Permiso de ubicación",
+          "Activa el permiso de ubicación para autocompletar el lugar de fin (ciudad y país).",
+        );
+        return;
+      }
+      const isUsableLast = (p: any): boolean => {
+        const ts = typeof p?.timestamp === "number" ? p.timestamp : null;
+        const acc = typeof p?.coords?.accuracy === "number" ? p.coords.accuracy : null;
+        if (ts == null || acc == null) return false;
+        if (Date.now() - ts > 2 * 60 * 1000) return false;
+        if (acc > 200) return false;
+        return true;
+      };
+
+      const last = await Location.getLastKnownPositionAsync().catch(() => null as any);
+      const pos =
+        (last && isUsableLast(last) ? last : null) ||
+        (await Location.getCurrentPositionAsync({
+          accuracy: Platform.OS === "ios" ? Location.Accuracy.Highest : Location.Accuracy.High,
+        }));
+      const geo = await Location.reverseGeocodeAsync({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      });
+      const g = geo?.[0];
+      if (!g) return;
+      const city = (g.city || g.district || g.name || "").trim();
+      const province = (g.subregion || g.region || "").trim();
+      const country = (g.country || "").trim();
+      const label = [city || province, country].filter(Boolean).join(", ");
+      if (!label) return;
+      setFinLugar((prev) => {
+        if (finLugarTouched) return prev;
+        if (prev && prev.trim().length > 0) return prev;
+        return label;
+      });
+    } catch {}
+    finally {
+      setResolvingFinLugar(false);
+    }
+  }, [finLugarTouched, resolvingFinLugar]);
+
+  useEffect(() => {
+    if (!showFinForm) return;
+    if (finLugarTouched) return;
+    if (finLugar && finLugar.trim().length > 0) return;
+    resolveFinLugarFromGps();
+  }, [showFinForm, finLugarTouched, finLugar, resolveFinLugarFromGps]);
+
+  const notificationsCacheKey = useMemo(
+    () => userScopedKey("tacoplan_inapp_notifications_cache_v1", user?.id),
+    [user?.id],
+  );
+
+  const unreadCount = useMemo(() => {
+    return notifications.reduce((s, n) => s + (n.is_read ? 0 : 1), 0);
+  }, [notifications]);
+
+  const openNotificationDetail = useCallback((notification: UserNotificationRow) => {
+    setShowNotifications(false);
+    setTimeout(() => {
+      setSelectedNotification(notification);
+    }, 0);
+  }, []);
+
+  const loadNotificationsFromCache = useCallback(async () => {
+    try {
+      const k = await notificationsCacheKey;
+      const raw = await AsyncStorage.getItem(k);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setNotifications(parsed as any);
+    } catch {}
+  }, [notificationsCacheKey]);
+
+  const saveNotificationsToCache = useCallback(async (list: UserNotificationRow[]) => {
+    try {
+      const k = await notificationsCacheKey;
+      await AsyncStorage.setItem(k, JSON.stringify(list.slice(0, 100)));
+    } catch {}
+  }, [notificationsCacheKey]);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!user?.id) return;
+    if (loadingNotifications) return;
+    setLoadingNotifications(true);
+    try {
+      const list = await fetchUserNotifications(user.id, 50);
+      setNotifications(list);
+      saveNotificationsToCache(list);
+    } catch {}
+    finally {
+      setLoadingNotifications(false);
+    }
+  }, [loadingNotifications, saveNotificationsToCache, user?.id]);
+
+  useEffect(() => {
+    loadNotificationsFromCache();
+  }, [loadNotificationsFromCache]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshNotifications();
+    }, [refreshNotifications]),
+  );
+
   const [legalResult, setLegalResult] = useState<LegalSummaryStored | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const { config: ferryConfig, isFerryRestMode, isMoroccoMode } = useFerry();
@@ -270,6 +464,7 @@ export default function DashboardScreen() {
   const [closedJornadaId, setClosedJornadaId] = useState<string | null>(null);
   const [closePlanData, setClosePlanData] = useState<LegalPlan | null>(null);
   const [ferryJustClosed, setFerryJustClosed] = useState<Jornada | null>(null);
+  const [splitRestManual, setSplitRestManual] = useState(false);
 
   const [plusItems, setPlusItems] = useState<PlusItem[]>([]);
   const [plusConcepto, setPlusConcepto] = useState("");
@@ -281,87 +476,176 @@ export default function DashboardScreen() {
   const [ferryFinishEndDate, setFerryFinishEndDate] = useState("");
   const [ferryFinishEndTime, setFerryFinishEndTime] = useState("");
 
+  const [pendingDietsVisible, setPendingDietsVisible] = useState(false);
+  const [pendingDiets, setPendingDiets] = useState<DetectedMissingNaturalDay[]>([]);
+  const [pendingDietsSaving, setPendingDietsSaving] = useState(false);
+  const [reEvalInicioLoading, setReEvalInicioLoading] = useState(false);
+  const [deferredStartJourney, setDeferredStartJourney] = useState<{
+    lugarInicio: string; fechaInicio: string; horaInicio: string; kmInicio?: number|null; observaciones?: string|null; baseKm?: any;
+  } | null>(null);
+  const [arrivalSelectorVisible, setArrivalSelectorVisible] = useState(false);
+  const [arrivalSelectorDay, setArrivalSelectorDay] = useState<Parameters<typeof ArrivalDayDietSelectorModal>[0]["day"]>(null);
+  const [arrivalSelectorChoices, setArrivalSelectorChoices] = useState<Map<string, { percentage: 100|60|30|null; amount: number }>>(new Map());
+  const [arrivalSelectorQueue, setArrivalSelectorQueue] = useState<DetectedMissingNaturalDay[]>([]);
+  const [pendingDietsRichItems, setPendingDietsRichItems] = useState<DetectedDiet[]>([]);
+
   const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
-  const [dayExtras, setDayExtras] = useState<UserDayExtras>({ extra_saturday: 10, extra_sunday: 15, extra_holiday: 20 });
+  const [dayExtras, setDayExtras] = useState<UserDayExtras>({
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  });
   const [userHolidays, setUserHolidays] = useState<string[]>([]);
+
+  const [paymentMode, setPaymentMode] = useState<"dietas" | "viaje" | "km">("dietas");
+  const [pricePerKm, setPricePerKm] = useState(0);
+  const [pricePerKmNac, setPricePerKmNac] = useState(0);
+  const [pricePerKmIntl, setPricePerKmIntl] = useState(0);
+  const [pricePerKmReg, setPricePerKmReg] = useState(0);
+  const [pricePerTripNac, setPricePerTripNac] = useState(0);
+  const [pricePerTripIntl, setPricePerTripIntl] = useState(0);
+  const [pricePerTripReg, setPricePerTripReg] = useState(0);
+  const [pricePerTrip, setPricePerTrip] = useState(0);
+  const [kmInicio, setKmInicio] = useState("");
+  const [kmInicioClose, setKmInicioClose] = useState("");
+  const [kmFin, setKmFin] = useState("");
+  const [importeViaje, setImporteViaje] = useState("");
 
   const [recentPlaces, setRecentPlaces] = useState<string[]>([]);
   const [showInicioSuggestions, setShowInicioSuggestions] = useState(false);
   const [showFinSuggestions, setShowFinSuggestions] = useState(false);
 
+  const closeTutorial = useCallback(async () => {
+    try {
+      await AsyncStorage.setItem(await userScopedKey(TUTORIAL_COMPLETED_KEY, user?.id), "true");
+    } catch {}
+    setShowGuide(false);
+  }, [user?.id]);
+
+  const openTutorial = useCallback(() => {
+    setShowGuide(true);
+  }, []);
+
+  const openSupportWhatsApp = useCallback(async () => {
+    try {
+      const supported = await Linking.canOpenURL(SUPPORT_WHATSAPP_URL);
+      if (!supported) return;
+      await Linking.openURL(SUPPORT_WHATSAPP_URL);
+    } catch {}
+  }, []);
+
   const loadUserConfig = useCallback(async () => {
     try {
-      const local = await AsyncStorage.getItem("tacoplan_user_settings");
+      const local = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings", user?.id));
       if (local) {
         const s = JSON.parse(local);
         const pf = (v: any, fb: number) => { const n = parseFloat(v); return isNaN(n) ? fb : n; };
         const rates: UserDietRate[] = [
-          { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 54.30) },
-          { trip_type: "NACIONAL", percent: 60, amount: pf(s.nac_60, 32.58) },
-          { trip_type: "NACIONAL", percent: 30, amount: pf(s.nac_30, 16.29) },
-          { trip_type: "INTERNACIONAL", percent: 100, amount: pf(s.intl_100, 72.77) },
-          { trip_type: "INTERNACIONAL", percent: 60, amount: pf(s.intl_60, 43.66) },
-          { trip_type: "INTERNACIONAL", percent: 30, amount: pf(s.intl_30, 21.83) },
+          { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 0) },
+          { trip_type: "NACIONAL", percent: 60, amount: pf(s.nac_60, 0) },
+          { trip_type: "NACIONAL", percent: 30, amount: pf(s.nac_30, 0) },
+          { trip_type: "INTERNACIONAL", percent: 100, amount: pf(s.intl_100, 0) },
+          { trip_type: "INTERNACIONAL", percent: 60, amount: pf(s.intl_60, 0) },
+          { trip_type: "INTERNACIONAL", percent: 30, amount: pf(s.intl_30, 0) },
           { trip_type: "REGIONAL", percent: 100, amount: pf(s.reg_100, 0) },
           { trip_type: "REGIONAL", percent: 60, amount: pf(s.reg_60, 0) },
           { trip_type: "REGIONAL", percent: 30, amount: pf(s.reg_30, 0) },
         ];
         setCustomRates(rates);
         setDayExtras({
-          extra_saturday: pf(s.extra_saturday, 10),
-          extra_sunday: pf(s.extra_sunday, 15),
-          extra_holiday: pf(s.extra_holiday, 20),
+          extra_saturday: pf(s.extra_saturday, 0),
+          extra_sunday: pf(s.extra_sunday, 0),
+          extra_holiday: pf(s.extra_holiday, 0),
+          offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional, 0),
+          offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional, 0),
+          offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional, 0),
+          offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional, 0),
         });
+        const pm = s.payment_mode === "km" || s.payment_mode === "viaje" || s.payment_mode === "dietas" ? s.payment_mode : "dietas";
+        setPaymentMode(pm);
+        const fallbackKm = pf(s.price_per_km, 0);
+        const nac = pf(s.price_per_km_nacional, fallbackKm);
+        const intl = pf(s.price_per_km_internacional, fallbackKm);
+        const reg = pf(s.price_per_km_regional, fallbackKm);
+        setPricePerKmNac(nac);
+        setPricePerKmIntl(intl);
+        setPricePerKmReg(reg);
+        setPricePerKm(nac);
+        const tripFallback = pf(s.price_per_trip, 0);
+        const tripNac = pf(s.price_per_trip_nacional, tripFallback);
+        const tripIntl = pf(s.price_per_trip_internacional, tripFallback);
+        const tripReg = pf(s.price_per_trip_regional, tripFallback);
+        setPricePerTripNac(tripNac);
+        setPricePerTripIntl(tripIntl);
+        setPricePerTripReg(tripReg);
+        setPricePerTrip(tripNac);
+        setImporteViaje(String(tripNac));
       }
     } catch (e) {
       console.log("Failed to load local settings:", e);
     }
 
-    if (isGuest || !user) return;
+    if (!user) return;
     try {
-      const token = await getAccessToken();
-      if (!token) return;
-      const base = getApiUrl();
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
-      const [ratesRes, extrasRes, holidaysRes] = await Promise.all([
-        fetch(new URL("/api/user/diet-rates", base).toString(), { headers }),
-        fetch(new URL("/api/user/day-extras", base).toString(), { headers }),
-        fetch(new URL("/api/user/holidays", base).toString(), { headers }),
+      const [rates, extras, holidays] = await Promise.all([
+        fetchDietRates(user.id),
+        fetchDayExtras(user.id),
+        fetchHolidays(user.id),
       ]);
-
-      if (ratesRes.ok) {
-        const d = await ratesRes.json();
-        if (d.rates && d.rates.length > 0) setCustomRates(d.rates);
-      }
-      if (extrasRes.ok) {
-        const d = await extrasRes.json();
-        const ex = d.extras;
-        if (ex) {
-          const pn = (v: any, fb: number) => { const n = Number(v); return isNaN(n) ? fb : n; };
-          setDayExtras({
-            extra_saturday: pn(ex.extra_saturday, 10),
-            extra_sunday: pn(ex.extra_sunday, 15),
-            extra_holiday: pn(ex.extra_holiday, 20),
-          });
-        }
-      }
-      if (holidaysRes.ok) {
-        const d = await holidaysRes.json();
-        setUserHolidays((d.holidays || []).map((h: any) => h.date));
-      }
+      if (rates.length > 0) setCustomRates(rates as any);
+      setDayExtras(extras as any);
+      setUserHolidays((holidays || []).map((h: any) => h.date));
     } catch (e) {
-      console.log("Failed to load user config:", e);
+      console.error("[DASHBOARD] Failed to load user config from Supabase", e);
     }
-  }, [isGuest, user, getAccessToken]);
+  }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const value = await AsyncStorage.getItem(await userScopedKey(TUTORIAL_COMPLETED_KEY, user?.id));
+        if (!cancelled && value !== "true") {
+          setShowGuide(true);
+        }
+      } catch {
+        if (!cancelled) setShowGuide(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const tripCategory = useCallback((tr: TipoRuta): "NACIONAL" | "INTERNACIONAL" | "REGIONAL" => {
+    if (tr === "REGIONAL") return "REGIONAL";
+    if (tr === "INTERNACIONAL" || tr === "REGIONAL_INTL" || tr === "NAC_INTL") return "INTERNACIONAL";
+    return "NACIONAL";
+  }, []);
+
+  const lastAutoTripRateRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (paymentMode !== "viaje") return;
+    const cat = tripCategory(tipoRuta);
+    const next = cat === "NACIONAL" ? pricePerTripNac : cat === "REGIONAL" ? pricePerTripReg : pricePerTripIntl;
+    setPricePerTrip(next);
+    const current = parseFloat((importeViaje || "").replace(",", "."));
+    const lastAuto = lastAutoTripRateRef.current;
+    const shouldAutofill = !importeViaje.trim() || (Number.isFinite(current) && lastAuto != null && Math.abs(current - lastAuto) < 0.0001);
+    if (shouldAutofill) {
+      setImporteViaje(String(next));
+    }
+    lastAutoTripRateRef.current = next;
+  }, [paymentMode, tipoRuta, tripCategory, pricePerTripNac, pricePerTripIntl, pricePerTripReg, importeViaje]);
 
 
   useFocusEffect(
     useCallback(() => {
       loadUserConfig();
-      AsyncStorage.getItem("tacoplan_onboarded").then((val) => {
-        setShowOnboarding(val !== "true");
-      });
       getRecentPlaces().then(setRecentPlaces);
       getJornadaAbierta().then((abierta) => {
         if (!abierta) {
@@ -374,17 +658,6 @@ export default function DashboardScreen() {
       });
     }, [loadUserConfig])
   );
-
-  const dismissOnboarding = useCallback(async () => {
-    await AsyncStorage.setItem("tacoplan_onboarded", "true");
-    setShowOnboarding(false);
-  }, []);
-
-  const openGuideAndDismiss = useCallback(async () => {
-    await AsyncStorage.setItem("tacoplan_onboarded", "true");
-    setShowOnboarding(false);
-    setShowGuide(true);
-  }, []);
 
   const dietaPreview = useMemo(() => {
     let result: { items: any[]; total: number };
@@ -418,6 +691,13 @@ export default function DashboardScreen() {
     queryFn: () => getJornadaAbierta(),
   });
 
+  useEffect(() => {
+    if (!showFinForm) return;
+    const abierta = abiertaQuery.data;
+    if (!abierta) return;
+    setKmInicioClose(abierta.kmInicio != null && Number.isFinite(abierta.kmInicio) ? String(abierta.kmInicio) : "");
+  }, [showFinForm, abiertaQuery.data?.id]);
+
   const estadoQuery = useQuery<EstadoLegal>({
     queryKey: ["estado-legal", syncVersion],
     queryFn: () => getEstadoLegal(),
@@ -446,6 +726,60 @@ export default function DashboardScreen() {
     }
     return detectCrossSundayMonday(abierta.fechaInicio, resolvedFechaFin);
   }, [abierta?.fechaInicio, abierta?.horaInicio, finFecha, finHora]);
+
+  useEffect(() => {
+    if (!tacho.bindActiveJornada) return;
+    if (!abierta?.id) {
+      tacho.bindActiveJornada(null);
+      return;
+    }
+    tacho.bindActiveJornada(abierta.id);
+  }, [abierta?.id, tacho.bindActiveJornada]);
+
+  const tachoConflictHint = useMemo(() => {
+    if (!abierta || !tacho.closeJornadaHint) return null;
+    // closeJornadaHint is async; sync preview resolves immediately from RAM
+    const manualDrivingMin = (() => {
+      if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
+        return conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
+      }
+      return conduccionParsed.minutes;
+    })();
+    const kmEnd = parseFloat(kmFin);
+    const manualKm = Number.isFinite(kmEnd) ? kmEnd - (abierta.kmInicio ?? 0) : null;
+    // Conflicto solo si hay manual lleno; closeJornadaHint real se evalúa en cierreMutation
+    return {
+      hint: null as any,
+      drivingConflict: false,
+      manualDrivingMin,
+      manualKm,
+    };
+  }, [abierta?.id, tacho.closeJornadaHint, isCrossSundayMonday, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, conduccionParsed.minutes, kmFin]);
+
+  useEffect(() => {
+    if (!estado) return;
+    // #region debug-point E:dashboard-legal-state
+    fetch("http://192.168.1.248:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"ten-hour-extension-reset",runId:"pre-fix",hypothesisId:"E",location:"app/(tabs)/index.tsx:estadoQuery",msg:"[DEBUG] dashboard received legal state",data:{platform:Platform.OS,conduccionSemanalMin:estado.conduccionSemanalMin,conduccionBisemanalMin:estado.conduccionBisemanalMin,extensiones10h:estado.extensiones10h,restanteSemanalMin:estado.restanteSemanalMin,restanteBisemanalMin:estado.restanteBisemanalMin,alertas:estado.alertas},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [estado]);
+
+  const compensationInfo = useMemo(() => {
+    const comp = (estado as any)?.compensacionAgregada as any;
+    if (!comp?.fechaLimite) return { debtMin: 0, dueThisWeek: false, fechaLimite: null as string | null };
+    const hRaw = Number(comp.totalDeudaHoras);
+    const mRaw = Number(comp.totalDeudaMinutos);
+    const h = Number.isFinite(hRaw) && hRaw >= 0 ? hRaw : 0;
+    const m = Number.isFinite(mRaw) && mRaw >= 0 ? mRaw : 0;
+    const debtMin = Math.max(0, Math.floor(h * 60 + m));
+    const today = new Date();
+    const day = today.getDay();
+    const mondayOffset = (day + 6) % 7;
+    const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - mondayOffset);
+    const sunday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - mondayOffset + 6);
+    const deadline = new Date(String(comp.fechaLimite) + "T00:00:00");
+    const dueThisWeek = deadline >= monday && deadline <= sunday;
+    return { debtMin, dueThisWeek, fechaLimite: String(comp.fechaLimite) };
+  }, [estado]);
 
   const crossWeekTimeLabel = useMemo(() => {
     if (!abierta) return "01:00";
@@ -532,15 +866,26 @@ export default function DashboardScreen() {
     }
     return lastClosedRaw;
   }, [lastClosedRaw, ferryJustClosed]);
+  const shouldShowFerryPanel = !!(isFerryRestMode && lastClosed?.ferryPending && !lastClosed?.ferryRestCompleted && lastClosed?.endAt);
+  const previousSplitFirstPartMin = getQualifiedSplitDailyRestFirstPartMin(lastClosed);
+  const previousSplitComputedTotalMin = abierta
+    ? getSplitDailyRestComputedTotalMin(abierta.descansoAnteriorMin, lastClosed)
+    : null;
+  const showPreviousSplitRestSummary = !!(
+    abierta &&
+    abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_COMPLETO" &&
+    previousSplitFirstPartMin != null &&
+    previousSplitComputedTotalMin != null
+  );
 
   const [countdownNow, setCountdownNow] = useState(Date.now());
   useEffect(() => {
-    const needsCountdown = (lastClosed?.plannedRestMin && lastClosed?.endAt) || lastClosed?.ferryPending;
+    const needsCountdown = (lastClosed?.plannedRestMin && lastClosed?.endAt) || shouldShowFerryPanel;
     if (!needsCountdown) return;
-    const tickMs = lastClosed?.ferryPending ? 1000 : 30000;
+    const tickMs = shouldShowFerryPanel ? 1000 : 30000;
     const interval = setInterval(() => setCountdownNow(Date.now()), tickMs);
     return () => clearInterval(interval);
-  }, [lastClosed?.plannedRestMin, lastClosed?.endAt, lastClosed?.ferryPending]);
+  }, [lastClosed?.plannedRestMin, lastClosed?.endAt, shouldShowFerryPanel]);
 
   const [ferryTransitDiet, setFerryTransitDiet] = useState(0);
   const [ferryCabinOvernight, setFerryCabinOvernight] = useState(0);
@@ -566,17 +911,50 @@ export default function DashboardScreen() {
   }, [qc]);
 
   const inicioMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (params?: {
+      lugarInicio?: string; fechaInicio?: string; horaInicio?: string; kmInicio?: number|null;
+    }) => {
+      const resolvedInicioFecha = params?.fechaInicio ?? parseDisplayDateToISO(inicioFechaInput);
+      if (!resolvedInicioFecha) throw new Error(t("common.invalidDate"));
+      const lugarInicioFinal = params?.lugarInicio ?? inicioLugar;
+      const horaInicioFinal = params?.horaInicio ?? inicioHora;
+      const kmInicioRaw = params?.kmInicio != null ? params.kmInicio : parseFloat(kmInicio);
+      const kmStart = Number.isFinite(kmInicioRaw as number) ? (kmInicioRaw as number) : NaN;
+      // #region debug-point A:start-ui-submit
+      reportJornadaDateDebug("A", "dashboard:index:inicioMutation", "user submits start jornada", {
+        fechaInicioInputVisible: inicioFechaInput,
+        fechaInicioSeleccionada: resolvedInicioFecha,
+        horaInicioSeleccionada: horaInicioFinal,
+        fechaFinSeleccionada: null,
+        horaFinSeleccionada: null,
+        payload: {
+          fechaInicio: resolvedInicioFecha,
+          horaInicio: horaInicioFinal,
+          lugarInicio: lugarInicioFinal,
+          paymentMode,
+          kmInicio: paymentMode === "km" && Number.isFinite(kmStart) ? kmStart : null,
+        },
+      });
+      // #endregion
       return crearJornadaInicio({
-        fechaInicio: inicioFecha,
-        horaInicio: inicioHora,
-        lugarInicio: inicioLugar,
+        fechaInicio: resolvedInicioFecha,
+        horaInicio: horaInicioFinal,
+        lugarInicio: lugarInicioFinal,
+        paymentMode,
+        kmInicio: paymentMode === "km" && Number.isFinite(kmStart) ? kmStart : undefined,
+        pricePerKm: paymentMode === "km" ? pricePerKmNac : undefined,
+        pricePerTrip: paymentMode === "viaje" ? pricePerTrip : undefined,
+        isDoubleDriving: isDoubleChecked,
+        secondDriverName: isDoubleChecked ? secondDriverName : undefined,
       });
     },
     onSuccess: async (newJornada: Jornada) => {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFerryJustClosed(null);
       setInicioLugar("");
+      setKmInicio("");
+      setIsDoubleChecked(false);
+      setSecondDriverName("");
       invalidateAll();
       triggerSync();
       const allJ = await listarJornadas();
@@ -585,6 +963,7 @@ export default function DashboardScreen() {
         startAt: newJornada.startAt,
         descansoAnteriorMin: newJornada.descansoAnteriorMin,
         tipoDescansoAnterior: newJornada.tipoDescansoAnterior,
+        isDoubleDriving: newJornada.isDoubleDriving,
       }, locale);
       setStartPlanData(plan);
       setShowStartPlan(true);
@@ -594,12 +973,420 @@ export default function DashboardScreen() {
     },
   });
 
+  const handleSaveInicio = useCallback(async (skipPendingCheck?: boolean, overrideParams?: {
+    lugarInicio?: string; fechaInicio?: string; horaInicio?: string; kmInicio?: number|null;
+  }) => {
+    const resolvedFecha = overrideParams?.fechaInicio ?? parseDisplayDateToISO(inicioFechaInput);
+    if (!resolvedFecha) { Alert.alert(t("common.error"), t("common.invalidDate")); return; }
+    const lugar = overrideParams?.lugarInicio ?? inicioLugar;
+    const hora = overrideParams?.horaInicio ?? inicioHora;
+    const kmRaw = overrideParams?.kmInicio != null ? overrideParams.kmInicio : parseFloat(kmInicio);
+    const kmStart = Number.isFinite(kmRaw as number) ? (kmRaw as number) : undefined;
+
+    if (!skipPendingCheck) {
+      try {
+        const hhmm = (hora || "00:00").toString().padStart(5, "0").slice(0, 5);
+        const todasJornadas = await listarJornadas();
+        const ultimaCerrada = todasJornadas != null && Array.isArray(todasJornadas)
+          ? todasJornadas
+              .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
+              .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
+          : null;
+        const ultimaFinStr = ultimaCerrada
+          ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || resolvedFecha))
+          : null;
+        const gapFrom = ultimaFinStr ? addDays(ultimaFinStr, -1) : null;
+        const resolvedFechaMinus45 = addDays(resolvedFecha, -45);
+        const triggerAFrom = gapFrom && gapFrom > resolvedFechaMinus45 ? gapFrom : resolvedFechaMinus45;
+        const triggerATo = addDays(resolvedFecha, -1);
+        await clearDismissedNaturalDayDietsInRange(triggerAFrom, triggerATo);
+        console.log(`[DISMISSED_CLEARED_RANGE from=${triggerAFrom} to=${triggerATo}]`);
+        const detectados = await detectMissingOutOfBaseDietDays({
+          extraPendingJourney: {
+            startAt: `${resolvedFecha}T${hhmm}:00`,
+            fechaInicio: resolvedFecha,
+            lugarInicio: lugar || null,
+            tipoRuta: (tipoRuta as any) || null,
+          },
+          fromDate: triggerAFrom,
+          toDate: triggerATo,
+        });
+        console.log(`[TRIGGER_A pendingCount=${detectados?.length || 0} from=${triggerAFrom} to=${triggerATo}]`);
+        if (detectados && detectados.length > 0) {
+          setPendingDiets(detectados);
+          setDeferredStartJourney({
+            lugarInicio: lugar,
+            fechaInicio: resolvedFecha,
+            horaInicio: hora,
+            kmInicio: kmStart ?? null,
+            observaciones: null,
+            baseKm: undefined,
+          });
+          setPendingDietsVisible(true);
+          return;
+        }
+      } catch {}
+    }
+
+    inicioMutation.mutate(overrideParams ?? undefined);
+    setShowInicioForm(false);
+  }, [inicioFechaInput, inicioLugar, inicioHora, kmInicio, t, inicioMutation, tipoRuta]);
+
+  const upsertAllPendingSelections = useCallback(async (
+    selectedDatesOrItems: string[] | DetectedDiet[],
+    arrivalChoices: Map<string, { percentage: 100 | 60 | 30 | null; amount: number }>,
+  ) => {
+    const nowIso = new Date().toISOString();
+    const entries: any[] = [];
+    const datesToDismiss: string[] = [];
+
+    const isRich = Array.isArray(selectedDatesOrItems) && selectedDatesOrItems.length > 0 && typeof (selectedDatesOrItems[0] as any) === "object" && "date" in (selectedDatesOrItems[0] as any);
+
+    const processRichItem = (item: DetectedDiet): void => {
+      const date = item.date;
+      if (!date) return;
+      datesToDismiss.push(date);
+      if (item.removed) return;
+
+      const choice = arrivalChoices.get(date);
+      let pctRaw: 100 | 60 | 30 | "SIN_DIETA" | null | undefined;
+      let amount: number;
+
+      if (item.isBaseArrivalDay) {
+        if (choice) {
+          if (choice.percentage == null) return;
+          pctRaw = choice.percentage;
+          amount = choice.amount;
+        } else if (item.userPercentage) {
+          if (item.userPercentage === "SIN_DIETA") return;
+          pctRaw = item.userPercentage;
+          amount = typeof item.userAmount === "number" ? item.userAmount : item.amount;
+        } else {
+          return;
+        }
+      } else {
+        pctRaw = item.userPercentage && item.userPercentage !== "SIN_DIETA"
+          ? item.userPercentage
+          : item.percentage;
+        if (item.userPercentage === "SIN_DIETA") return;
+        amount = typeof item.userAmount === "number" && Number.isFinite(item.userAmount)
+          ? item.userAmount
+          : item.amount;
+      }
+
+      const pct: 100 | 60 | 30 = (pctRaw === 100 || pctRaw === 60 || pctRaw === 30) ? pctRaw : item.percentage;
+
+      const selectedPluses: PlusItemUi[] = Array.isArray(item.plusItems)
+        ? item.plusItems.filter((pl) => pl.selected !== false)
+        : [];
+      const plusTotal = selectedPluses.reduce((s, pl) => s + (Number(pl.amount) || 0), 0);
+
+      let t: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" = "NACIONAL";
+      const rawType = item.type;
+      if (rawType === "INTERNACIONAL" || rawType === "NACIONAL" || rawType === "REGIONAL") t = rawType;
+
+      const plusItemsForEntry: PlusItem[] = selectedPluses.map((pl) => ({
+        concepto: pl.concepto,
+        importe: Number(pl.amount) || 0,
+      }));
+
+      entries.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9) + `_${date}`,
+        date: String(date || ""),
+        type: t,
+        percentage: pct,
+        amount: (Number.isFinite(Number(amount)) ? Number(amount) : 0) + plusTotal,
+        location: typeof item?.location === "string" ? item.location : (item?.location ?? null),
+        source: "NATURAL_DAY_OUT_OF_BASE" as const,
+        previousJourneyId: typeof item?.previousJourneyId === "string" ? item.previousJourneyId : (item?.previousJourneyId ?? null),
+        nextJourneyId: typeof item?.nextJourneyId === "string" ? item.nextJourneyId : (item?.nextJourneyId ?? null),
+        confirmedByUser: true,
+        dismissedAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        syncStatus: "pending" as const,
+        plusItems: plusItemsForEntry.length > 0 ? plusItemsForEntry : undefined,
+      });
+    };
+
+    if (isRich) {
+      for (const item of selectedDatesOrItems as DetectedDiet[]) {
+        processRichItem(item);
+      }
+    } else {
+      const selectedDates = selectedDatesOrItems as string[];
+      for (const s of selectedDates) {
+        const date = typeof s === "string" ? s : (s as any).date;
+        if (!date) continue;
+        datesToDismiss.push(date);
+        const src = pendingDiets.find((p) => p.date === date);
+        if (!src) continue;
+        const anySrc = src as any;
+        const choice = arrivalChoices.get(date);
+        let pct: 100 | 60 | 30 = 100;
+        let amount = src.amount;
+        if (src.isBaseArrivalDay) {
+          if (choice) {
+            if (choice.percentage == null) continue;
+            pct = choice.percentage;
+            amount = choice.amount;
+          } else {
+            continue;
+          }
+        } else {
+          if (anySrc.userPercentage === "SIN_DIETA") continue;
+          pct = (anySrc.userPercentage === 100 || anySrc.userPercentage === 60 || anySrc.userPercentage === 30)
+            ? anySrc.userPercentage
+            : src.percentage;
+          amount = typeof anySrc.userAmount === "number" ? anySrc.userAmount : src.amount;
+        }
+        let t: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" = "NACIONAL";
+        const rawType = src.type;
+        if (rawType === "INTERNACIONAL" || rawType === "NACIONAL" || rawType === "REGIONAL") t = rawType;
+        const selectedPlusesUi: PlusItemUi[] = Array.isArray(anySrc.plusItems)
+          ? anySrc.plusItems.filter((pl: any) => pl.selected !== false)
+          : [];
+        const plusTotal = selectedPlusesUi.reduce((s: number, pl: any) => s + (Number(pl.amount) || 0), 0);
+        const plusItemsForEntry: PlusItem[] = selectedPlusesUi.map((pl: any) => ({
+          concepto: pl.concepto,
+          importe: Number(pl.amount) || 0,
+        }));
+        entries.push({
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9) + `_${date}`,
+          date: String(date || ""),
+          type: t,
+          percentage: pct,
+          amount: (Number.isFinite(Number(amount)) ? Number(amount) : 0) + plusTotal,
+          location: typeof src?.location === "string" ? src.location : (src?.location ?? null),
+          source: "NATURAL_DAY_OUT_OF_BASE" as const,
+          previousJourneyId: typeof src?.previousJourneyId === "string" ? src.previousJourneyId : (src?.previousJourneyId ?? null),
+          nextJourneyId: typeof src?.nextJourneyId === "string" ? src.nextJourneyId : (src?.nextJourneyId ?? null),
+          confirmedByUser: true,
+          dismissedAt: null,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          syncStatus: "pending" as const,
+          plusItems: plusItemsForEntry.length > 0 ? plusItemsForEntry : undefined,
+        });
+      }
+    }
+
+    if (entries.length > 0) {
+      await upsertNaturalDayDiets(entries as any);
+    }
+    const dedupedDates = Array.from(new Set(datesToDismiss));
+    if (dedupedDates.length > 0) {
+      await dismissNaturalDayDiets(dedupedDates);
+    }
+    setPendingDietsVisible(false);
+    setPendingDietsRichItems([]);
+    qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["jornada-abierta"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["estado-legal"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["last-closed"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["legal-preview"] }).catch(() => {});
+  }, [pendingDiets, qc]);
+
+  const runDeferredStartJourney = useCallback(() => {
+    const next = deferredStartJourney;
+    setDeferredStartJourney(null);
+    if (next) {
+      handleSaveInicio(true, {
+        lugarInicio: next.lugarInicio,
+        fechaInicio: next.fechaInicio,
+        horaInicio: next.horaInicio,
+        kmInicio: next.kmInicio,
+      });
+    }
+  }, [deferredStartJourney, handleSaveInicio]);
+
+  const handleConfirmPendingDiets = useCallback(
+    async (selectedDatesOrItems: any[] | DetectedDiet[]) => {
+      let dates: string[] = [];
+      try {
+        setPendingDietsSaving(true);
+
+        const isRich = Array.isArray(selectedDatesOrItems)
+          && selectedDatesOrItems.length > 0
+          && typeof (selectedDatesOrItems[0] as any) === "object"
+          && "date" in (selectedDatesOrItems[0] as any);
+
+        const richItems: DetectedDiet[] = isRich
+          ? (selectedDatesOrItems as DetectedDiet[])
+          : (selectedDatesOrItems as any[])
+              .map((d) => {
+                const date = typeof d === "string" ? d : d?.date;
+                if (!date) return null;
+                const src = pendingDiets.find((p) => p.date === date) as any;
+                return src ? { ...src, date } as DetectedDiet : null;
+              })
+              .filter(Boolean) as DetectedDiet[];
+
+        setPendingDietsRichItems(richItems);
+
+        dates = richItems
+          .filter((i) => !i.removed && i.userPercentage !== "SIN_DIETA")
+          .map((i) => i.date)
+          .filter(Boolean);
+
+        const arrivals = richItems
+          .filter((i) => !i.removed && i.userPercentage !== "SIN_DIETA" && i.isBaseArrivalDay === true);
+
+        if (arrivals.length === 0) {
+          await upsertAllPendingSelections(richItems, new Map());
+          setPendingDiets([]);
+          runDeferredStartJourney();
+          return;
+        }
+
+        setArrivalSelectorChoices(new Map());
+        setArrivalSelectorQueue(arrivals as unknown as DetectedMissingNaturalDay[]);
+        setPendingDietsSaving(false);
+
+        const first = arrivals[0];
+        let arrivalHHMM: string | null = null;
+        if (first.arrivalHHMM) {
+          arrivalHHMM = first.arrivalHHMM;
+        } else if (first.previousJourneyId) {
+          const all = await import("@/lib/local-storage").then((m) => m.listarJornadas());
+          const j = all.find((x: any) => x.id === first.previousJourneyId);
+          if (j && j.horaFin) arrivalHHMM = j.horaFin;
+        }
+        setArrivalSelectorDay({
+          date: first.date,
+          type: first.type,
+          location: first.location || null,
+          arrivalTime: arrivalHHMM,
+          routeLabel: first.type,
+        });
+        setArrivalSelectorVisible(true);
+
+      } catch (e: any) {
+        Alert.alert(t("common.error"), e?.message || String(e));
+      } finally {
+        if (!pendingDiets.find(p => p.isBaseArrivalDay && dates.includes(p.date))) {
+          setPendingDietsSaving(false);
+        }
+      }
+    },
+    [pendingDiets, t, upsertAllPendingSelections, runDeferredStartJourney],
+  );
+
+  const handleArrivalChoiceConfirm = useCallback(async (choice: { percentage: 100|60|30|null; amount: number }) => {
+    try {
+      setPendingDietsSaving(true);
+      const queue = arrivalSelectorQueue.slice();
+      const current = queue.shift();
+      const choices = new Map(arrivalSelectorChoices);
+      if (current) {
+        choices.set(current.date, choice);
+      }
+      setArrivalSelectorChoices(choices);
+
+      if (queue.length > 0) {
+        const next = queue[0];
+        setArrivalSelectorQueue(queue);
+        let arrivalHHMM: string | null = null;
+        const anyNext = next as any;
+        if (anyNext.arrivalHHMM) {
+          arrivalHHMM = anyNext.arrivalHHMM;
+        } else if (next.previousJourneyId) {
+          const all = await import("@/lib/local-storage").then((m) => m.listarJornadas());
+          const j = all.find((x: any) => x.id === next.previousJourneyId);
+          if (j && j.horaFin) arrivalHHMM = j.horaFin;
+        }
+        setArrivalSelectorDay({
+          date: next.date,
+          type: next.type,
+          location: next.location || null,
+          arrivalTime: arrivalHHMM,
+          routeLabel: next.type,
+        });
+        setPendingDietsSaving(false);
+        return;
+      }
+
+      setArrivalSelectorQueue([]);
+      setArrivalSelectorVisible(false);
+      setArrivalSelectorDay(null);
+
+      const useRich = pendingDietsRichItems && pendingDietsRichItems.length > 0;
+      if (useRich) {
+        const merged: DetectedDiet[] = pendingDietsRichItems.map((item) => {
+          const ch = choices.get(item.date);
+          if (ch && item.isBaseArrivalDay) {
+            return {
+              ...item,
+              userPercentage: ch.percentage == null ? "SIN_DIETA" as const : (ch.percentage as 100 | 60 | 30),
+              userAmount: ch.amount,
+            };
+          }
+          return item;
+        });
+        await upsertAllPendingSelections(merged, choices);
+      } else {
+        const selectedDates: string[] = [];
+        const nonArrivals = pendingDiets.filter((p) => !p.isBaseArrivalDay);
+        const nonArrivalDates = new Set(nonArrivals.map(p => p.date));
+        for (const [date, ch] of choices.entries()) {
+          selectedDates.push(date);
+          if (ch.percentage == null) {
+            nonArrivalDates.delete(date);
+          }
+        }
+        selectedDates.push(...Array.from(nonArrivalDates));
+        const finalDates = Array.from(new Set(selectedDates));
+        await upsertAllPendingSelections(finalDates, choices);
+      }
+      setPendingDiets([]);
+      runDeferredStartJourney();
+    } catch (e: any) {
+      Alert.alert(t("common.error"), e?.message || String(e));
+    } finally {
+      setPendingDietsSaving(false);
+    }
+  }, [arrivalSelectorQueue, arrivalSelectorChoices, pendingDiets, pendingDietsRichItems, t, upsertAllPendingSelections, runDeferredStartJourney]);
+
+  const handleArrivalChoiceClose = useCallback(async () => {
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    setPendingDietsSaving(false);
+    try {
+      await dismissNaturalDayDiets(pendingDiets.map((d) => d.date));
+    } catch {}
+    setPendingDietsVisible(false);
+    setPendingDiets([]);
+    setPendingDietsRichItems([]);
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    // Cancelar NO bloquea el inicio: después de marcar como descartadas, continuar la creación de jornada
+    runDeferredStartJourney();
+  }, [pendingDiets, t, runDeferredStartJourney]);
+
+  const handleCancelPendingDiets = useCallback(() => {
+    dismissNaturalDayDiets(pendingDiets.map(d => d.date)).catch(() => {});
+    setPendingDietsVisible(false);
+    setPendingDiets([]);
+    setPendingDietsRichItems([]);
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    // Cancelar NO bloquea el inicio de jornada: continuar
+    runDeferredStartJourney();
+  }, [pendingDiets, runDeferredStartJourney]);
+
   const cierreMutation = useMutation({
     mutationFn: async () => {
       const abierta = abiertaQuery.data;
       if (!abierta) throw new Error(t("dashboard.noOpenJornada"));
+      const resolvedFinFecha = parseDisplayDateToISO(finFechaInput);
+      if (!resolvedFinFecha) throw new Error(t("common.invalidDate"));
       const body: any = {
-        fechaFin: finFecha,
+        fechaFin: resolvedFinFecha,
         horaFin: finHora,
         lugarFin: finLugar,
         tipoRuta,
@@ -611,16 +1398,121 @@ export default function DashboardScreen() {
         dayExtras: dayExtras || undefined,
         holidays: userHolidays,
       };
-      if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
-        body.conduccionDomingoMin = conduccionDomingoParsed.minutes;
-        body.conduccionLunesMin = conduccionLunesParsed.minutes;
-        body.conduccionMin = conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
-      } else if (conduccionParsed.minutes != null) {
-        body.conduccionMin = conduccionParsed.minutes;
+
+      let tachoHint: any = null;
+      if (tacho.closeJornadaHint) {
+        try {
+          tachoHint = await tacho.closeJornadaHint(abierta);
+        } catch {}
+      }
+
+      const hasManualDriving = (() => {
+        if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) return true;
+        return conduccionParsed.minutes != null;
+      })();
+
+      if (tachoHint) {
+        if (!hasManualDriving && typeof tachoHint.drivingMin === "number" && tachoHint.drivingMin > 0) {
+          if (isCrossSundayMonday && tachoHint.firstActivityAt && tachoHint.lastActivityAt) {
+            const firstDate = new Date(tachoHint.firstActivityAt);
+            const lastDate = new Date(tachoHint.lastActivityAt);
+            const startOfMonday = new Date(firstDate);
+            startOfMonday.setHours(0, 0, 0, 0);
+            const day = startOfMonday.getDay();
+            const diffToMonday = (day + 6) % 7;
+            startOfMonday.setDate(startOfMonday.getDate() - diffToMonday);
+            const startOfSunday = new Date(startOfMonday);
+            startOfSunday.setDate(startOfSunday.getDate() - 1);
+            const sundayMs = Math.max(0, Math.min(lastDate.getTime(), startOfMonday.getTime()) - Math.max(firstDate.getTime(), startOfSunday.getTime()));
+            const mondayMs = Math.max(0, Math.min(lastDate.getTime(), startOfMonday.getTime() + 24 * 3600 * 1000) - Math.max(firstDate.getTime(), startOfMonday.getTime()));
+            const totalMs = sundayMs + mondayMs || 1;
+            const sundayMin = Math.max(0, Math.round((tachoHint.drivingMin * sundayMs) / totalMs));
+            const mondayMin = Math.max(0, tachoHint.drivingMin - sundayMin);
+            body.conduccionDomingoMin = sundayMin;
+            body.conduccionLunesMin = mondayMin;
+            body.conduccionMin = sundayMin + mondayMin;
+          } else {
+            body.conduccionMin = tachoHint.drivingMin;
+          }
+        } else if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
+          body.conduccionDomingoMin = conduccionDomingoParsed.minutes;
+          body.conduccionLunesMin = conduccionLunesParsed.minutes;
+          body.conduccionMin = conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
+        } else if (conduccionParsed.minutes != null) {
+          body.conduccionMin = conduccionParsed.minutes;
+        }
+
+        if (typeof tachoHint.kmTotal === "number" && tachoHint.kmTotal > 0) {
+          body.tachoKmTotal = tachoHint.kmTotal;
+          const kmEnd = parseFloat(kmFin);
+          const hasManualKm = Number.isFinite(kmEnd);
+          if (!hasManualKm) {
+            const existingStart = abierta.kmInicio != null && Number.isFinite(abierta.kmInicio) ? abierta.kmInicio : null;
+            const parsedStart = parseFloat(kmInicioClose);
+            const kmStart = existingStart != null ? existingStart : (Number.isFinite(parsedStart) ? parsedStart : null);
+            if (kmStart != null && paymentMode === "km") {
+              body.kmInicio = kmStart;
+              body.kmFin = Math.round((kmStart + tachoHint.kmTotal) * 100) / 100;
+            }
+            if (body.kmTotal == null) {
+              body.kmTotal = tachoHint.kmTotal;
+            }
+          }
+        }
+
+        if (tachoHint.countries && Array.isArray(tachoHint.countries) && tachoHint.countries.length > 0) {
+          body.tachoCountries = tachoHint.countries;
+          body.tachoCountryEntries = typeof tachoHint.countryEntriesCount === "number" ? tachoHint.countryEntriesCount : tachoHint.countries.length;
+          if (!body.lugarFin && tachoHint.countries.length === 1 && !finLugarTouched) {
+            // Do not silently overwrite manual place; just leave hint metadata
+          }
+        }
+
+        if (typeof tachoHint.drivingMin === "number") body.tachoDrivingMin = tachoHint.drivingMin;
+        if (typeof tachoHint.workMin === "number") body.tachoWorkMin = tachoHint.workMin;
+        if (typeof tachoHint.availableMin === "number") body.tachoAvailableMin = tachoHint.availableMin;
+        if (typeof tachoHint.restMin === "number") body.tachoRestMin = tachoHint.restMin;
+        if (tachoHint.firstActivityAt) body.tachoFirstActivityAt = tachoHint.firstActivityAt;
+        if (tachoHint.lastActivityAt) body.tachoLastActivityAt = tachoHint.lastActivityAt;
+        if (typeof tachoHint.disconnectionsCount === "number") body.tachoDisconnections = tachoHint.disconnectionsCount;
+        if (tachoHint.dataQuality) body.tachoDataQuality = tachoHint.dataQuality;
+        if (tachoHint.dailySummaryId) body.tachoDailySummaryId = tachoHint.dailySummaryId;
+      } else {
+        if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
+          body.conduccionDomingoMin = conduccionDomingoParsed.minutes;
+          body.conduccionLunesMin = conduccionLunesParsed.minutes;
+          body.conduccionMin = conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
+        } else if (conduccionParsed.minutes != null) {
+          body.conduccionMin = conduccionParsed.minutes;
+        }
       }
       if (dietaModo === "MANUAL") {
         body.dietaManualTipo = manualTipo;
         body.dietaManualPct = manualPct;
+      }
+      if (!isMoroccoMode) {
+        body.paymentMode = paymentMode;
+        if (paymentMode === "km") {
+          const kmEnd = parseFloat(kmFin);
+          if (!Number.isFinite(kmEnd)) throw new Error("KM fin inválido");
+          const kmStartExisting = abierta.kmInicio != null && Number.isFinite(abierta.kmInicio) ? abierta.kmInicio : null;
+          const kmStartParsed = parseFloat(kmInicioClose);
+          const kmStart = kmStartExisting != null ? kmStartExisting : (Number.isFinite(kmStartParsed) ? kmStartParsed : null);
+          if (kmStart == null) throw new Error("KM inicio inválido");
+          const priceForTipoRuta = (() => {
+            if (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL") return pricePerKmIntl;
+            if (tipoRuta === "REGIONAL") return pricePerKmReg;
+            return pricePerKmNac;
+          })();
+          body.kmFin = kmEnd;
+          body.kmInicio = kmStart;
+          body.pricePerKm = priceForTipoRuta;
+        }
+        if (paymentMode === "viaje") {
+          const tripAmount = parseFloat(importeViaje);
+          body.pricePerTrip = pricePerTrip;
+          body.importeViaje = Number.isFinite(tripAmount) ? tripAmount : pricePerTrip;
+        }
       }
       if (isMoroccoMode && ferryConfig.paymentMode === "morocco_pernight") {
         body.tipoRuta = moroccoRouteType === "NINGUNA" ? "NINGUNO" : moroccoRouteType;
@@ -645,11 +1537,34 @@ export default function DashboardScreen() {
       if (observaciones.trim()) {
         body.observaciones = observaciones.trim();
       }
+      if (typeof abierta.isDoubleDriving === "boolean") {
+        body.isDoubleDriving = abierta.isDoubleDriving;
+        if (abierta.secondDriverName) body.secondDriverName = abierta.secondDriverName;
+      }
       if (ferryEmbarking) {
         body.ferryPending = true;
         body.ferryRestType = ferryRestTypeChoice;
         console.log("[Ferry Close] ferryEmbarking=true, adding ferryPending to body, restType:", ferryRestTypeChoice);
       }
+      // #region debug-point A:finish-ui-submit
+      reportJornadaDateDebug("A", "dashboard:index:cierreMutation", "user submits finish jornada", {
+        jornadaId: abierta.id,
+        fechaFinInputVisible: finFechaInput,
+        fechaInicioSeleccionada: abierta.fechaInicio,
+        horaInicioSeleccionada: abierta.horaInicio,
+        fechaFinSeleccionada: resolvedFinFecha,
+        horaFinSeleccionada: finHora,
+        abiertaAntesGuardar: {
+          fechaInicio: abierta.fechaInicio,
+          horaInicio: abierta.horaInicio,
+          fechaFin: abierta.fechaFin,
+          horaFin: abierta.horaFin,
+          startAt: abierta.startAt,
+          endAt: abierta.endAt,
+        },
+        payload: body,
+      });
+      // #endregion
       const result = await cerrarJornada(abierta.id, body);
       console.log("[Ferry Close] cerrarJornada result: ferryPending=", result.ferryPending, "ferryRestCompleted=", result.ferryRestCompleted, "endAt=", result.endAt);
       return result;
@@ -668,6 +1583,7 @@ export default function DashboardScreen() {
       setConduccionHoras("");
       setConduccionDomingoHoras("");
       setConduccionLunesHoras("");
+      setKmFin("");
       setPlusItems([]);
       setPlusConcepto("");
       setPlusImporte("");
@@ -677,6 +1593,7 @@ export default function DashboardScreen() {
 
       if (closed.legalSummary) {
         setLegalResult(closed.legalSummary);
+        setClosePlanEndAt(closed.endAt || null);
         const allJ = await listarJornadas();
         const allC = await listarCompensaciones();
         const plan = computeLegalPlan(allJ, allC, {
@@ -686,11 +1603,33 @@ export default function DashboardScreen() {
           duracionJornadaMin: closed.duracionJornadaMin || undefined,
           descansoAnteriorMin: closed.descansoAnteriorMin,
           tipoDescansoAnterior: closed.tipoDescansoAnterior,
+          isDoubleDriving: closed.isDoubleDriving,
         }, locale);
         setClosePlanData(plan);
         setChosenRest(null);
         setShowLegalModal(true);
       }
+
+      try {
+        const closeFrom = closed.fechaInicio;
+        const closeTo = extractYyyyMmDd(String(closed.fechaFin || closed.endAt || closed.startAt));
+        if (closeFrom && closeTo) {
+          await clearDismissedNaturalDayDietsInRange(closeFrom, closeTo);
+          console.log(`[DISMISSED_CLEARED_CLOSE from=${closeFrom} to=${closeTo}]`);
+          const closeDetectados = await detectMissingOutOfBaseDietDays({
+            fromDate: closeFrom,
+            toDate: closeTo,
+          });
+          console.log(`[TRIGGER_CLOSE pendingCount=${closeDetectados?.length || 0} from=${closeFrom} to=${closeTo}]`);
+          if (closeDetectados && closeDetectados.length > 0) {
+            setPendingDiets(closeDetectados);
+            setPendingDietsVisible(true);
+          }
+        }
+      } catch (e) {
+        console.log("[TRIGGER_CLOSE error]", e);
+      }
+
       invalidateAll();
       triggerSync();
     },
@@ -709,9 +1648,359 @@ export default function DashboardScreen() {
   });
 
   const isLoading = abiertaQuery.isLoading;
+  const showDietFields = isMoroccoMode ? ferryConfig.paymentMode === "morocco_diet" : paymentMode === "dietas";
+  const showKmFields = !isMoroccoMode && paymentMode === "km";
+  const showTripFields = !isMoroccoMode && paymentMode === "viaje";
+  const showDayExtraFields = !isMoroccoMode && (paymentMode === "dietas" || paymentMode === "km" || paymentMode === "viaje");
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <Modal
+        visible={showTopMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTopMenu(false)}
+      >
+        <Pressable style={styles.menuOverlay} onPress={() => setShowTopMenu(false)}>
+          <Pressable style={styles.menuPanel} onPress={() => {}}>
+            <View style={styles.menuHeaderRow}>
+              <Text style={styles.menuTitle}>{t("dashboard.account")}</Text>
+              <View style={{ flex: 1 }} />
+              <Pressable onPress={() => setShowTopMenu(false)} hitSlop={10}>
+                <Ionicons name="close" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.menuSection}>
+              <Text style={styles.menuSectionTitle}>Accesos rápidos</Text>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  openTutorial();
+                }}
+              >
+                <Ionicons name="book-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Tutorial</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  openSupportWhatsApp();
+                }}
+              >
+                <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
+                <Text style={styles.menuRowText}>Contactar por WhatsApp</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.menuSection}>
+              <Text style={styles.menuSectionTitle}>Perfil</Text>
+              <View style={styles.menuRowStatic}>
+                <Ionicons name="mail-outline" size={18} color={Colors.light.textSecondary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.menuRowLabel}>Email</Text>
+                  <Text style={styles.menuRowValue}>{user?.email || "-"}</Text>
+                </View>
+              </View>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  router.push({ pathname: "/(tabs)/usuario", params: { section: "perfil" } });
+                }}
+              >
+                <Ionicons name="person-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Nombre</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  logout();
+                }}
+              >
+                <Ionicons name="log-out-outline" size={18} color={Colors.light.danger} />
+                <Text style={[styles.menuRowText, { color: Colors.light.danger }]}>Cerrar sesión</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  router.push({ pathname: "/(tabs)/usuario", params: { section: "seguridad" } });
+                }}
+              >
+                <Ionicons name="trash-outline" size={18} color={Colors.light.danger} />
+                <Text style={[styles.menuRowText, { color: Colors.light.danger }]}>Eliminar cuenta</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.menuSection}>
+              <Text style={styles.menuSectionTitle}>Sincronización</Text>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  router.push({ pathname: "/(tabs)/usuario", params: { section: "sync" } });
+                }}
+              >
+                <Ionicons name="cloud-upload-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Sincronización</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.menuSection}>
+              <Text style={styles.menuSectionTitle}>Importar / Exportar</Text>
+              <Pressable
+                style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                onPress={() => {
+                  setShowTopMenu(false);
+                  router.push({ pathname: "/(tabs)/usuario", params: { section: "import_export" } });
+                }}
+              >
+                <Ionicons name="swap-vertical-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Importar / Exportar</Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.menuSection}>
+              <Text style={styles.menuSectionTitle}>Ajustes</Text>
+              {[
+                { key: "cuenta", label: "Cuenta", icon: "person-outline" as const },
+                { key: "precios_ref", label: "Precios de referencia", icon: "pricetag-outline" as const },
+                { key: "cobro_nomina", label: "Cobro y nómina", icon: "wallet-outline" as const },
+                { key: "periodos", label: "Periodos", icon: "calendar-outline" as const },
+                { key: "perfil_conductor", label: "Perfil del conductor", icon: "car-outline" as const },
+                { key: "festivos", label: "Festivos", icon: "flag-outline" as const },
+                { key: "notificaciones", label: "Notificaciones", icon: "notifications-outline" as const },
+                { key: "seguridad", label: "Seguridad", icon: "shield-checkmark-outline" as const },
+              ].map((it) => (
+                <Pressable
+                  key={it.key}
+                  style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.9 : 1 }]}
+                  onPress={() => {
+                    setShowTopMenu(false);
+                    router.push({ pathname: "/(tabs)/usuario", params: { section: it.key } });
+                  }}
+                >
+                  <Ionicons name={it.icon} size={18} color={Colors.light.textSecondary} />
+                  <Text style={styles.menuRowText}>{it.label}</Text>
+                  <View style={{ flex: 1 }} />
+                  <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showNotifications}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowNotifications(false);
+          setSelectedNotification(null);
+        }}
+      >
+        <Pressable
+          style={styles.menuOverlay}
+          onPress={() => {
+            setShowNotifications(false);
+            setSelectedNotification(null);
+          }}
+        >
+          <Pressable style={[styles.menuPanel, { maxHeight: "80%" }]} onPress={() => {}}>
+            <View style={styles.menuHeaderRow}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="notifications-outline" size={18} color={Colors.light.tint} />
+                <Text style={styles.menuTitle}>Notificaciones</Text>
+              </View>
+              <View style={{ flex: 1 }} />
+              {loadingNotifications ? <ActivityIndicator size="small" color={Colors.light.tint} /> : null}
+              <Pressable onPress={() => setShowNotifications(false)} hitSlop={10} style={{ marginLeft: 10 }}>
+                <Ionicons name="close" size={18} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.light.textSecondary, marginBottom: 10 }}>
+              {unreadCount > 0 ? `Tienes ${unreadCount} sin leer` : "No tienes notificaciones pendientes"}
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.menuRow,
+                  { opacity: pressed ? 0.9 : 1, flex: 1, justifyContent: "center" },
+                  (unreadCount === 0 || !user?.id) && styles.btnDisabled,
+                ]}
+                disabled={unreadCount === 0 || !user?.id}
+                onPress={async () => {
+                  if (!user?.id) return;
+                  const now = new Date().toISOString();
+                  const next = notifications.map((n) => (n.is_read ? n : ({ ...n, is_read: true, read_at: now } as any)));
+                  setNotifications(next);
+                  saveNotificationsToCache(next);
+                  try {
+                    await markAllUserNotificationsRead(user.id);
+                  } catch {}
+                }}
+              >
+                <Ionicons name="checkmark-done-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Marcar todas leídas</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.menuRow,
+                  { opacity: pressed ? 0.9 : 1, flex: 1, justifyContent: "center" },
+                  !user?.id && styles.btnDisabled,
+                ]}
+                disabled={!user?.id}
+                onPress={() => {
+                  if (!user?.id) return;
+                  const run = async () => {
+                    const next = notifications.filter((n) => !n.is_read);
+                    setNotifications(next);
+                    saveNotificationsToCache(next);
+                    try {
+                      await deleteReadUserNotifications(user.id);
+                    } catch {}
+                  };
+                  if (Platform.OS === "web") {
+                    if ((window as any).confirm?.("¿Eliminar todas las notificaciones leídas?")) run();
+                  } else {
+                    Alert.alert("Eliminar leídas", "¿Eliminar todas las notificaciones leídas?", [
+                      { text: t("common.cancel"), style: "cancel" },
+                      { text: "Eliminar", style: "destructive", onPress: run },
+                    ]);
+                  }
+                }}
+              >
+                <Ionicons name="trash-outline" size={18} color={Colors.light.textSecondary} />
+                <Text style={styles.menuRowText}>Eliminar leídas</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {notifications.length === 0 ? (
+                <View style={{ paddingVertical: 18, alignItems: "center" }}>
+                  <Text style={{ fontFamily: "Inter_500Medium", fontSize: 13, color: Colors.light.textSecondary }}>
+                    Aún no hay notificaciones
+                  </Text>
+                </View>
+              ) : (
+                notifications.map((n) => {
+                  const isUnread = !n.is_read;
+                  return (
+                    <Pressable
+                      key={n.id}
+                      style={({ pressed }) => [
+                        {
+                          padding: 12,
+                          borderRadius: 12,
+                          borderWidth: 1,
+                          borderColor: isUnread ? Colors.light.tint : Colors.light.border,
+                          backgroundColor: isUnread ? Colors.light.tint + "0B" : Colors.light.surface,
+                          marginBottom: 10,
+                          opacity: pressed ? 0.95 : 1,
+                        },
+                      ]}
+                      onPress={async () => {
+                        if (!user?.id) return;
+                        if (isUnread) {
+                          const now = new Date().toISOString();
+                          const next = notifications.map((x) => (x.id === n.id ? ({ ...x, is_read: true, read_at: now } as any) : x));
+                          setNotifications(next);
+                          saveNotificationsToCache(next);
+                          try {
+                            await markUserNotificationRead(user.id, n.id);
+                          } catch {}
+                        }
+                        openNotificationDetail(n);
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                            {isUnread && (
+                              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: "#EF4444", marginRight: 8 }} />
+                            )}
+                            <Text style={{ fontFamily: "Inter_700Bold", fontSize: 14, color: Colors.light.text }}>
+                              {n.title || "Notificación"}
+                            </Text>
+                          </View>
+                          <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.light.textSecondary }}>
+                            {n.body || ""}
+                          </Text>
+                          <Text style={{ marginTop: 6, fontFamily: "Inter_500Medium", fontSize: 11, color: Colors.light.textSecondary }}>
+                            {(() => {
+                              try {
+                                return formatDateTimeES(new Date(n.created_at), locale);
+                              } catch {
+                                return n.created_at;
+                              }
+                            })()}
+                            {n.type ? ` · ${n.type}` : ""}
+                          </Text>
+                        </View>
+                        <Pressable
+                          hitSlop={10}
+                          onPress={() => {
+                            if (!user?.id) return;
+                            const run = async () => {
+                              const next = notifications.filter((x) => x.id !== n.id);
+                              setNotifications(next);
+                              saveNotificationsToCache(next);
+                              try {
+                                await deleteUserNotification(user.id, n.id);
+                              } catch {}
+                            };
+                            if (Platform.OS === "web") {
+                              if ((window as any).confirm?.("¿Eliminar esta notificación?")) run();
+                            } else {
+                              Alert.alert("Eliminar", "¿Eliminar esta notificación?", [
+                                { text: t("common.cancel"), style: "cancel" },
+                                { text: "Eliminar", style: "destructive", onPress: run },
+                              ]);
+                            }
+                          }}
+                          style={{ marginLeft: 10, paddingTop: 2 }}
+                        >
+                          <Ionicons name="trash-outline" size={18} color={Colors.light.textSecondary} />
+                        </Pressable>
+                      </View>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <NotificationDetailModal
+        visible={!!selectedNotification}
+        title={selectedNotification?.title || "Notificación"}
+        body={selectedNotification?.body || ""}
+        buttonText={getNotificationAction(selectedNotification).buttonText}
+        buttonUrl={getNotificationAction(selectedNotification).buttonUrl}
+        onClose={() => setSelectedNotification(null)}
+      />
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -728,50 +2017,169 @@ export default function DashboardScreen() {
             <MaterialCommunityIcons name="steering" size={28} color={Colors.light.tint} />
             <Text style={styles.headerTitle}>Tacoplan</Text>
             <View style={{ flex: 1 }} />
-            {!isGuest && user && (
-              <Pressable
-                onPress={() => triggerSync()}
-                hitSlop={8}
-                style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
-              >
-                {hasPending && syncStatus !== "syncing" && (
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.light.accent }} />
-                )}
-                {syncStatus === "syncing" ? (
-                  <ActivityIndicator size="small" color={Colors.light.tint} />
-                ) : syncStatus === "synced" ? (
-                  <Ionicons name="cloud-done-outline" size={22} color={Colors.light.success} />
-                ) : syncStatus === "error" ? (
-                  <Ionicons name="cloud-offline-outline" size={22} color={Colors.light.danger} />
-                ) : syncStatus === "offline" ? (
-                  <Ionicons name="cloud-offline-outline" size={22} color={Colors.light.textSecondary} />
-                ) : (
-                  <Ionicons name="cloud-done-outline" size={22} color={Colors.light.tint} />
-                )}
-              </Pressable>
-            )}
             <Pressable
-              onPress={() => {
-                if (isGuest) {
-                  Alert.alert(t("dashboard.account"), t("dashboard.guestAlertMsg"), [
-                    { text: "OK" },
-                    { text: t("dashboard.logoutLabel"), onPress: logout },
-                  ]);
-                } else {
-                  Alert.alert(t("dashboard.account"), user?.email || "", [
-                    { text: "OK" },
-                    { text: t("dashboard.logoutLabel"), style: "destructive", onPress: logout },
-                  ]);
+              onPress={() => triggerSync()}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.headerActionButton,
+                {
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  borderWidth: 0,
+                  backgroundColor: "transparent",
+                  marginLeft: 0,
+                  opacity: pressed ? 0.7 : 1,
+                  zIndex: 5,
+                },
+              ]}
+            >
+              {hasPending && syncStatus !== "syncing" && (
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.light.accent, position: "absolute", top: 9, right: 9 }} />
+              )}
+              {syncStatus === "syncing" ? (
+                <ActivityIndicator size="small" color={Colors.light.tint} />
+              ) : syncStatus === "synced" ? (
+                <Ionicons name="cloud-done-outline" size={22} color={Colors.light.success} />
+              ) : syncStatus === "error" ? (
+                <Ionicons name="cloud-offline-outline" size={22} color={Colors.light.danger} />
+              ) : syncStatus === "offline" ? (
+                <Ionicons name="cloud-offline-outline" size={22} color={Colors.light.textSecondary} />
+              ) : (
+                <Ionicons name="cloud-done-outline" size={22} color={Colors.light.tint} />
+              )}
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                if (reEvalInicioLoading) return;
+                console.log("[RE-EVAL_INICIO] user pressed button");
+                try {
+                  setReEvalInicioLoading(true);
+                  const hoy = todayStr();
+                  const todasJ = await listarJornadas();
+                  const ultimaCerrada = todasJ != null && Array.isArray(todasJ)
+                    ? todasJ
+                        .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
+                        .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
+                    : null;
+                  const ultFinStr = ultimaCerrada
+                    ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || hoy))
+                    : null;
+                  const gapFrom = ultFinStr ? addDays(ultFinStr, -1) : null;
+                  const hoyMinus45 = addDays(hoy, -45);
+                  const rFrom = gapFrom && gapFrom > hoyMinus45 ? gapFrom : hoyMinus45;
+                  const rTo = hoy;
+                  console.log(`[RE-EVAL_INICIO] range ${rFrom} → ${rTo}`);
+                  await clearDismissedNaturalDayDietsInRange(rFrom, rTo);
+                  const fresh = await detectMissingOutOfBaseDietDays({
+                    fromDate: rFrom,
+                    toDate: rTo,
+                  });
+                  const count = Array.isArray(fresh) ? fresh.length : 0;
+                  setPendingDiets(Array.isArray(fresh) ? fresh : []);
+                  console.log(`[RE-EVAL_INICIO] pendingCount=${count} from=${rFrom} to=${rTo}`);
+                  if (count > 0) {
+                    setPendingDietsVisible(true);
+                  } else {
+                    const fmt = (s: string) => s?.split("-").reverse().join("/") || s;
+                    Alert.alert(
+                      "Sin dietas pendientes",
+                      `No se detectaron dietas fuera de base pendientes en el rango evaluado (${fmt(rFrom)} → ${fmt(rTo)}).`,
+                      [{ text: "Aceptar" }],
+                    );
+                  }
+                  await invalidateAll();
+                } catch (e: any) {
+                  console.error("[RE-EVAL_INICIO] error:", e);
+                  Alert.alert(
+                    t("common.error"),
+                    e?.message || "No se pudo re-evaluar las dietas pendientes.",
+                    [{ text: "Aceptar" }],
+                  );
+                } finally {
+                  setReEvalInicioLoading(false);
                 }
               }}
               hitSlop={8}
-              style={{ marginLeft: 12 }}
+              style={({ pressed }) => [
+                {
+                  marginLeft: 8,
+                  backgroundColor: reEvalInicioLoading ? Colors.light.tint + "22" : Colors.light.surface,
+                  borderWidth: 1,
+                  borderColor: Colors.light.tint,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  height: 36,
+                  minWidth: 96,
+                  borderRadius: 8,
+                  opacity: pressed ? 0.85 : 1,
+                  zIndex: 10,
+                  overflow: "visible",
+                },
+              ]}
             >
-              <Ionicons name="person-circle-outline" size={24} color={isGuest ? Colors.light.textSecondary : Colors.light.tint} />
+              {reEvalInicioLoading ? (
+                <ActivityIndicator size="small" color={Colors.light.tint} />
+              ) : (
+                <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
+              )}
+              <Text style={{ color: Colors.light.tint, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                Re-evaluar
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setShowNotifications(true);
+                refreshNotifications();
+              }}
+              hitSlop={8}
+              style={[styles.headerActionButton, { marginLeft: 10 }]}
+            >
+              <Ionicons name="notifications-outline" size={20} color={Colors.light.tint} />
+              {unreadCount > 0 && (
+                <View
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    minWidth: 18,
+                    height: 18,
+                    paddingHorizontal: 5,
+                    borderRadius: 9,
+                    backgroundColor: "#EF4444",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 2,
+                    borderColor: Colors.light.surface,
+                  }}
+                >
+                  <Text style={{ fontFamily: "Inter_700Bold", fontSize: 10, color: "#fff" }}>
+                    {unreadCount > 99 ? "99+" : String(unreadCount)}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => setShowTopMenu(true)}
+              hitSlop={8}
+              style={[styles.headerActionButton, { marginLeft: 10 }]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={20} color={Colors.light.tint} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/usuario")}
+              hitSlop={8}
+              style={[styles.headerActionButton, { marginLeft: 10 }]}
+            >
+              <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
             </Pressable>
           </View>
           <Text style={styles.headerSubtitle}>{t("login.appDesc")}</Text>
-          {!isGuest && user && lastSyncTime && (
+          {lastSyncTime && (
             <View style={styles.syncInfoRow}>
               <Ionicons name="time-outline" size={12} color={Colors.light.textSecondary} />
               <Text style={styles.syncInfoText}>
@@ -785,40 +2193,6 @@ export default function DashboardScreen() {
             </View>
           )}
         </View>
-
-        {showOnboarding && (
-          <View style={styles.onboardingCard}>
-            <View style={styles.onboardingHeader}>
-              <MaterialCommunityIcons name="hand-wave" size={22} color={Colors.light.tint} />
-              <Text style={styles.onboardingTitle}>{t("dashboard.welcome")}</Text>
-              <Pressable onPress={dismissOnboarding} hitSlop={8}>
-                <Ionicons name="close" size={20} color={Colors.light.textSecondary} />
-              </Pressable>
-            </View>
-            <Text style={styles.onboardingText}>
-              {t("dashboard.welcomeText")}
-            </Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <Pressable
-                style={styles.onboardingBtn}
-                onPress={openGuideAndDismiss}
-              >
-                <Ionicons name="book-outline" size={16} color="#fff" />
-                <Text style={styles.onboardingBtnText}>{t("guide.openGuide")}</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.onboardingBtn, { backgroundColor: Colors.light.textSecondary }]}
-                onPress={() => {
-                  dismissOnboarding();
-                  router.push("/(tabs)/usuario");
-                }}
-              >
-                <Ionicons name="settings-outline" size={16} color="#fff" />
-                <Text style={styles.onboardingBtnText}>{t("dashboard.goToConfig")}</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
 
         {estado && estado.alertas.length > 0 && (
           <View style={styles.alertSection}>
@@ -866,7 +2240,7 @@ export default function DashboardScreen() {
                   fecha: todayStr(),
                   origen: "",
                   destino: "",
-                  estado: "pernocta",
+                  estado: "completo",
                   importe: ferryConfig.pernightRate,
                 });
                 if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -897,7 +2271,9 @@ export default function DashboardScreen() {
               style={({ pressed }) => [styles.bigActionBtn, styles.bigActionBtnStart, { opacity: pressed ? 0.9 : 1 }]}
               onPress={() => {
                 if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                setInicioFecha(todayStr());
+                const d = todayStr();
+                setInicioFecha(d);
+                setInicioFechaInput(formatDateForDisplay(d));
                 setInicioHora(nowTimeStr());
                 setShowInicioForm(true);
               }}
@@ -926,9 +2302,17 @@ export default function DashboardScreen() {
                   <Text style={styles.fieldLabel}>{t("common.date")}</Text>
                   <TextInput
                     style={styles.input}
-                    value={inicioFecha}
-                    onChangeText={setInicioFecha}
-                    placeholder="YYYY-MM-DD"
+                    value={inicioFechaInput}
+                    onChangeText={(v) => {
+                      setInicioFechaInput(v);
+                      const iso = parseDisplayDateToISO(v);
+                      if (iso) setInicioFecha(iso);
+                    }}
+                    onBlur={() => {
+                      const iso = parseDisplayDateToISO(inicioFechaInput);
+                      if (iso) setInicioFechaInput(formatDateForDisplay(iso));
+                    }}
+                    placeholder="DD/MM/YYYY"
                     placeholderTextColor="#9CA3AF"
                   />
                 </View>
@@ -964,17 +2348,81 @@ export default function DashboardScreen() {
                   )}
                 </View>
               </View>
+              {paymentMode === "km" && (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>KM inicio</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={kmInicio}
+                    onChangeText={setKmInicio}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+              )}
+
+              <View style={{
+                marginVertical: 10,
+                padding: 12,
+                backgroundColor: Colors.light.surface,
+                borderRadius: 10,
+                gap: 8,
+                borderWidth: 1,
+                borderColor: Colors.light.border,
+              }}>
+                <Pressable
+                  style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 10 }}
+                  onPress={() => setIsDoubleChecked(p => !p)}
+                >
+                  <Ionicons
+                    name={isDoubleChecked ? "checkbox" : "square-outline"}
+                    size={20}
+                    color={Colors.light.tint}
+                  />
+                  <Text style={{
+                    fontFamily: "Inter_600SemiBold",
+                    fontSize: 14,
+                    color: Colors.light.text,
+                  }}>
+                    Doble conducción (conducción en equipo)
+                  </Text>
+                </Pressable>
+                {isDoubleChecked && (
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>Nombre del segundo conductor (obligatorio)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Nombre y apellidos del compañero"
+                      placeholderTextColor="#9CA3AF"
+                      value={secondDriverName}
+                      onChangeText={setSecondDriverName}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                )}
+              </View>
+
               <Pressable
                 style={({ pressed }) => [
                   styles.btnPrimary,
                   { opacity: pressed ? 0.85 : 1 },
-                  (!inicioLugar.trim() || inicioMutation.isPending) && styles.btnDisabled,
+                  (!inicioLugar.trim() || inicioMutation.isPending || !parseDisplayDateToISO(inicioFechaInput) ||
+                    (isDoubleChecked && secondDriverName.trim().length < 2)) && styles.btnDisabled,
                 ]}
                 onPress={() => {
-                  inicioMutation.mutate();
-                  setShowInicioForm(false);
+                  if (isDoubleChecked && secondDriverName.trim().length < 2) {
+                    Alert.alert("Doble conducción", "Introduce el nombre del segundo conductor (mínimo 2 caracteres).");
+                    return;
+                  }
+                  handleSaveInicio();
                 }}
-                disabled={!inicioLugar.trim() || inicioMutation.isPending}
+                disabled={
+                  !inicioLugar.trim() ||
+                  inicioMutation.isPending ||
+                  !parseDisplayDateToISO(inicioFechaInput) ||
+                  (isDoubleChecked && secondDriverName.trim().length < 2)
+                }
               >
                 {inicioMutation.isPending ? (
                   <ActivityIndicator color="#fff" size="small" />
@@ -988,8 +2436,7 @@ export default function DashboardScreen() {
             </View>
           )}
 
-          {(() => { if (lastClosed) console.log("[Ferry Panel Check] ferryPending=", lastClosed.ferryPending, "ferryRestCompleted=", lastClosed.ferryRestCompleted, "endAt=", !!lastClosed.endAt); return null; })()}
-          {lastClosed?.ferryPending && !lastClosed.ferryRestCompleted && lastClosed.endAt && (() => {
+          {shouldShowFerryPanel && (() => {
             const _tick = countdownNow;
             const endMs = new Date(lastClosed.endAt!).getTime();
             const ints = lastClosed.ferryInterruptions || [];
@@ -1296,12 +2743,19 @@ export default function DashboardScreen() {
                       abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? Colors.light.warning : Colors.light.success}
                   />
                   <Text style={{ marginLeft: 6, fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>
-                    {t("dashboard.previousRest")}: {formatMinutosHoras(abierta.descansoAnteriorMin)}
+                    {t("dashboard.previousRest")}: {formatMinutosHoras(showPreviousSplitRestSummary ? previousSplitComputedTotalMin! : abierta.descansoAnteriorMin)}{showPreviousSplitRestSummary ? ` ${t("dashboard.computedSuffix")}` : ""}
                   </Text>
-                  <Text style={{ marginLeft: 6, fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
-                    ({t(`common.restType.${abierta.tipoDescansoAnterior}`)})
-                  </Text>
+                  {!showPreviousSplitRestSummary && (
+                    <Text style={{ marginLeft: 6, fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+                      ({t(`common.restType.${abierta.tipoDescansoAnterior}`)})
+                    </Text>
+                  )}
                 </View>
+                {showPreviousSplitRestSummary && (
+                  <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary, marginTop: 4 }}>
+                    {t("dashboard.dailyCompleteSplitLabel")}: {formatMinutosHoras(previousSplitFirstPartMin!)} + {formatMinutosHoras(abierta.descansoAnteriorMin)}
+                  </Text>
+                )}
                 {abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" && (
                   <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.danger, marginTop: 4 }}>
                     {t("dashboard.restInfractionAlert")}
@@ -1313,9 +2767,14 @@ export default function DashboardScreen() {
               style={({ pressed }) => [styles.bigActionBtn, styles.bigActionBtnStop, { opacity: pressed ? 0.9 : 1 }]}
               onPress={() => {
                 if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                setFinFecha(todayStr());
+                const d = todayStr();
+                setFinFecha(d);
+                setFinFechaInput(formatDateForDisplay(d));
                 setFinHora(nowTimeStr());
+                setFinLugar("");
+                setFinLugarTouched(false);
                 setShowFinForm(true);
+                resolveFinLugarFromGps();
               }}
             >
               <View style={[styles.bigActionIcon, { backgroundColor: Colors.light.danger + "15" }]}>
@@ -1348,9 +2807,17 @@ export default function DashboardScreen() {
                 <Text style={styles.fieldLabel}>{t("dashboard.endDate")}</Text>
                 <TextInput
                   style={styles.input}
-                  value={finFecha}
-                  onChangeText={setFinFecha}
-                  placeholder="YYYY-MM-DD"
+                  value={finFechaInput}
+                  onChangeText={(v) => {
+                    setFinFechaInput(v);
+                    const iso = parseDisplayDateToISO(v);
+                    if (iso) setFinFecha(iso);
+                  }}
+                  onBlur={() => {
+                    const iso = parseDisplayDateToISO(finFechaInput);
+                    if (iso) setFinFechaInput(formatDateForDisplay(iso));
+                  }}
+                  placeholder="DD/MM/YYYY"
                   placeholderTextColor="#9CA3AF"
                 />
               </View>
@@ -1366,12 +2833,30 @@ export default function DashboardScreen() {
               </View>
             </View>
             <View style={[styles.field, { zIndex: 10 }]}>
-              <Text style={styles.fieldLabel}>{t("dashboard.endPlace")}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={styles.fieldLabel}>{t("dashboard.endPlace")}</Text>
+                <Pressable
+                  onPress={resolveFinLugarFromGps}
+                  hitSlop={10}
+                  style={({ pressed }) => [{ opacity: pressed ? 0.8 : 1, flexDirection: "row", alignItems: "center", gap: 6 }]}
+                >
+                  {resolvingFinLugar ? (
+                    <ActivityIndicator size="small" color={Colors.light.tint} />
+                  ) : (
+                    <Ionicons name="locate-outline" size={16} color={Colors.light.tint} />
+                  )}
+                  <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.tint }}>Detectar</Text>
+                </Pressable>
+              </View>
               <View style={{ position: "relative" as const }}>
                 <TextInput
                   style={styles.input}
                   value={finLugar}
-                  onChangeText={(v) => { setFinLugar(v); setShowFinSuggestions(true); }}
+                  onChangeText={(v) => {
+                    setFinLugarTouched(true);
+                    setFinLugar(v);
+                    setShowFinSuggestions(true);
+                  }}
                   onFocus={() => setShowFinSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowFinSuggestions(false), 200)}
                   placeholder={t("dashboard.cityBase")}
@@ -1481,7 +2966,105 @@ export default function DashboardScreen() {
               </View>
             ))}
 
-            {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && (
+            {showKmFields && (
+              <>
+                <View style={styles.fieldRow}>
+                  <View style={styles.fieldHalf}>
+                    <Text style={styles.fieldLabel}>KM inicio</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={kmInicioClose}
+                      onChangeText={setKmInicioClose}
+                      keyboardType="decimal-pad"
+                      placeholder={abierta.kmInicio != null ? String(abierta.kmInicio) : "0"}
+                      placeholderTextColor="#9CA3AF"
+                    />
+                  </View>
+                  <View style={styles.fieldHalf}>
+                    <Text style={styles.fieldLabel}>KM fin</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={kmFin}
+                      onChangeText={setKmFin}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor="#9CA3AF"
+                    />
+                  </View>
+                </View>
+                {(() => {
+                  const start = parseFloat(kmInicioClose);
+                  const end = parseFloat(kmFin);
+                  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+                  const totalKm = end - start;
+                  if (!Number.isFinite(totalKm) || totalKm <= 0) return null;
+                  const rate = (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL")
+                    ? pricePerKmIntl
+                    : (tipoRuta === "REGIONAL" || tipoRuta === "NAC_REGIONAL")
+                      ? pricePerKmReg
+                      : pricePerKmNac;
+                  const amount = Math.round((totalKm * rate) * 100) / 100;
+                  if (!Number.isFinite(amount) || amount <= 0) return null;
+                  return (
+                    <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+                      {Math.round(totalKm * 100) / 100} km \u00D7 {rate.toFixed(2)} \u20AC/km = {amount.toFixed(2)} EUR
+                    </Text>
+                  );
+                })()}
+              </>
+            )}
+
+            {showTripFields && (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>
+                  {tipoRuta === "REGIONAL"
+                    ? t("usuario.pricePerTripRegional")
+                    : (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL")
+                      ? t("usuario.pricePerTripInternacional")
+                      : t("usuario.pricePerTripNacional")}
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={importeViaje}
+                  onChangeText={setImporteViaje}
+                  keyboardType="decimal-pad"
+                  placeholder={String(pricePerTrip)}
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            )}
+
+            {showDayExtraFields && !showDietFields && (
+              <View style={styles.manualSection}>
+                <Text style={styles.fieldLabel}>{t("dashboard.dayExtra")}</Text>
+                <View style={styles.segmentRow}>
+                  {(["", "NINGUNO", "SABADO", "DOMINGO", "FESTIVO"] as const).map((f) => (
+                    <Pressable
+                      key={f || "none"}
+                      style={[styles.segmentSmall, dayFlag === f && styles.segmentActive]}
+                      onPress={() => setDayFlag(f)}
+                    >
+                      <Text style={[styles.segmentTextSmall, dayFlag === f && styles.segmentTextActive]}>
+                        {f === "" ? t("dashboard.dayFlagAuto") : f === "NINGUNO" ? t("dashboard.dayFlagNone") : f === "SABADO" ? t("dashboard.dayFlagSat") : f === "DOMINGO" ? t("dashboard.dayFlagSun") : t("dashboard.dayFlagHol")}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {dietaPreview && dietaPreview.extra > 0 && (
+                  <View style={styles.dietaPreview}>
+                    <View style={styles.dietaPreviewRow}>
+                      <Text style={styles.dietaPreviewLabel}>
+                        {t("dashboard.extra")} {dietaPreview.flag ? t(`common.dayFlag.${dietaPreview.flag}`) : ""}
+                      </Text>
+                      <Text style={styles.dietaPreviewValue}>+{dietaPreview.extra.toFixed(2)} EUR</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {showDietFields && (
             <View style={styles.fieldRow}>
               <View style={styles.fieldHalf}>
                 <Text style={styles.fieldLabel}>{t("dashboard.pernocta")}</Text>
@@ -1520,7 +3103,7 @@ export default function DashboardScreen() {
             </View>
             )}
 
-            {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && dietaModo === "AUTO" && (
+            {showDietFields && dietaModo === "AUTO" && (
               <View style={styles.manualSection}>
                 <Text style={styles.fieldLabel}>{t("dashboard.dietPercentLabel")}</Text>
                 <View style={styles.segmentRow}>
@@ -1577,7 +3160,7 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && dietaModo === "MANUAL" && (
+            {showDietFields && dietaModo === "MANUAL" && (
               <View style={styles.manualSection}>
                 <Text style={styles.fieldLabel}>{t("dashboard.dietType")}</Text>
                 <View style={styles.segmentRow}>
@@ -1863,10 +3446,10 @@ export default function DashboardScreen() {
               style={({ pressed }) => [
                 styles.btnDanger,
                 { opacity: pressed ? 0.85 : 1 },
-                (!finLugar.trim() || cierreMutation.isPending || !!conduccionParsed.error) && styles.btnDisabled,
+                (!finLugar.trim() || cierreMutation.isPending || !!conduccionParsed.error || !parseDisplayDateToISO(finFechaInput)) && styles.btnDisabled,
               ]}
               onPress={() => cierreMutation.mutate()}
-              disabled={!finLugar.trim() || cierreMutation.isPending || !!conduccionParsed.error}
+              disabled={!finLugar.trim() || cierreMutation.isPending || !!conduccionParsed.error || !parseDisplayDateToISO(finFechaInput)}
             >
               {cierreMutation.isPending ? (
                 <ActivityIndicator color="#fff" size="small" />
@@ -1922,42 +3505,48 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            <View style={styles.disponibilidadRow}>
+            <View style={[styles.disponibilidadRow, isNarrowMobile && { gap: 6 }]}>
               <Ionicons
                 name="speedometer-outline"
                 size={18}
                 color={estado.descansosReducidos >= estado.maxDescansosReducidos ? Colors.light.danger : Colors.light.tint}
               />
-              <Text style={styles.disponibilidadLabel}>{t("dashboard.availabilityToday")}</Text>
+              <Text style={[
+                styles.disponibilidadLabel,
+                isNarrowMobile && { fontSize: 12 },
+              ]}>{t("dashboard.availabilityToday")}</Text>
               <Text style={[
                 styles.disponibilidadValue,
                 estado.descansosReducidos >= estado.maxDescansosReducidos ? { color: Colors.light.danger } : null,
+                isNarrowMobile && { fontSize: 18 },
               ]}>
                 {Math.floor(estado.disponibilidadMin / 60)}h
               </Text>
             </View>
 
-            <View style={styles.legalRow}>
-              <View style={styles.legalItem}>
+            <View style={[styles.legalRow, isNarrowMobile && { gap: 8 }]}>
+              <View style={[styles.legalItem, isNarrowMobile && { padding: 8 }]}>
                 <View style={styles.legalItemHeader}>
                   <Ionicons name="timer-outline" size={16} color={Colors.light.accent} />
-                  <Text style={styles.legalItemLabel}>{t("dashboard.extensions10h")}</Text>
+                  <Text style={[styles.legalItemLabel, isNarrowMobile && { fontSize: 10.5 }]}>{t("dashboard.extensions10h")}</Text>
                 </View>
                 <Text style={[
                   styles.legalItemValue,
                   estado.extensiones10h >= estado.maxExtensiones ? { color: Colors.light.danger } : null,
+                  isNarrowMobile && { fontSize: 15 },
                 ]}>
                   {estado.extensiones10h} / {estado.maxExtensiones}
                 </Text>
               </View>
-              <View style={styles.legalItem}>
+              <View style={[styles.legalItem, isNarrowMobile && { padding: 8 }]}>
                 <View style={styles.legalItemHeader}>
                   <Ionicons name="moon-outline" size={16} color={Colors.light.descansoReducido} />
-                  <Text style={styles.legalItemLabel}>{t("dashboard.reducedRests")}</Text>
+                  <Text style={[styles.legalItemLabel, isNarrowMobile && { fontSize: 10.5 }]}>{t("dashboard.reducedRests")}</Text>
                 </View>
                 <Text style={[
                   styles.legalItemValue,
                   estado.descansosReducidos >= estado.maxDescansosReducidos ? { color: Colors.light.danger } : null,
+                  isNarrowMobile && { fontSize: 15 },
                 ]}>
                   {estado.descansosReducidos} / {estado.maxDescansosReducidos}
                 </Text>
@@ -1965,17 +3554,17 @@ export default function DashboardScreen() {
             </View>
 
             {estado.descansosReducidos < estado.maxDescansosReducidos && (
-              <View style={styles.recomendacionRow}>
+              <View style={[styles.recomendacionRow, isNarrowMobile && { padding: 8, gap: 6 }]}>
                 <Ionicons name="information-circle-outline" size={16} color={Colors.light.accent} />
-                <Text style={styles.recomendacionText}>
+                <Text style={[styles.recomendacionText, isNarrowMobile && { fontSize: 11 }]}>
                   {t("dashboard.canRest9h")} {estado.maxDescansosReducidos - estado.descansosReducidos} {t("dashboard.reducedRemaining")}
                 </Text>
               </View>
             )}
             {estado.descansosReducidos >= estado.maxDescansosReducidos && (
-              <View style={[styles.recomendacionRow, { backgroundColor: "#FEE2E2" }]}>
+              <View style={[styles.recomendacionRow, { backgroundColor: "#FEE2E2" }, isNarrowMobile && { padding: 8, gap: 6 }]}>
                 <Ionicons name="warning-outline" size={16} color={Colors.light.danger} />
-                <Text style={[styles.recomendacionText, { color: Colors.light.danger }]}>
+                <Text style={[styles.recomendacionText, { color: Colors.light.danger }, isNarrowMobile && { fontSize: 11 }]}>
                   {t("dashboard.noReducedAvailable")}
                 </Text>
               </View>
@@ -1983,30 +3572,77 @@ export default function DashboardScreen() {
 
             {estado.compensacionAgregada && (
               <View style={[styles.compSection, estado.compensacionAgregada.vencida && styles.compSectionDanger]}>
-                <Text style={[styles.compTitle, estado.compensacionAgregada.vencida && { color: Colors.light.danger }]}>
+                <Text style={[
+                  styles.compTitle,
+                  estado.compensacionAgregada.vencida && { color: Colors.light.danger },
+                  isNarrowMobile && { fontSize: 11.5 },
+                ]}>
                   {t("dashboard.pendingCompensations")}
                 </Text>
 
-                <View style={styles.compSummary}>
-                  <View style={styles.compSummaryRow}>
-                    <Text style={styles.compSummaryLabel}>{t("dashboard.totalToCompensate")}</Text>
-                    <Text style={[styles.compSummaryValue, estado.compensacionAgregada.vencida && { color: Colors.light.danger }]}>
-                      {estado.compensacionAgregada.totalDeudaHoras}h {estado.compensacionAgregada.totalDeudaMinutos}m
+                <View style={[styles.compSummary, isNarrowMobile && { padding: 10, gap: 5 }]}>
+                  <View style={[
+                    styles.compSummaryRow,
+                    isNarrowMobile && { flexWrap: "wrap" as const, rowGap: 2, columnGap: 8 },
+                  ]}>
+                    <Text style={[
+                      styles.compSummaryLabel,
+                      isNarrowMobile && { fontSize: 12 },
+                    ]}>{t("dashboard.totalToCompensate")}</Text>
+                    <Text style={[
+                      styles.compSummaryValue,
+                      estado.compensacionAgregada.vencida && { color: Colors.light.danger },
+                      isNarrowMobile && { fontSize: 15 },
+                    ]}>
+                      {formatMinutosHoras(
+                        Number(estado.compensacionAgregada.totalDeudaHoras || 0) * 60 +
+                        Number(estado.compensacionAgregada.totalDeudaMinutos || 0),
+                      )}
                     </Text>
                   </View>
+                  {compensationInfo.debtMin > 0 && (
+                    <View style={[
+                      styles.compSummaryRow,
+                      { flexWrap: "wrap" as const, rowGap: 2, columnGap: 8, alignItems: "flex-start" as const },
+                    ]}>
+                      <Text style={[
+                        styles.compSummaryLabel,
+                        isNarrowMobile && { fontSize: 12, flexShrink: 0 },
+                      ]}>Descanso recomendado esta semana</Text>
+                      <Text style={[
+                        styles.compSummaryValue,
+                        isNarrowMobile && { fontSize: 13.5 },
+                      ]}>
+                        45h + {formatMinutosHoras(compensationInfo.debtMin)} = {formatMinutosHoras(45 * 60 + compensationInfo.debtMin)}
+                      </Text>
+                    </View>
+                  )}
                   {estado.compensacionAgregada.fechaPrimerReducido && (
-                    <View style={styles.compSummaryRow}>
-                      <Text style={styles.compSummaryLabel}>{t("dashboard.firstReduced")}</Text>
+                    <View style={[
+                      styles.compSummaryRow,
+                      isNarrowMobile && { flexWrap: "wrap" as const, rowGap: 2, columnGap: 8 },
+                    ]}>
+                      <Text style={[
+                        styles.compSummaryLabel,
+                        isNarrowMobile && { fontSize: 12 },
+                      ]}>{t("dashboard.firstReduced")}</Text>
                       <Text style={styles.compSummaryDate}>
                         {formatFecha(estado.compensacionAgregada.fechaPrimerReducido)}
                       </Text>
                     </View>
                   )}
-                  <View style={styles.compSummaryRow}>
-                    <Text style={styles.compSummaryLabel}>{t("dashboard.deadline")}</Text>
+                  <View style={[
+                    styles.compSummaryRow,
+                    { flexWrap: "wrap" as const, rowGap: 4, columnGap: 8, alignItems: "flex-start" as const },
+                  ]}>
+                    <Text style={[
+                      styles.compSummaryLabel,
+                      isNarrowMobile && { fontSize: 12, flexShrink: 0 },
+                    ]}>{t("dashboard.deadline")}</Text>
                     <Text style={[
                       styles.compSummaryDate,
                       estado.compensacionAgregada.vencida && { color: Colors.light.danger, fontFamily: "Inter_700Bold" },
+                      isNarrowMobile && { fontSize: 12, flexShrink: 1 },
                     ]}>
                       {estado.compensacionAgregada.vencida ? `${t("dashboard.expired")} - ` : ""}
                       {formatFecha(estado.compensacionAgregada.fechaLimite)}
@@ -2015,12 +3651,16 @@ export default function DashboardScreen() {
                 </View>
 
                 {estado.compensacionAgregada.detalle.length > 1 && (
-                  <View style={styles.compDetalle}>
+                  <View style={[styles.compDetalle, isNarrowMobile && { padding: 8 }]}>
                     {estado.compensacionAgregada.detalle.map((d) => (
                       <View key={d.id} style={styles.compDetalleRow}>
-                        <Text style={styles.compDetalleFecha}>{formatFecha(d.fechaDescanso)}</Text>
-                        <Text style={styles.compDetalleDeuda}>
-                          {d.horasDeuda}h {d.minutosDeuda}m
+                        <Text style={[styles.compDetalleFecha, isNarrowMobile && { fontSize: 11 }]}>
+                          {formatFecha(d.fechaDescanso)}
+                        </Text>
+                        <Text style={[styles.compDetalleDeuda, isNarrowMobile && { fontSize: 12 }]}>
+                          {formatMinutosHoras(
+                            Number(d.horasDeuda || 0) * 60 + Number(d.minutosDeuda || 0),
+                          )}
                         </Text>
                       </View>
                     ))}
@@ -2045,8 +3685,8 @@ export default function DashboardScreen() {
                   }}
                   disabled={compensarMutation.isPending}
                 >
-                  <Ionicons name="checkmark-done-circle" size={18} color={Colors.light.success} />
-                  <Text style={styles.compBtnText}>{t("dashboard.markCompensated")}</Text>
+                  <Ionicons name="checkmark-done-circle" size={isNarrowMobile ? 16 : 18} color={Colors.light.success} />
+                  <Text style={[styles.compBtnText, isNarrowMobile && { fontSize: 12 }]}>{t("dashboard.markCompensated")}</Text>
                 </Pressable>
               </View>
             )}
@@ -2257,9 +3897,42 @@ export default function DashboardScreen() {
               <View style={styles.legalModalSection}>
                 <Text style={[styles.legalModalSectionTitle, { color: Colors.light.tint }]}>{t("dashboard.restPlan")}</Text>
 
+                <View style={{ marginTop: 8, backgroundColor: Colors.light.background, borderRadius: 10, padding: 10, gap: 6 }}>
+                  <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary }}>
+                    {t("dashboard.reducedRestsUsedCounter")} {closePlanData.reducedRestsUsed}/3
+                  </Text>
+                  <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+                    {closePlanData.reducedRestsUsed >= 3 && !closePlanData.canUseSplitRest && !splitRestManual
+                      ? t("dashboard.noReducedAvailable")
+                      : (3 - closePlanData.reducedRestsUsed) === 1
+                        ? t("dashboard.reducedRestsLeftOne")
+                        : t("dashboard.reducedRestsLeftMany").replace("{n}", String(3 - closePlanData.reducedRestsUsed))}
+                  </Text>
+                  <Pressable
+                    onPress={() => setSplitRestManual((p) => !p)}
+                    style={({ pressed }) => [{ opacity: pressed ? 0.9 : 1, flexDirection: "row" as const, alignItems: "center" as const, gap: 10, marginTop: 2 }]}
+                  >
+                    <Ionicons
+                      name={splitRestManual ? "checkbox" : "square-outline"}
+                      size={18}
+                      color={Colors.light.accent}
+                    />
+                    <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>
+                      {t("dashboard.splitRestManualLabel")}
+                    </Text>
+                  </Pressable>
+                  {(closePlanData.canUseSplitRest || splitRestManual) && (
+                    <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.accent }}>
+                      {t("dashboard.splitRestDetected")} {formatMinutosHoras(Math.max(closePlanData.splitRestFirstPartMin || 0, splitRestManual ? 3 * 60 : 0))} + 9h
+                    </Text>
+                  )}
+                </View>
+
                 <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary, marginTop: 4, marginBottom: 4 }}>{t("dashboard.dailyRest")}</Text>
                 <View style={{ flexDirection: "row" as const, gap: 8, marginBottom: 10 }}>
-                  {closePlanData.restOptions.filter(o => o.type === "daily").map((opt) => (
+                  {closePlanData.restOptions.filter(o => o.type === "daily").map((opt) => {
+                    const enabled = opt.enabled || (opt.type === "daily" && opt.minutes === 540 && splitRestManual);
+                    return (
                     <Pressable
                       key={opt.minutes}
                       style={[
@@ -2271,27 +3944,49 @@ export default function DashboardScreen() {
                           borderWidth: 2,
                           borderColor: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.border,
                           backgroundColor: chosenRest === opt.minutes ? Colors.light.tint + "10" : Colors.light.background,
-                          opacity: opt.enabled ? 1 : 0.4,
+                          opacity: enabled ? 1 : 0.4,
                         },
                       ]}
-                      onPress={() => opt.enabled && setChosenRest(opt.minutes)}
-                      disabled={!opt.enabled}
+                      onPress={() => enabled && setChosenRest(opt.minutes)}
+                      disabled={!enabled}
                     >
                       <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.text }}>
                         {opt.label}
                       </Text>
-                      {!opt.enabled && (
+                      {!enabled && (
                         <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: Colors.light.danger, marginTop: 2 }}>
                           {t("dashboard.notAvailable")}
                         </Text>
                       )}
                     </Pressable>
-                  ))}
+                    );
+                  })}
                 </View>
 
                 <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary, marginBottom: 4 }}>{t("dashboard.weeklyRest")}</Text>
                 <View style={{ flexDirection: "row" as const, gap: 8, marginBottom: 8 }}>
-                  {closePlanData.restOptions.filter(o => o.type === "weekly").map((opt) => (
+                  {(() => {
+                    const base = closePlanData.restOptions.filter((o) => o.type === "weekly");
+                    const canAdd = compensationInfo.dueThisWeek && Number.isFinite(compensationInfo.debtMin) && compensationInfo.debtMin > 0 && !!closePlanEndAt;
+                    if (!canAdd) return base;
+                    const endAt = new Date(closePlanEndAt as string);
+                    const rawTotal = 45 * 60 + (Number.isFinite(compensationInfo.debtMin) ? Math.max(0, compensationInfo.debtMin) : 0);
+                    const totalMin = Math.max(0, Math.min(rawTotal, 24 * 60 * 30));
+                    const next = new Date(endAt.getTime() + totalMin * 60000);
+                    return [
+                      ...base,
+                      {
+                        minutes: totalMin,
+                        label: "Semanal + compensación",
+                        enabled: true,
+                        nextStartTime: formatDateTimeES(next, locale),
+                        tomorrowMaxDutyMin: 13 * 60,
+                        tomorrowMaxDriveMin: 9 * 60,
+                        type: "weekly",
+                        generatesDebt: false,
+                      },
+                    ] as any[];
+                  })().map((opt) => (
                     <Pressable
                       key={opt.minutes}
                       style={[
@@ -2306,12 +4001,32 @@ export default function DashboardScreen() {
                           opacity: opt.enabled ? 1 : 0.4,
                         },
                       ]}
-                      onPress={() => opt.enabled && setChosenRest(opt.minutes)}
+                      onPress={() => {
+                        if (!opt.enabled) return;
+                        const isBaseWeekly = opt.type === "weekly" && (opt.minutes === 24 * 60 || opt.minutes === 45 * 60);
+                        if (isBaseWeekly && compensationInfo.dueThisWeek && compensationInfo.debtMin > 0) {
+                          Alert.alert(
+                            "Compensación pendiente",
+                            "Tienes compensación pendiente esta semana. Si haces solo este descanso, puede quedar deuda pendiente.",
+                            [
+                              { text: t("common.cancel"), style: "cancel" },
+                              { text: "Continuar", onPress: () => setChosenRest(opt.minutes) },
+                            ],
+                          );
+                          return;
+                        }
+                        setChosenRest(opt.minutes);
+                      }}
                       disabled={!opt.enabled}
                     >
                       <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.text }}>
                         {opt.label}
                       </Text>
+                      {opt.label === "Semanal + compensación" && compensationInfo.debtMin > 0 && (
+                        <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary, marginTop: 2 }}>
+                          45h + {formatMinutosHoras(compensationInfo.debtMin)} = {formatMinutosHoras(45 * 60 + compensationInfo.debtMin)}
+                        </Text>
+                      )}
                       {opt.generatesDebt && (
                         <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: "#F59E0B", marginTop: 2 }}>
                           {t("dashboard.generatesDebtLabel")}
@@ -2378,11 +4093,19 @@ export default function DashboardScreen() {
                 if (chosenRest && closedJornadaId) {
                   const opt = closePlanData?.restOptions.find(o => o.minutes === chosenRest);
                   if (opt) {
-                    await updateJornadaPlannedRest(closedJornadaId, chosenRest, opt.type);
+                    const isSplit = opt.type === "daily" && (closePlanData?.canUseSplitRest || splitRestManual) && chosenRest >= 9 * 60;
+                    const firstPartMin = Math.max(closePlanData?.splitRestFirstPartMin || 0, splitRestManual ? 3 * 60 : 0);
+                    await updateJornadaPlannedRest(closedJornadaId, chosenRest, opt.type, isSplit ? {
+                      splitRestDetected: true,
+                      splitRestFirstPartMin: firstPartMin,
+                      splitRestSecondPartMin: chosenRest,
+                      countsAsReducedRest: false,
+                    } : undefined);
                     invalidateAll();
                     triggerSync();
                   }
                 }
+                setSplitRestManual(false);
                 setShowLegalModal(false);
               }}
             >
@@ -2600,12 +4323,12 @@ export default function DashboardScreen() {
                       <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 13, color: Colors.light.text, marginBottom: 6 }}>{t("ferry.extras")}</Text>
                       {ferryTransitDiet > 0 && (
                         <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
-                          {t("ferry.transitDiet")}: {ferryTransitDiet} × {ferryConfig.transitRate.toFixed(2)}€ = {(ferryTransitDiet * ferryConfig.transitRate).toFixed(2)}€
+                          {t("ferry.transitDiet")}: {ferryTransitDiet} × {ferryConfig.ferryTransitRate.toFixed(2)}€ = {(ferryTransitDiet * ferryConfig.ferryTransitRate).toFixed(2)}€
                         </Text>
                       )}
                       {ferryCabinOvernight > 0 && (
                         <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
-                          {t("ferry.cabinOvernight")}: {ferryCabinOvernight} × {ferryConfig.cabinRate.toFixed(2)}€ = {(ferryCabinOvernight * ferryConfig.cabinRate).toFixed(2)}€
+                          {t("ferry.cabinOvernight")}: {ferryCabinOvernight} × {ferryConfig.ferryCabinRate.toFixed(2)}€ = {(ferryCabinOvernight * ferryConfig.ferryCabinRate).toFixed(2)}€
                         </Text>
                       )}
                       {ferryCountryChange && (
@@ -2650,7 +4373,7 @@ export default function DashboardScreen() {
                             isComplete: true,
                             invalidReason: isValid ? null : "insufficient_rest",
                             destination: ferryDestination.trim() || undefined,
-                            ferryExtras: extras,
+                            ferryExtras: extras ?? undefined,
                           });
 
                           await updateJornadaFerryData(lastClosed.id, {
@@ -2687,7 +4410,27 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
-      <OnboardingGuide visible={showGuide} onClose={() => setShowGuide(false)} />
+      <PendingNaturalDietsModal
+        visible={pendingDietsVisible}
+        detected={pendingDiets}
+        onClose={handleCancelPendingDiets}
+        onConfirm={handleConfirmPendingDiets}
+        loading={pendingDietsSaving}
+        autoPlusesCfg={{
+          sunday: dayExtras?.extra_sunday ? Number(dayExtras.extra_sunday) || 0 : 0,
+          holiday: dayExtras?.extra_holiday ? Number(dayExtras.extra_holiday) || 0 : 0,
+        }}
+      />
+
+      <ArrivalDayDietSelectorModal
+        visible={arrivalSelectorVisible}
+        day={arrivalSelectorDay}
+        onClose={handleArrivalChoiceClose}
+        onConfirm={handleArrivalChoiceConfirm}
+        loading={pendingDietsSaving}
+      />
+
+      <OnboardingGuide visible={showGuide} onClose={closeTutorial} />
 
       {user?.email === "yosf.bouncy@gmail.com" && (
         <DebugSimulator onDataChanged={invalidateAll} />
@@ -2713,6 +4456,17 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     gap: 8,
   },
+  headerActionButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    backgroundColor: Colors.light.surface,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    flexShrink: 0,
+  },
   headerTitle: {
     fontSize: 26,
     fontFamily: "Inter_700Bold",
@@ -2722,6 +4476,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
+    marginTop: 2,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "web" ? 80 : 60,
+    alignItems: "flex-end",
+  },
+  menuPanel: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: Colors.light.surface,
+    borderRadius: 16,
+    padding: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  menuHeaderRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    marginBottom: 6,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+  },
+  menuSection: {
+    marginTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.light.border,
+    paddingTop: 10,
+  },
+  menuSectionTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.textSecondary,
+    marginBottom: 8,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.6,
+  },
+  menuRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.light.background,
+    marginBottom: 8,
+  },
+  menuRowStatic: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.light.background,
+    marginBottom: 8,
+  },
+  menuRowText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  menuRowLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
+  },
+  menuRowValue: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
     marginTop: 2,
   },
   alertSection: {

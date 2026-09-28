@@ -1,5 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
+import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, computeReducedRestsInUtcWeek, isSplitDailyRestGapComplete, type LegalSummary } from "./legalEngine";
+import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
+import { assessWeeklyRest, type WeeklyRestAssessment } from "@/lib/weekly-rest";
+import { userScopedKey } from "@/lib/user-scope";
+import { normalizeLocationText } from "@/lib/location-normalization";
+import { supabase } from "@/lib/supabase";
 
 const JORNADAS_KEY = "tacoplan_jornadas";
 const COMPENSACIONES_KEY = "tacoplan_compensaciones";
@@ -7,6 +12,69 @@ const RECENT_PLACES_KEY = "tacoplan_recent_places";
 const MOROCCO_TRIPS_KEY = "tacoplan_morocco_trips";
 const FERRY_RESTS_KEY = "tacoplan_ferry_rests";
 const ACTIVE_FERRY_REST_KEY = "tacoplan_active_ferry_rest";
+const DAY_EXTRA_ENTRIES_KEY = "tacoplan_day_extra_entries";
+const NATURAL_DAY_DIETS_KEY = "tacoplan_natural_day_diets";
+const NATURAL_DAY_DIETS_DISMISSED_KEY = "tacoplan_natural_day_diets_dismissed";
+const PDF_DIETS_DEBUG_URL = "http://127.0.0.1:7777/event";
+const PDF_DIETS_DEBUG_SESSION = "pdf-diets-not-saved";
+const PDF_DIETS_DEBUG_RUN = "pre-fix";
+const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
+const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
+const JORNADA_DATE_DEBUG_RUN = "pre-fix";
+
+function reportPdfDietDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
+  if (typeof fetch !== "function") return;
+  fetch(PDF_DIETS_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: PDF_DIETS_DEBUG_SESSION,
+      runId: PDF_DIETS_DEBUG_RUN,
+      hypothesisId,
+      location,
+      msg: `[DEBUG] ${msg}`,
+      data,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
+function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
+  if (typeof fetch !== "function") return;
+  let timezone: string | null = null;
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {}
+  fetch(JORNADA_DATE_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: JORNADA_DATE_DEBUG_SESSION,
+      runId: JORNADA_DATE_DEBUG_RUN,
+      hypothesisId,
+      location,
+      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
+      data: {
+        timezone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        ...data,
+      },
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
+async function getItemScoped(base: string): Promise<string | null> {
+  return AsyncStorage.getItem(await userScopedKey(base));
+}
+
+async function setItemScoped(base: string, value: string): Promise<void> {
+  await AsyncStorage.setItem(await userScopedKey(base), value);
+}
+
+async function removeItemScoped(base: string): Promise<void> {
+  await AsyncStorage.removeItem(await userScopedKey(base));
+}
 
 export interface DietaItem {
   tipo: string;
@@ -29,7 +97,83 @@ export interface UserDayExtras {
   extra_saturday: number;
   extra_sunday: number;
   extra_holiday: number;
+  offsite_weekly_reduced_nacional: number;
+  offsite_weekly_reduced_internacional: number;
+  offsite_weekly_complete_nacional: number;
+  offsite_weekly_complete_internacional: number;
 }
+
+export type DayExtraEntryType = "day_extra" | "offsite_weekly_rest";
+
+export interface DayExtraEntry {
+  id: string;
+  date: string;
+  entryType: DayExtraEntryType;
+  dayFlag: "SABADO" | "DOMINGO" | "FESTIVO" | null;
+  offsiteRestType: "WEEKLY_REDUCED" | "WEEKLY_COMPLETE" | null;
+  offsiteBase: "NACIONAL" | "INTERNACIONAL" | null;
+  plusSunday: boolean;
+  plusHoliday: boolean;
+  locationStart?: string | null;
+  locationEnd?: string | null;
+  inBase?: boolean | null;
+  distanceToBaseKm?: number | null;
+  amount: number | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: "pending" | "synced" | "local";
+}
+
+export type NaturalDayDietType = "INTERNACIONAL" | "NACIONAL" | "REGIONAL";
+export interface NaturalDayDietEntry {
+  id: string;
+  date: string;
+  type: NaturalDayDietType;
+  percentage: 100 | 60 | 30;
+  amount: number;
+  location?: string | null;
+  source: "NATURAL_DAY_OUT_OF_BASE";
+  previousJourneyId?: string | null;
+  nextJourneyId?: string | null;
+  confirmedByUser: boolean;
+  dismissedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: "pending" | "synced" | "local";
+  plusItems?: Array<{ concepto: string; amount: number; id: string }> | null;
+  isDomingo?: boolean | null;
+  isFestivo?: boolean | null;
+}
+export type DetectedMissingNaturalDay = {
+  date: string;
+  type: NaturalDayDietType;
+  percentage: 100 | 60 | 30;
+  amount: number;
+  location?: string | null;
+  previousJourneyId?: string | null;
+  nextJourneyId?: string | null;
+  isBaseArrivalDay?: boolean;
+
+  // Campos nueva mejora UI:
+  previousJourneyStartAt?: string | null;        // ISO inicio jornada anterior (fecha+hora)
+  previousJourneyEndAt?: string | null;          // ISO fin jornada anterior (fecha+hora)
+  previousJourneyLugarInicio?: string | null;    // Origen jornada anterior
+  previousJourneyLugarFin?: string | null;       // Destino jornada anterior
+  arrivesAtBase?: boolean;                       // Llegada a base: Sí/No
+  arrivalHHMM?: string | null;                   // Hora llegada a base (si arrivesAtBase=true)
+  nextJourneyStartAt?: string | null;
+  nextJourneyLugarInicio?: string | null;
+  isDomingo?: boolean;
+  isFestivo?: boolean;
+  motivo?: string;
+  // Pluses asociados al día (fuera de base):
+  plusItems?: Array<{ concepto: string; amount: number; id: string; selected?: boolean }>;
+  // Campos user-editable dentro del modal:
+  userPercentage?: 100 | 60 | 30 | null;         // pct elegido por usuario (override 100 default non-arrival)
+  userAmount?: number;                           // amount recalculado según userPercentage o arrival choice
+  removed?: boolean;                             // true si user elimina la fila (no crea entrada)
+};
 
 export interface Jornada {
   id: string;
@@ -62,10 +206,36 @@ export interface Jornada {
   previousRestSource: "normal_gap" | "ferry_rest" | null;
   previousRestId: string | null;
   previousRestValid: boolean | null;
+  previousRestStartAt?: string | null;
+  previousRestEndAt?: string | null;
+  previousRestLegalType?: "weekly_normal" | "weekly_reduced" | "weekly_invalid" | null;
+  previousRestStartLocation?: string | null;
+  previousRestEndLocation?: string | null;
+  previousRestInBase?: "in_base" | "out_of_base" | "unknown" | null;
+  previousRestDistanceKm?: number | null;
+  previousRestPerformedInVehicle?: boolean | null;
+  previousRestAccommodation?: boolean | null;
+  previousRestCompGeneratedMin?: number | null;
+  previousRestCompUsedMin?: number | null;
+  previousRestObservations?: string | null;
   duracionJornadaMin: number | null;
   countsAsDailyReduced: boolean;
   plannedRestMin: number | null;
   plannedRestType: "daily" | "weekly" | null;
+  splitRestDetected: boolean;
+  splitRestFirstPartMin: number | null;
+  splitRestSecondPartMin: number | null;
+  countsAsReducedRest: boolean;
+  paymentMode: "dietas" | "km" | "viaje" | null;
+  kmInicio: number | null;
+  kmFin: number | null;
+  kmTotal: number | null;
+  pricePerKm: number | null;
+  importeKm: number | null;
+  pricePerTrip: number | null;
+  importeViaje: number | null;
+  reportHideAmounts: boolean;
+  reportHidePluses: boolean;
   plusItems: PlusItem[] | null;
   observaciones: string | null;
   moroccoPaymentMode: "morocco_trip" | "morocco_pernight" | "morocco_diet" | null;
@@ -78,6 +248,20 @@ export interface Jornada {
   ferryRestCompleted: boolean;
   ferryRestType: "9h" | "11h" | null;
   legalSummary: LegalSummaryStored | null;
+  tachoDailySummaryId?: string | null;
+  tachoDrivingMin?: number | null;
+  tachoWorkMin?: number | null;
+  tachoAvailableMin?: number | null;
+  tachoRestMin?: number | null;
+  tachoCountries?: string[] | null;
+  tachoCountryEntries?: number | null;
+  tachoKmTotal?: number | null;
+  tachoFirstActivityAt?: string | null;
+  tachoLastActivityAt?: string | null;
+  tachoDisconnections?: number | null;
+  tachoDataQuality?: "low" | "medium" | "high" | null;
+  isDoubleDriving: boolean;
+  secondDriverName: string | null;
   updatedAt: string;
   syncStatus: "synced" | "pending" | "local";
 }
@@ -101,6 +285,10 @@ export interface LegalSummaryStored {
   conduccionBisemanalMin: number;
   extensiones10hSemana: number;
   descansosReducidosSemana: number;
+  splitRestDetected?: boolean;
+  splitRestFirstPartMin?: number | null;
+  splitRestSecondPartMin?: number | null;
+  countsAsReducedRest?: boolean;
 }
 
 export interface Compensacion {
@@ -111,6 +299,19 @@ export interface Compensacion {
   fechaLimite: string;
   compensada: boolean;
   fechaCompensacion: string | null;
+  sourceRestStartAt?: string | null;
+  sourceRestEndAt?: string | null;
+  sourceRestDurationMin?: number | null;
+  sourceRestLegalType?: "weekly_normal" | "weekly_reduced" | "weekly_invalid" | null;
+  sourceRestLocationStart?: string | null;
+  sourceRestLocationEnd?: string | null;
+  sourceRestInBase?: "in_base" | "out_of_base" | "unknown" | null;
+  sourceRestDistanceKm?: number | null;
+  sourceRestObservations?: string | null;
+  recoveredInJornadaId?: string | null;
+  recoveryRestStartAt?: string | null;
+  recoveryRestEndAt?: string | null;
+  recoveryRestDurationMin?: number | null;
   updatedAt: string;
   syncStatus: "synced" | "pending" | "local";
 }
@@ -162,14 +363,176 @@ function formatDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function addDays(dateStr: string, days: number): string {
+function formatFechaES(dateStr: string): string {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return String(dateStr || "");
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+export function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + days);
   return formatDateStr(d);
 }
 
+/**
+ * Extrae "YYYY-MM-DD" de cualquier string de fecha/ISO (puede ser
+ * "2026-08-31" solo fecha o "2026-08-31T22:15:00.000Z" ISO completo).
+ * Úsalo para obtener la fecha base del FIN de descanso y sumar 14 días
+ * (plazo legal Art. 8.6 Reg. 561/2006 según última regla del usuario).
+ */
+export function extractYyyyMmDd(isoOrDate: string | null | undefined): string | null {
+  if (!isoOrDate) return null;
+  const m = String(isoOrDate).match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Calcula la FECHA LÍMITE canónica para compensar un descanso semanal reducido,
+ * según regla VERBATIM del usuario:
+ *   "la fecha limite para compensacion es 14 dias desde el fin descanso
+ *    que ha generado la compensacion"
+ *
+ * Orden de preferencia para el origen (fin descanso):
+ *   1. sourceRestEndAt          (campo Compensacion)
+ *   2. previousRestEndAt        (campo Jornada, si tenemos la jornada ligada)
+ *   3. fechaInicio de la jornada (fallback lo más cercano posible si se desconoce
+ *                                 el fin del descanso)
+ *   4. hoy+14d                  (si no hay nada más, no penalizar vencida al instante)
+ */
+function calculateCompensationDeadline(params: {
+  sourceRestEndAt?: string | null;
+  jornadaPreviousRestEndAt?: string | null;
+  fechaInicioJornada?: string | null;
+  hoyStr?: string;
+}): string {
+  const candidate =
+    extractYyyyMmDd(params.sourceRestEndAt) ??
+    extractYyyyMmDd(params.jornadaPreviousRestEndAt) ??
+    extractYyyyMmDd(params.fechaInicioJornada) ??
+    params.hoyStr ??
+    extractYyyyMmDd(new Date().toISOString())!;
+  return addDays(candidate, 14);
+}
+
+/**
+ * Ventana retrospectiva de inspección/policía (52 días hacia atrás).
+ * Cualquier compensación con LA JORNADA ASOCIADA (fechaInicio) ANTERIOR a este umbral
+ * se considera FUERA DE VIGILANCIA ACTIVA:
+ *   → NO suma en "Total a compensar"
+ *   → NO muestra infracción/advertencia en banner/dashboard
+ *   → SI se conserva en base de datos (consulta manual por el usuario).
+ *
+ * Coincide con lo que dice el usuario: "...en un control la policia revisa
+ * 52dias hacia atras."
+ */
+const POLICIA_VENTANA_DIAS = 52;
+function policeWindowStart(dateRef: Date = new Date()): string {
+  const iso = formatUTCDateStr(dateRef);
+  return addDays(iso, -POLICIA_VENTANA_DIAS);
+}
+function isCompWithinPoliceWindow(
+  c: Compensacion,
+  allJornadas: Jornada[],
+  dateRef: Date = new Date(),
+): boolean {
+  if (c.compensada) return false;
+  const start = policeWindowStart(dateRef);
+  if (c.jornadaId) {
+    const j = allJornadas.find((x) => x.id === c.jornadaId);
+    if (j) return j.fechaInicio >= start;
+  }
+  // fallback: si no hay jornada asociada, usamos fechaLimite para no perder
+  return c.fechaLimite >= start;
+}
+
+/**
+ * Semana natural UTC (lunes 00:00 -> domingo 23:59).
+ * Usado para agrupar descansos semanales reducidos: dentro de una MISMA SEMANA
+ * solo el ÚLTIMO de ellos genera deuda compensable.
+ */
+function getUtcWeekMonday(iso: string): string {
+  const d = new Date(iso);
+  const day = d.getUTCDay(); // 0=domingo, 1=lunes, ..., 6=sábado
+  const offset = day === 0 ? 6 : day - 1; // days since monday
+  const monday = new Date(Date.UTC(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate() - offset,
+  ));
+  return formatUTCDateStr(monday);
+}
+function sameUtcWeek(aIso: string, bIso: string): boolean {
+  return getUtcWeekMonday(aIso) === getUtcWeekMonday(bIso);
+}
+
+async function loadBaseLocationConfigFromSettings(): Promise<BaseLocationConfig> {
+  try {
+    const raw = await getItemScoped("tacoplan_user_settings");
+    const settings = raw ? JSON.parse(raw) : {};
+    return buildBaseLocationConfig({
+      baseName: settings.base_name ?? null,
+      baseCity: settings.base_city ?? null,
+      baseCountry: settings.base_country ?? null,
+      baseAddress: settings.base_address ?? null,
+      baseLatitude: settings.base_latitude ?? null,
+      baseLongitude: settings.base_longitude ?? null,
+      baseRadiusKm: settings.base_radius_km ?? null,
+      baseConfiguredAt: settings.base_configured_at ?? null,
+      baseUpdatedAt: settings.base_updated_at ?? null,
+    });
+  } catch {
+    return buildBaseLocationConfig();
+  }
+}
+
+function buildPreviousRestFields(params: {
+  restStartAt: string | null;
+  restEndAt: string | null;
+  restStartLocation?: string | null;
+  restEndLocation?: string | null;
+  assessment?: WeeklyRestAssessment | null;
+}): Pick<
+  Jornada,
+  | "previousRestStartAt"
+  | "previousRestEndAt"
+  | "previousRestLegalType"
+  | "previousRestStartLocation"
+  | "previousRestEndLocation"
+  | "previousRestInBase"
+  | "previousRestDistanceKm"
+  | "previousRestCompGeneratedMin"
+  | "previousRestCompUsedMin"
+  | "previousRestObservations"
+> {
+  return {
+    previousRestStartAt: params.restStartAt,
+    previousRestEndAt: params.restEndAt,
+    previousRestLegalType: params.assessment?.legalType ?? null,
+    previousRestStartLocation: params.restStartLocation?.trim() || null,
+    previousRestEndLocation: params.restEndLocation?.trim() || null,
+    previousRestInBase: params.assessment?.locationStatus ?? null,
+    previousRestDistanceKm: params.assessment?.distanceKm ?? null,
+    previousRestCompGeneratedMin: params.assessment?.compensationGeneratedMin ?? null,
+    previousRestCompUsedMin: 0,
+    previousRestObservations: params.assessment?.warning ?? null,
+  };
+}
+
 function buildIsoTimestamp(fecha: string, hora: string): string {
   return `${fecha}T${hora}:00`;
+}
+
+function parseTimeToMinutes(hhmm: string | null | undefined): number | null {
+  const raw = (hhmm || "").trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  if (h < 0 || h > 23) return null;
+  if (min < 0 || min > 59) return null;
+  return h * 60 + min;
 }
 
 function calcMinutesBetween(isoStart: string, isoEnd: string): number {
@@ -271,8 +634,33 @@ function getSundayOfWeek(date: Date): Date {
   return sunday;
 }
 
+function getMondayOfUtcWeek(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+  d.setUTCDate(diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+function getSundayOfUtcWeek(date: Date): Date {
+  const monday = getMondayOfUtcWeek(date);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  sunday.setUTCHours(23, 59, 59, 999);
+  return sunday;
+}
+
+function formatUTCDateStr(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+function getJornadaUtcStartDateStr(j: Jornada): string {
+  return formatUTCDateStr(new Date(j.startAt || `${j.fechaInicio}T${j.horaInicio || "00:00"}:00`));
+}
+
 async function getAllJornadas(): Promise<Jornada[]> {
-  const raw = await AsyncStorage.getItem(JORNADAS_KEY);
+  const raw = await getItemScoped(JORNADAS_KEY);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
   return parsed.map(migrateJornada);
@@ -281,6 +669,8 @@ async function getAllJornadas(): Promise<Jornada[]> {
 function migrateJornada(j: any): Jornada {
   const migrated: Jornada = {
     ...j,
+    lugarInicio: normalizeLocationText(j.lugarInicio || ""),
+    lugarFin: j.lugarFin ? normalizeLocationText(j.lugarFin) : null,
     startAt: j.startAt || buildIsoTimestamp(j.fechaInicio, j.horaInicio),
     endAt: j.endAt || (j.fechaFin && j.horaFin ? buildIsoTimestamp(j.fechaFin, j.horaFin) : null),
     dietasItems: j.dietasItems || null,
@@ -304,6 +694,32 @@ function migrateJornada(j: any): Jornada {
     ferryInterruptions: j.ferryInterruptions ?? null,
     ferryRestCompleted: j.ferryRestCompleted ?? false,
     ferryRestType: j.ferryRestType ?? null,
+    splitRestDetected: j.splitRestDetected ?? false,
+    splitRestFirstPartMin: j.splitRestFirstPartMin ?? null,
+    splitRestSecondPartMin: j.splitRestSecondPartMin ?? null,
+    countsAsReducedRest: j.countsAsReducedRest ?? true,
+    paymentMode: j.paymentMode ?? null,
+    kmInicio: j.kmInicio ?? null,
+    kmFin: j.kmFin ?? null,
+    kmTotal: j.kmTotal ?? null,
+    pricePerKm: j.pricePerKm ?? null,
+    importeKm: j.importeKm ?? null,
+    pricePerTrip: j.pricePerTrip ?? null,
+    importeViaje: j.importeViaje ?? null,
+    reportHideAmounts: j.reportHideAmounts ?? false,
+    reportHidePluses: j.reportHidePluses ?? false,
+    previousRestStartAt: j.previousRestStartAt ?? null,
+    previousRestEndAt: j.previousRestEndAt ?? null,
+    previousRestLegalType: j.previousRestLegalType ?? null,
+    previousRestStartLocation: j.previousRestStartLocation ?? null,
+    previousRestEndLocation: j.previousRestEndLocation ?? null,
+    previousRestInBase: j.previousRestInBase ?? null,
+    previousRestDistanceKm: j.previousRestDistanceKm ?? null,
+    previousRestPerformedInVehicle: j.previousRestPerformedInVehicle ?? null,
+    previousRestAccommodation: j.previousRestAccommodation ?? null,
+    previousRestCompGeneratedMin: j.previousRestCompGeneratedMin ?? null,
+    previousRestCompUsedMin: j.previousRestCompUsedMin ?? null,
+    previousRestObservations: j.previousRestObservations ?? null,
     updatedAt: j.updatedAt || new Date().toISOString(),
     syncStatus: j.syncStatus || "local",
   };
@@ -323,18 +739,407 @@ function migrateJornada(j: any): Jornada {
     migrated.dietCalculatedAt = migrated.updatedAt || new Date().toISOString();
   }
 
+  // #region debug-point D:local-migrate
+  if (
+    migrated.fechaInicio !== j?.fechaInicio ||
+    migrated.horaInicio !== j?.horaInicio ||
+    migrated.fechaFin !== j?.fechaFin ||
+    migrated.horaFin !== j?.horaFin ||
+    migrated.startAt !== j?.startAt ||
+    migrated.endAt !== j?.endAt
+  ) {
+    reportJornadaDateDebug("D", "local-storage:migrateJornada", "migrated jornada changed date-related fields", {
+      jornadaId: migrated.id,
+      before: {
+        fechaInicio: j?.fechaInicio ?? null,
+        horaInicio: j?.horaInicio ?? null,
+        fechaFin: j?.fechaFin ?? null,
+        horaFin: j?.horaFin ?? null,
+        startAt: j?.startAt ?? null,
+        endAt: j?.endAt ?? null,
+      },
+      after: {
+        fechaInicio: migrated.fechaInicio,
+        horaInicio: migrated.horaInicio,
+        fechaFin: migrated.fechaFin,
+        horaFin: migrated.horaFin,
+        startAt: migrated.startAt,
+        endAt: migrated.endAt,
+      },
+    });
+  }
+  // #endregion
+
   return migrated;
 }
 
 async function saveAllJornadas(list: Jornada[]): Promise<void> {
-  await AsyncStorage.setItem(JORNADAS_KEY, JSON.stringify(list));
+  await setItemScoped(JORNADAS_KEY, JSON.stringify(list));
+}
+
+export async function replaceImportedJornadas(list: Jornada[]): Promise<void> {
+  await saveAllJornadas(list);
+}
+
+function buildStoredLegalSummary(jornada: Jornada, legalResult: ReturnType<typeof evaluateJornada>): LegalSummaryStored {
+  return {
+    status: legalResult.status,
+    infractions: legalResult.infractions,
+    warnings: legalResult.warnings,
+    conduccionSemanalMin: legalResult.conduccionSemanalMin,
+    conduccionBisemanalMin: legalResult.conduccionBisemanalMin,
+    extensiones10hSemana: legalResult.extensiones10hSemana,
+    descansosReducidosSemana: legalResult.descansosReducidosSemana,
+    splitRestDetected: jornada.splitRestDetected,
+    splitRestFirstPartMin: jornada.splitRestFirstPartMin,
+    splitRestSecondPartMin: jornada.splitRestSecondPartMin,
+    countsAsReducedRest: jornada.countsAsReducedRest,
+  };
+}
+
+export async function loadDietDerivationContext(): Promise<{
+  customRates: UserDietRate[] | null;
+  dayExtras: UserDayExtras;
+  holidays: string[];
+}> {
+  const defaults: UserDayExtras = {
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  };
+  const parseNumberSafe = (value: unknown): number => {
+    const parsed = parseFloat(String(value ?? "0").replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  let settings: Record<string, unknown> = {};
+  let holidays: string[] = [];
+
+  try {
+    const settingsRaw = await getItemScoped("tacoplan_user_settings");
+    settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+  } catch {}
+
+  try {
+    const holidaysRaw = await getItemScoped("tacoplan_user_holidays_cache");
+    const parsed = holidaysRaw ? JSON.parse(holidaysRaw) : [];
+    holidays = Array.isArray(parsed)
+      ? parsed
+          .map((item) => (typeof item === "string" ? item : item?.date))
+          .filter((item): item is string => /^\d{4}-\d{2}-\d{2}$/.test(String(item || "")))
+      : [];
+  } catch {}
+
+  const customRates = [
+      { trip_type: "NACIONAL", percent: 100, amount: parseNumberSafe(settings.nac_100) },
+      { trip_type: "NACIONAL", percent: 60, amount: parseNumberSafe(settings.nac_60) },
+      { trip_type: "NACIONAL", percent: 30, amount: parseNumberSafe(settings.nac_30) },
+      { trip_type: "INTERNACIONAL", percent: 100, amount: parseNumberSafe(settings.intl_100) },
+      { trip_type: "INTERNACIONAL", percent: 60, amount: parseNumberSafe(settings.intl_60) },
+      { trip_type: "INTERNACIONAL", percent: 30, amount: parseNumberSafe(settings.intl_30) },
+      { trip_type: "REGIONAL", percent: 100, amount: parseNumberSafe(settings.reg_100) },
+      { trip_type: "REGIONAL", percent: 60, amount: parseNumberSafe(settings.reg_60) },
+      { trip_type: "REGIONAL", percent: 30, amount: parseNumberSafe(settings.reg_30) },
+  ];
+
+  return {
+    customRates: customRates.some((rate) => rate.amount > 0) ? customRates : null,
+    dayExtras: {
+      ...defaults,
+      extra_saturday: parseNumberSafe(settings.extra_saturday),
+      extra_sunday: parseNumberSafe(settings.extra_sunday),
+      extra_holiday: parseNumberSafe(settings.extra_holiday),
+      offsite_weekly_reduced_nacional: parseNumberSafe(settings.offsite_weekly_reduced_nacional),
+      offsite_weekly_reduced_internacional: parseNumberSafe(settings.offsite_weekly_reduced_internacional),
+      offsite_weekly_complete_nacional: parseNumberSafe(settings.offsite_weekly_complete_nacional),
+      offsite_weekly_complete_internacional: parseNumberSafe(settings.offsite_weekly_complete_internacional),
+    },
+    holidays,
+  };
+}
+
+function shouldBackfillImportedDiet(jornada: Jornada): boolean {
+  const paymentMode = jornada.paymentMode || "dietas";
+  if (paymentMode !== "dietas") return false;
+  if (!jornada.fechaFin || !jornada.horaFin || !jornada.lugarFin) return false;
+  const hasItems = Array.isArray(jornada.dietasItems) && jornada.dietasItems.length > 0;
+  return !jornada.dietaImporteEur || !jornada.dietBaseEur || !hasItems;
+}
+
+export async function prepareImportedJornadasForStorage(imported: Jornada[], existingBase?: Jornada[]): Promise<Jornada[]> {
+  const base = (existingBase || await getAllJornadas()).map(migrateJornada);
+  const comps = await getAllCompensaciones();
+  const dietContext = await loadDietDerivationContext();
+  const ordered = [...imported].map(migrateJornada).sort((a, b) => a.startAt.localeCompare(b.startAt));
+  const prepared: Jornada[] = [];
+
+  for (const raw of ordered) {
+    let jornada: Jornada = {
+      ...raw,
+      lugarInicio: normalizeLocationText(raw.lugarInicio || ""),
+      lugarFin: raw.lugarFin ? normalizeLocationText(raw.lugarFin) : null,
+      updatedAt: raw.updatedAt || new Date().toISOString(),
+      syncStatus: "pending",
+    };
+
+    const previous = findPreviousClosed([...base, ...prepared], jornada.startAt);
+    if (previous && previous.endAt) {
+      jornada.descansoAnteriorMin = calcMinutesBetween(previous.endAt, jornada.startAt);
+      if (isSplitDailyRestGapComplete(jornada.descansoAnteriorMin, previous)) {
+        jornada.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
+      } else {
+        jornada.tipoDescansoAnterior = clasificarDescanso(jornada.descansoAnteriorMin);
+      }
+      jornada.previousRestSource = "normal_gap";
+      jornada.previousRestId = null;
+      jornada.previousRestValid = null;
+    } else {
+      jornada.descansoAnteriorMin = null;
+      jornada.tipoDescansoAnterior = null;
+      jornada.previousRestSource = "normal_gap";
+      jornada.previousRestId = null;
+      jornada.previousRestValid = null;
+    }
+
+    if (shouldBackfillImportedDiet(jornada)) {
+      const derived = computeDerivedFields(jornada, [...base, ...prepared], {
+        fechaFin: jornada.fechaFin!,
+        horaFin: jornada.horaFin!,
+        lugarFin: jornada.lugarFin!,
+        tipoRuta: jornada.tipoRuta || undefined,
+        pernocta: jornada.pernocta ?? false,
+        dietaModo: jornada.dietaModo || undefined,
+        dietaManualTipo: jornada.dietaManualTipo || undefined,
+        dietaManualPct: jornada.dietaManualPct || undefined,
+        conduccionMin: jornada.conduccionMin ?? undefined,
+        conduccionDomingoMin: jornada.conduccionDomingoMin ?? undefined,
+        conduccionLunesMin: jornada.conduccionLunesMin ?? undefined,
+        dietaPercent: jornada.dietaPercent ?? undefined,
+        dayFlag: jornada.dayFlag ?? "NINGUNO",
+        customRates: dietContext.customRates ?? undefined,
+        dayExtras: dietContext.dayExtras,
+        holidays: dietContext.holidays,
+        observaciones: jornada.observaciones || undefined,
+        paymentMode: jornada.paymentMode ?? undefined,
+        kmInicio: jornada.kmInicio ?? null,
+        kmFin: jornada.kmFin ?? null,
+        pricePerKm: jornada.pricePerKm ?? null,
+        pricePerTrip: jornada.pricePerTrip ?? null,
+        importeViaje: jornada.importeViaje ?? null,
+      });
+      jornada = {
+        ...jornada,
+        dietaModo: jornada.dietaModo ?? derived.dietaModo ?? null,
+        dietaImporteEur: jornada.dietaImporteEur ?? derived.dietaImporteEur ?? null,
+        dietasItems: (Array.isArray(jornada.dietasItems) && jornada.dietasItems.length > 0)
+          ? jornada.dietasItems
+          : (derived.dietasItems ?? null),
+        dietaPercent: jornada.dietaPercent ?? derived.dietaPercent ?? null,
+        dayFlag: jornada.dayFlag ?? derived.dayFlag ?? null,
+        dayExtraEur: jornada.dayExtraEur ?? derived.dayExtraEur ?? null,
+        dietBaseEur: jornada.dietBaseEur ?? derived.dietBaseEur ?? null,
+        dietRule: jornada.dietRule ?? derived.dietRule ?? null,
+        dietCalculatedAt: jornada.dietCalculatedAt ?? derived.dietCalculatedAt ?? null,
+      };
+    }
+
+    const legalResult = evaluateJornada(jornada, [...base, ...prepared], comps);
+    jornada.legalSummary = buildStoredLegalSummary(jornada, legalResult);
+    prepared.push(jornada);
+  }
+
+  return prepared;
+}
+
+export async function upsertJornadasImported(jornadas: Jornada[]): Promise<{ added: number; skipped: number }> {
+  if (jornadas.length === 0) return { added: 0, skipped: 0 };
+  const all = await getAllJornadas();
+  const map = new Map<string, Jornada>();
+  for (const j of all) map.set(j.id, j);
+  let added = 0;
+  let skipped = 0;
+  let changed = false;
+
+  for (const j of jornadas) {
+    if (!j.id) continue;
+    if (map.has(j.id)) {
+      skipped++;
+      continue;
+    }
+    map.set(j.id, j);
+    added++;
+    changed = true;
+  }
+
+  if (changed) await saveAllJornadas(Array.from(map.values()));
+  return { added, skipped };
 }
 
 async function getAllCompensaciones(): Promise<Compensacion[]> {
-  const raw = await AsyncStorage.getItem(COMPENSACIONES_KEY);
+  const raw = await getItemScoped(COMPENSACIONES_KEY);
   if (!raw) return [];
   const parsed = JSON.parse(raw);
-  return parsed.map(migrateCompensacion);
+  const list: Compensacion[] = parsed.map(migrateCompensacion);
+
+  // ================================================================
+  // MIGRACIÓN one-shot compensaciones históricas mal calculadas.
+  // Una vez corrige, guarda y no vuelve a tocar si ya están OK.
+  // ================================================================
+  let changed = false;
+  const now = new Date().toISOString();
+
+  // 1) Desmarcar compensaciones "compensadas=true" SOLAMENTE SI FUERON
+  //    MARCADAS POR EL ALGORITMO ANTIGUO ERRÓNEO.
+  //    CRITERIO DE INVIOLABILIDAD:
+  //      Si recoveredInJornadaId == null → MARCADA MANUALMENTE POR USUARIO.
+  //                                           NUNCA LA TOCAMOS (prevalece el usuario).
+  //      Si recoveredInJornadaId != null → marcada por el código automático.
+  //    Umbral LEGAL correcto: recoveryRestDurationMin >= 24h + deudaMin de C/U.
+  for (const c of list) {
+    if (!c.compensada) continue;
+    // 👉 MARCA MANUAL DE USUARIO: NO TOCAR NUNCA.
+    if (c.recoveredInJornadaId == null) continue;
+    // 👉 Aquí sólo llega lo marcado automáticamente.
+    const deudaMin = c.horasDeuda * 60 + c.minutosDeuda;
+    const umbralLegalMin = 24 * 60 + deudaMin;  // semanal minimo (24h) + deuda que compensa
+    if (deudaMin > 0 && (c.recoveryRestDurationMin == null || c.recoveryRestDurationMin < umbralLegalMin)) {
+      c.compensada = false;
+      c.fechaCompensacion = null;
+      c.recoveredInJornadaId = null;
+      c.recoveryRestStartAt = null;
+      c.recoveryRestEndAt = null;
+      c.recoveryRestDurationMin = null;
+      c.updatedAt = now;
+      c.syncStatus = "pending";
+      changed = true;
+    }
+  }
+
+  // 2) Mergear compensaciones PENDIENTES duplicadas: misma fechaLimite →
+  //    conservar la más antigua, acumular horasDeuda y minutosDeuda, borrar resto.
+  //    NO TOCAMOS LAS COMPENSADAS (ni manuales ni automáticas).
+  const byFechaLimite = new Map<string, Compensacion[]>();
+  for (const c of list) {
+    if (c.compensada) continue;
+    const key = c.fechaLimite;
+    const arr = byFechaLimite.get(key) ?? [];
+    arr.push(c);
+    byFechaLimite.set(key, arr);
+  }
+  const mergedIdsToRemove = new Set<string>();
+  for (const [, group] of byFechaLimite) {
+    if (group.length <= 1) continue;
+    // Ordenamos por updatedAt ASC (primero = más viejo)
+    group.sort((a, b) => (a.updatedAt ?? "").localeCompare(b.updatedAt ?? ""));
+    const keeper = group[0];
+    let totalMin = keeper.horasDeuda * 60 + keeper.minutosDeuda;
+    for (let i = 1; i < group.length; i++) {
+      totalMin += group[i].horasDeuda * 60 + group[i].minutosDeuda;
+      mergedIdsToRemove.add(group[i].id);
+    }
+    keeper.horasDeuda = Math.floor(totalMin / 60);
+    keeper.minutosDeuda = totalMin % 60;
+    keeper.updatedAt = now;
+    keeper.syncStatus = "pending";
+    changed = true;
+  }
+  const mergedCleaned: Compensacion[] = list.filter(c => !mergedIdsToRemove.has(c.id));
+
+  // 3) Recalcular TODAS las compensaciones pendientes al nuevo cálculo VERBATIM:
+  //    "fecha limite para compensacion es 14 dias desde el fin descanso
+  //     que ha generado la compensacion".
+  //
+  //    Esto corrige tanto los viejos "fechaInicio+14d" como los posteriores
+  //    "fechaInicio+21d" (fases anteriores). NO TOCAMOS COMPENSADAS (manual o
+  //    algoritmo, su fecha límite no es relevante).
+  const hoy = formatUTCDateStr(new Date());
+  let jornadasForDeadline: Jornada[] | null = null;
+  for (const c of mergedCleaned) {
+    if (c.compensada) continue;
+    let jPrevRestEndAt: string | null = null;
+    let jFechaInicio: string | null = null;
+    if (c.jornadaId) {
+      if (jornadasForDeadline === null) {
+        try { jornadasForDeadline = await getAllJornadas(); } catch { jornadasForDeadline = []; }
+      }
+      const j = jornadasForDeadline.find(x => x.id === c.jornadaId);
+      if (j) {
+        jPrevRestEndAt = j.previousRestEndAt ?? null;
+        jFechaInicio = j.fechaInicio ?? null;
+      }
+    }
+    const nuevoLimite = calculateCompensationDeadline({
+      sourceRestEndAt: c.sourceRestEndAt,
+      jornadaPreviousRestEndAt: jPrevRestEndAt,
+      fechaInicioJornada: jFechaInicio,
+      hoyStr: hoy,
+    });
+    if (nuevoLimite !== c.fechaLimite) {
+      c.fechaLimite = nuevoLimite;
+      c.updatedAt = now;
+      c.syncStatus = "pending";
+      changed = true;
+    }
+  }
+
+  // 4) SANITY CHECK fechaLimite ABSURDA (bug 2028 detectado en UI):
+  //    Si fechaLimite > hoy + 90 días → claramente un cálculo erróneo histórico.
+  //    Forzamos calculateCompensationDeadline (14d desde fin descanso).
+  //    NO TOCAMOS COMPENSADAS.
+  const hoyDate = new Date();
+  const hoyStr = formatUTCDateStr(hoyDate);
+  const futuro90d = new Date(hoyDate.getTime() + 90 * 24 * 3600 * 1000);
+  const futuro90dStr = formatUTCDateStr(futuro90d);
+  let loadedJornadasForNorm: Jornada[] | null = jornadasForDeadline; // reutilizar carga si ya la hicimos
+
+  for (const c of mergedCleaned) {
+    if (c.compensada) continue;
+    if (c.fechaLimite > futuro90dStr) {
+      if (loadedJornadasForNorm === null) {
+        try { loadedJornadasForNorm = await getAllJornadas(); } catch { loadedJornadasForNorm = []; }
+      }
+      let jPrevRestEndAt: string | null = null;
+      let jFechaInicio: string | null = null;
+      if (c.jornadaId) {
+        const j = loadedJornadasForNorm.find(x => x.id === c.jornadaId);
+        if (j) {
+          jPrevRestEndAt = j.previousRestEndAt ?? null;
+          jFechaInicio = j.fechaInicio ?? null;
+        }
+      }
+      const nuevoLimite = calculateCompensationDeadline({
+        sourceRestEndAt: c.sourceRestEndAt,
+        jornadaPreviousRestEndAt: jPrevRestEndAt,
+        fechaInicioJornada: jFechaInicio,
+        hoyStr: hoyStr,
+      });
+      if (nuevoLimite !== c.fechaLimite) {
+        c.fechaLimite = nuevoLimite;
+        c.updatedAt = now;
+        c.syncStatus = "pending";
+        changed = true;
+      }
+    }
+  }
+
+  // 5) NORMALIZACIÓN MISMA SEMANA + PRIMERO-EN-BASE:
+  //    Ejecutamos aquí para que el dashboard lea la lista limpia SIN necesidad
+  //    de cerrar una jornada (antes esto sólo ocurría en processCompensaciones).
+  if (loadedJornadasForNorm === null) {
+    try { loadedJornadasForNorm = await getAllJornadas(); } catch { loadedJornadasForNorm = []; }
+  }
+  const normalized = await normalizeHistoricalCompensaciones(mergedCleaned, loadedJornadasForNorm);
+  if (normalized) changed = true;
+
+  if (changed) {
+    await saveAllCompensaciones(mergedCleaned);
+    return mergedCleaned;
+  }
+  return mergedCleaned;
 }
 
 export async function listarCompensaciones(): Promise<Compensacion[]> {
@@ -344,13 +1149,26 @@ export async function listarCompensaciones(): Promise<Compensacion[]> {
 function migrateCompensacion(c: any): Compensacion {
   return {
     ...c,
+    sourceRestStartAt: c.sourceRestStartAt ?? null,
+    sourceRestEndAt: c.sourceRestEndAt ?? null,
+    sourceRestDurationMin: c.sourceRestDurationMin ?? null,
+    sourceRestLegalType: c.sourceRestLegalType ?? null,
+    sourceRestLocationStart: c.sourceRestLocationStart ?? null,
+    sourceRestLocationEnd: c.sourceRestLocationEnd ?? null,
+    sourceRestInBase: c.sourceRestInBase ?? null,
+    sourceRestDistanceKm: c.sourceRestDistanceKm ?? null,
+    sourceRestObservations: c.sourceRestObservations ?? null,
+    recoveredInJornadaId: c.recoveredInJornadaId ?? null,
+    recoveryRestStartAt: c.recoveryRestStartAt ?? null,
+    recoveryRestEndAt: c.recoveryRestEndAt ?? null,
+    recoveryRestDurationMin: c.recoveryRestDurationMin ?? null,
     updatedAt: c.updatedAt || new Date().toISOString(),
     syncStatus: c.syncStatus || "local",
   };
 }
 
 async function saveAllCompensaciones(list: Compensacion[]): Promise<void> {
-  await AsyncStorage.setItem(COMPENSACIONES_KEY, JSON.stringify(list));
+  await setItemScoped(COMPENSACIONES_KEY, JSON.stringify(list));
 }
 
 function findPreviousClosed(allJornadas: Jornada[], beforeStartAt: string): Jornada | null {
@@ -386,7 +1204,8 @@ export function calcDietaWithCustomRates(
       return { items: [{ tipo: "NACIONAL", pct: String(pct), importe: amount }], total: amount };
     }
     case "INTERNACIONAL": {
-      const pct = dietaPercent || 100;
+      const requested = dietaPercent || 100;
+      const pct = pernocta ? requested : requested === 100 ? 60 : requested;
       const amount = findRate(customRates, "INTERNACIONAL", pct);
       return { items: [{ tipo: "INTERNACIONAL", pct: String(pct), importe: amount }], total: amount };
     }
@@ -455,6 +1274,63 @@ export function calcDayExtra(
   }
 }
 
+function calcOffsiteWeeklyBaseRate(
+  restType: DayExtraEntry["offsiteRestType"],
+  base: DayExtraEntry["offsiteBase"],
+  extras: UserDayExtras | null,
+): number {
+  if (!extras || !restType || !base) return 0;
+  const safe = (v: any) => { const n = Number(v); return isNaN(n) ? 0 : n; };
+  if (restType === "WEEKLY_REDUCED") {
+    return base === "INTERNACIONAL"
+      ? safe(extras.offsite_weekly_reduced_internacional)
+      : safe(extras.offsite_weekly_reduced_nacional);
+  }
+  return base === "INTERNACIONAL"
+    ? safe(extras.offsite_weekly_complete_internacional)
+    : safe(extras.offsite_weekly_complete_nacional);
+}
+
+export function splitOffsiteWeeklyRestEntry(
+  entry: DayExtraEntry,
+  extras: UserDayExtras | null,
+): { restAmount: number; plusAmount: number; totalAmount: number } {
+  const stored = Number(entry.amount) || 0;
+  const plusAmount =
+    (entry.plusSunday ? calcDayExtra("DOMINGO", extras) : 0) +
+    (entry.plusHoliday ? calcDayExtra("FESTIVO", extras) : 0);
+
+  const baseRate = calcOffsiteWeeklyBaseRate(entry.offsiteRestType, entry.offsiteBase, extras);
+  const totalRate = Math.round((baseRate + plusAmount) * 100) / 100;
+  const storedRounded = Math.round(stored * 100) / 100;
+  const diffBase = Math.abs(storedRounded - Math.round(baseRate * 100) / 100);
+  const diffTotal = Math.abs(storedRounded - totalRate);
+
+  if (storedRounded > 0 && plusAmount > 0 && baseRate > 0) {
+    const candidateBase = Math.round((storedRounded - plusAmount) * 100) / 100;
+
+    if (diffBase < 0.02) {
+      const restAmount = storedRounded;
+      const totalAmount = Math.round((restAmount + plusAmount) * 100) / 100;
+      return { restAmount, plusAmount, totalAmount };
+    }
+
+    if (candidateBase > 0 && (Math.abs(candidateBase - baseRate) < 0.5 || storedRounded > baseRate + 0.02)) {
+      const restAmount = Math.round(Math.max(0, candidateBase) * 100) / 100;
+      return { restAmount, plusAmount, totalAmount: storedRounded };
+    }
+
+    if (diffTotal < diffBase && diffTotal < 0.02) {
+      const restAmount = Math.round(Math.max(0, candidateBase) * 100) / 100;
+      return { restAmount, plusAmount, totalAmount: storedRounded };
+    }
+  }
+
+  const restAmount = storedRounded;
+  const totalAmount = Math.round((restAmount + plusAmount) * 100) / 100;
+  return { restAmount, plusAmount, totalAmount };
+}
+
 export function detectDayFlag(
   fechaFin: string,
   holidays: string[],
@@ -479,22 +1355,34 @@ function computeDerivedFields(
     dietaModo?: string;
     dietaManualTipo?: string;
     dietaManualPct?: string;
-    conduccionMin?: number;
-    conduccionDomingoMin?: number;
-    conduccionLunesMin?: number;
+    conduccionMin?: number | null;
+    conduccionDomingoMin?: number | null;
+    conduccionLunesMin?: number | null;
     dietaPercent?: number;
     dayFlag?: string;
     customRates?: UserDietRate[];
     dayExtras?: UserDayExtras;
     holidays?: string[];
-    observaciones?: string;
+    observaciones?: string | null;
+    paymentMode?: "dietas" | "km" | "viaje";
+    kmInicio?: number | null;
+    kmFin?: number | null;
+    kmTotal?: number | null;
+    pricePerKm?: number | null;
+    importeKm?: number | null;
+    pricePerTrip?: number | null;
+    importeViaje?: number | null;
   },
 ): Partial<Jornada> {
   const startAt = jornada.startAt;
 
   let resolvedFechaFin = closeData.fechaFin;
-  if (resolvedFechaFin === jornada.fechaInicio && closeData.horaFin < jornada.horaInicio) {
-    resolvedFechaFin = addDays(resolvedFechaFin, 1);
+  if (resolvedFechaFin === jornada.fechaInicio) {
+    const finMin = parseTimeToMinutes(closeData.horaFin);
+    const startMin = parseTimeToMinutes(jornada.horaInicio);
+    if (finMin != null && startMin != null && finMin < startMin) {
+      resolvedFechaFin = addDays(resolvedFechaFin, 1);
+    }
   }
 
   const endAt = buildIsoTimestamp(resolvedFechaFin, closeData.horaFin);
@@ -516,7 +1404,11 @@ function computeDerivedFields(
 
     if (anterior && anterior.endAt) {
       descansoAnteriorMin = calcMinutesBetween(anterior.endAt, startAt);
-      tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+      if (isSplitDailyRestGapComplete(descansoAnteriorMin, anterior)) {
+        tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
+      } else {
+        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+      }
     }
   }
 
@@ -538,6 +1430,16 @@ function computeDerivedFields(
     );
   }
 
+  let effectiveDietaPercent: number | null = closeData.dietaPercent ?? null;
+  if (closeData.dietaModo !== "MANUAL") {
+    if (dietaResult.items.length === 1) {
+      const p = parseInt(dietaResult.items[0]?.pct || "", 10);
+      effectiveDietaPercent = Number.isFinite(p) ? p : null;
+    } else {
+      effectiveDietaPercent = null;
+    }
+  }
+
   let resolvedDayFlag: string | null = null;
   if (closeData.dayFlag === "NINGUNO") {
     resolvedDayFlag = null;
@@ -554,13 +1456,22 @@ function computeDerivedFields(
   if (closeData.dietaModo === "MANUAL" && closeData.dietaManualTipo) {
     ruleParts.push(`${closeData.dietaManualTipo} ${closeData.dietaManualPct || "100"}%`);
   } else {
-    ruleParts.push(`${closeData.tipoRuta} ${closeData.dietaPercent ?? 100}%`);
+    if (dietaResult.items.length > 0) {
+      ruleParts.push(dietaResult.items.map((it) => `${it.tipo} ${it.pct}%`).join(" + "));
+    } else {
+      ruleParts.push(`${closeData.tipoRuta} ${effectiveDietaPercent ?? 100}%`);
+    }
   }
   if (resolvedDayFlag) {
     const flagLabels: Record<string, string> = { SABADO: "SABADO", DOMINGO: "DOMINGO", FESTIVO: "FESTIVO" };
     ruleParts.push(`+ ${flagLabels[resolvedDayFlag] || resolvedDayFlag}`);
   }
   const dietRule = ruleParts.join(" ");
+
+  const resolvedKmInicio =
+    closeData.kmInicio != null && Number.isFinite(closeData.kmInicio)
+      ? closeData.kmInicio
+      : (jornada.kmInicio != null && Number.isFinite(jornada.kmInicio) ? jornada.kmInicio : null);
 
   return {
     fechaFin: resolvedFechaFin,
@@ -574,7 +1485,7 @@ function computeDerivedFields(
     dietaManualPct: closeData.dietaManualPct || null,
     dietaImporteEur: totalDieta.toFixed(2),
     dietasItems: dietaResult.items,
-    dietaPercent: closeData.dietaPercent ?? null,
+    dietaPercent: effectiveDietaPercent,
     dayFlag: resolvedDayFlag,
     dayExtraEur: resolvedDayFlag ? dayExtraAmount.toFixed(2) : null,
     dietBaseEur: dietaResult.total.toFixed(2),
@@ -585,15 +1496,172 @@ function computeDerivedFields(
     previousRestSource,
     previousRestId,
     previousRestValid,
+    previousRestStartAt: jornada.previousRestStartAt ?? null,
+    previousRestEndAt: jornada.previousRestEndAt ?? null,
+    previousRestLegalType: jornada.previousRestLegalType ?? null,
+    previousRestStartLocation: jornada.previousRestStartLocation ?? null,
+    previousRestEndLocation: jornada.previousRestEndLocation ?? null,
+    previousRestInBase: jornada.previousRestInBase ?? null,
+    previousRestDistanceKm: jornada.previousRestDistanceKm ?? null,
+    previousRestPerformedInVehicle: jornada.previousRestPerformedInVehicle ?? null,
+    previousRestAccommodation: jornada.previousRestAccommodation ?? null,
+    previousRestCompGeneratedMin: jornada.previousRestCompGeneratedMin ?? null,
+    previousRestCompUsedMin: jornada.previousRestCompUsedMin ?? null,
+    previousRestObservations: jornada.previousRestObservations ?? null,
     duracionJornadaMin,
     countsAsDailyReduced,
-    conduccionMin: closeData.conduccionMin || null,
-    conduccionDomingoMin: closeData.conduccionDomingoMin ?? null,
-    conduccionLunesMin: closeData.conduccionLunesMin ?? null,
-    observaciones: closeData.observaciones || null,
+    paymentMode: closeData.paymentMode ?? jornada.paymentMode ?? null,
+    kmInicio: resolvedKmInicio,
+    kmFin: closeData.kmFin ?? null,
+    kmTotal: closeData.kmFin != null && resolvedKmInicio != null ? (closeData.kmFin - resolvedKmInicio) : null,
+    pricePerKm: closeData.pricePerKm ?? jornada.pricePerKm ?? null,
+    importeKm:
+      (closeData.importeKm != null && Number.isFinite(closeData.importeKm)) ? closeData.importeKm :
+      (closeData.kmFin != null && resolvedKmInicio != null && (closeData.pricePerKm ?? jornada.pricePerKm) != null
+        ? Math.round(((closeData.kmFin - resolvedKmInicio) * (closeData.pricePerKm ?? (jornada.pricePerKm as number ?? 0))) * 100) / 100
+        : null),
+    pricePerTrip: closeData.pricePerTrip ?? jornada.pricePerTrip ?? null,
+    importeViaje:
+      (closeData.importeViaje != null && Number.isFinite(closeData.importeViaje)) ? closeData.importeViaje :
+      ((closeData.pricePerTrip ?? jornada.pricePerTrip) ?? null),
+    conduccionMin: closeData.conduccionMin != null && Number.isFinite(closeData.conduccionMin) ? closeData.conduccionMin : null,
+    conduccionDomingoMin: closeData.conduccionDomingoMin != null && Number.isFinite(closeData.conduccionDomingoMin) ? closeData.conduccionDomingoMin : null,
+    conduccionLunesMin: closeData.conduccionLunesMin != null && Number.isFinite(closeData.conduccionLunesMin) ? closeData.conduccionLunesMin : null,
+    observaciones: (closeData.observaciones != null && String(closeData.observaciones).trim().length > 0) ? String(closeData.observaciones).trim() : null,
     updatedAt: new Date().toISOString(),
     syncStatus: "pending" as const,
   };
+}
+
+/**
+ * Normalización histórica de compensaciones: se ejecuta tanto al cerrar jornada
+ * (processCompensaciones) como al leer la lista (getAllCompensaciones) para que
+ * el dashboard vea la vista limpia SIN que el usuario tenga que cerrar una jornada.
+ *
+ * Aplica dos reglas del usuario:
+ *   REGLA MISMA SEMANA: En una semana natural con 2+ descansos semanales reducidos
+ *                       (≥24h y <45h), SÓLO EL ÚLTIMO genera deuda compensable.
+ *                       Los PRIMEROS (no-últimos) → ELIMINAR su compensación.
+ *   REGLA PRIMERO EN BASE: Primer reducido de la semana + previousRestInBase="in_base"
+ *                          + duración >= 9h + total pendientes de semanas anteriores
+ *                          → marcar compensadas automáticamente con flag inviolable
+ *                            (recoveredInJornadaId = null, como marca de usuario).
+ *
+ * @returns true si hubo mutaciones en `comps` (el llamante debe persistir).
+ */
+async function normalizeHistoricalCompensaciones(
+  comps: Compensacion[],
+  allJornadas: Jornada[],
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  // PASO 0: Construir todos los WeeklyRestSlot históricos a partir de jornadas.
+  type WeeklyRestSlot = {
+    jornadaId: string;
+    fechaInicioJornada: string;
+    restStartAt: string;
+    restEndAt: string;
+    restDurationMin: number;
+    isReduced: boolean;
+    inBase: boolean;
+  };
+  const slots: WeeklyRestSlot[] = [];
+
+  for (const j of allJornadas) {
+    if (!j.previousRestStartAt || !j.previousRestEndAt) continue;
+    const gap = j.descansoAnteriorMin ??
+      Math.max(0, Math.round((new Date(j.previousRestEndAt).getTime() - new Date(j.previousRestStartAt).getTime()) / 60000));
+    const tipo = j.tipoDescansoAnterior ?? clasificarDescanso(gap);
+    slots.push({
+      jornadaId: j.id,
+      fechaInicioJornada: j.fechaInicio,
+      restStartAt: j.previousRestStartAt,
+      restEndAt: j.previousRestEndAt,
+      restDurationMin: gap,
+      isReduced: tipo === "DESCANSO_SEMANAL_REDUCIDO",
+      inBase: j.previousRestInBase === "in_base",
+    });
+  }
+
+  if (slots.length === 0) return false;
+
+  // 0.2) Agrupar reducidos por SEMANA NATURAL UTC:
+  const byWeek = new Map<string, WeeklyRestSlot[]>();
+  for (const s of slots) {
+    if (!s.isReduced) continue;
+    const key = getUtcWeekMonday(s.restStartAt);
+    const arr = byWeek.get(key) ?? [];
+    arr.push(s);
+    byWeek.set(key, arr);
+  }
+
+  let changed = false;
+  type PrimerEnBaseToCheck = {
+    slot: WeeklyRestSlot;
+    semanaMondayStr: string;
+  };
+  const primerosEnBaseCheck: PrimerEnBaseToCheck[] = [];
+
+  // 0.3) Para cada semana con >=2 reducidos: borrar compensaciones de PRIMEROS,
+  //      registrar PRIMERO-EN-BASE.
+  for (const [semanaMondayStr, weekSlots] of byWeek) {
+    if (weekSlots.length <= 1) continue;
+    const sorted = [...weekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
+    const primeros = sorted.slice(0, sorted.length - 1);
+
+    // a) PRIMEROS (no-últimos): eliminar su compensación si existe.
+    for (const p of primeros) {
+      const idx = comps.findIndex(c => c.jornadaId === p.jornadaId);
+      if (idx >= 0) {
+        comps.splice(idx, 1);
+        changed = true;
+      }
+    }
+
+    // b) PRIMERO + inBase: apuntar para regla PRIMERO-EN-BASE.
+    const primero = sorted[0];
+    if (primero && primero.inBase) {
+      primerosEnBaseCheck.push({ slot: primero, semanaMondayStr });
+    }
+  }
+
+  // PASO 0-BIS: REGLA PRIMERO-EN-BASE
+  if (primerosEnBaseCheck.length > 0) {
+    primerosEnBaseCheck.sort(
+      (a, b) => a.slot.restStartAt.localeCompare(b.slot.restStartAt),
+    );
+    for (const { slot: primerSlot, semanaMondayStr } of primerosEnBaseCheck) {
+      const pendientes: Compensacion[] = comps.filter(c => !c.compensada);
+      const pendientesAntesSemana: Compensacion[] = [];
+      for (const c of pendientes) {
+        const j = allJornadas.find(x => x.id === c.jornadaId);
+        if (!j) { pendientesAntesSemana.push(c); continue; }
+        if (!j.previousRestStartAt) continue;
+        const week = getUtcWeekMonday(j.previousRestStartAt);
+        if (week < semanaMondayStr) pendientesAntesSemana.push(c);
+      }
+      if (pendientesAntesSemana.length === 0) continue;
+      const totalAntesMin = pendientesAntesSemana.reduce(
+        (s, c) => s + c.horasDeuda * 60 + c.minutosDeuda, 0,
+      );
+      const umbralPrimeroMin = 9 * 60 + totalAntesMin;
+      if (primerSlot.restDurationMin >= umbralPrimeroMin && totalAntesMin > 0) {
+        for (const c of pendientesAntesSemana) {
+          c.compensada = true;
+          c.fechaCompensacion = primerSlot.fechaInicioJornada;
+          c.recoveredInJornadaId = null; // marca inviolable (como usuario manual)
+          c.recoveryRestStartAt = primerSlot.restStartAt;
+          c.recoveryRestEndAt = primerSlot.restEndAt;
+          c.recoveryRestDurationMin = primerSlot.restDurationMin;
+          c.updatedAt = now;
+          c.syncStatus = "pending";
+        }
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
 }
 
 async function processCompensaciones(
@@ -601,64 +1669,318 @@ async function processCompensaciones(
   tipoDescansoAnterior: string | null,
   jornadaId: string,
   fechaInicio: string,
+  restMeta?: Pick<
+    Jornada,
+    | "previousRestStartAt"
+    | "previousRestEndAt"
+    | "previousRestLegalType"
+    | "previousRestStartLocation"
+    | "previousRestEndLocation"
+    | "previousRestInBase"
+    | "previousRestDistanceKm"
+    | "previousRestObservations"
+  > | null,
 ): Promise<void> {
   let comps = await getAllCompensaciones();
+  const allJornadas = await getAllJornadas();
+  const now = new Date().toISOString();
 
-  if (descansoAnteriorMin != null && descansoAnteriorMin > 0) {
-    const pendientes = comps
-      .filter((c) => !c.compensada)
-      .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+  // ======================================================================
+  // PASO 0: NORMALIZAR SEMANAS NATURALES (REGLA MISMA SEMANA).
+  //   Dentro de una MISMA semana UTC (lunes-domingo) puede haber 2 o más
+  //   descansos semanales reducidos (24h ≤ d <45h).
+  //   - SOLO el ÚLTIMO (más reciente) de esa semana GENERA deuda/compensación.
+  //   - Los PRIMEROS de esa semana:
+  //       a) NO generan deuda NUEVA.
+  //       b) Si ya generaron deuda en un cierre anterior → la ELIMINAMOS
+  //          (el usuario lo creía bueno en su momento pero no lo es).
+  //       c) Adicional: si el PRIMERO de la semana fue EN BASE y hay
+  //          compensaciones PENDIENTES de SEMANAS ANTERIORES y
+  //          duracionEsePrimerDescanso >= 9h + totalPendientes → MARCAMOS
+  //          COMPENSADAS automáticamente.
+  // ======================================================================
 
-    if (pendientes.length > 0) {
-      const totalDeudaMin = pendientes.reduce(
-        (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda,
-        0,
+  // 0.1) Construir listado global de descansos reducidos semanales:
+  //      por cada jornada cerrada su previousRestStartAt / previousRestEndAt /
+  //      previousRestInBase / duración / tipo.
+  type WeeklyRestSlot = {
+    jornadaId: string;
+    fechaInicioJornada: string;
+    restStartAt: string;
+    restEndAt: string;
+    restDurationMin: number;
+    isReduced: boolean; // 24h <= d < 45h
+    inBase: boolean;
+  };
+  const slots: WeeklyRestSlot[] = [];
+
+  for (const j of allJornadas) {
+    if (!j.previousRestStartAt || !j.previousRestEndAt) continue;
+    const gap = j.descansoAnteriorMin ??
+      Math.max(0, Math.round((new Date(j.previousRestEndAt).getTime() - new Date(j.previousRestStartAt).getTime()) / 60000));
+    const tipo = j.tipoDescansoAnterior ?? clasificarDescanso(gap);
+    const inBase = j.previousRestInBase === "in_base";
+    slots.push({
+      jornadaId: j.id,
+      fechaInicioJornada: j.fechaInicio,
+      restStartAt: j.previousRestStartAt,
+      restEndAt: j.previousRestEndAt,
+      restDurationMin: gap,
+      isReduced: tipo === "DESCANSO_SEMANAL_REDUCIDO",
+      inBase,
+    });
+  }
+
+  // Añadir también el descanso ANTERIOR de ESTA jornada (que acaba de cerrarse)
+  // si el usuario lo clasificó como semanal reducido y aún no está en slots.
+  if (
+    descansoAnteriorMin != null &&
+    restMeta?.previousRestStartAt &&
+    restMeta.previousRestEndAt &&
+    tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" &&
+    !slots.find(s => s.jornadaId === jornadaId)
+  ) {
+    slots.push({
+      jornadaId,
+      fechaInicioJornada: fechaInicio,
+      restStartAt: restMeta.previousRestStartAt,
+      restEndAt: restMeta.previousRestEndAt,
+      restDurationMin: descansoAnteriorMin,
+      isReduced: true,
+      inBase: restMeta.previousRestInBase === "in_base",
+    });
+  }
+
+  // 0.2) Agrupar reducidos por SEMANA NATURAL UTC:
+  const byWeek = new Map<string, WeeklyRestSlot[]>();
+  for (const s of slots) {
+    if (!s.isReduced) continue;
+    const key = getUtcWeekMonday(s.restStartAt);
+    const arr = byWeek.get(key) ?? [];
+    arr.push(s);
+    byWeek.set(key, arr);
+  }
+
+  // 0.3) Para cada semana con >=2 reducidos: marcar ÚLTIMO y PRIMEROS, y
+  //      borrar compensaciones asociadas a los PRIMEROS (no-últimos).
+  let normalizationChanged = false;
+  type PrimerEnBaseToCheck = {
+    slot: WeeklyRestSlot;
+    semanaMondayStr: string;
+  };
+  const primerosEnBaseCheck: PrimerEnBaseToCheck[] = [];
+
+  for (const [semanaMondayStr, weekSlots] of byWeek) {
+    if (weekSlots.length <= 1) continue;
+    // Ordenar ASC por restStartAt: 0=PRIMERO, length-1=ÚLTIMO
+    const sorted = [...weekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
+    const ultimo = sorted[sorted.length - 1];
+    const primeros = sorted.slice(0, sorted.length - 1);
+
+    // a) PRIMEROS: borrar sus compensaciones asociadas si existen.
+    for (const p of primeros) {
+      const idx = comps.findIndex(c => c.jornadaId === p.jornadaId);
+      if (idx >= 0) {
+        comps.splice(idx, 1);
+        normalizationChanged = true;
+      }
+    }
+
+    // b) PRIMERO de la semana + inBase => apuntar para comprobación REGLA PRIMERO-EN-BASE.
+    const primero = sorted[0];
+    if (primero && primero.inBase) {
+      primerosEnBaseCheck.push({ slot: primero, semanaMondayStr });
+    }
+
+    // c) ÚLTIMO: no tocar aquí; se procesará normalmente en el bloque GENERAR DEUDA de abajo.
+    //    (Su compensación, si ya existía, se conserva).
+  }
+
+  if (normalizationChanged) {
+    await saveAllCompensaciones(comps);
+  }
+
+  // Recargamos pendientes después de la normalización:
+  let pendientesExistentes = comps
+    .filter((c) => !c.compensada)
+    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+  let totalPendienteMin = pendientesExistentes.reduce(
+    (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda,
+    0,
+  );
+
+  // ======================================================================
+  // PASO 0-BIS: REGLA PRIMER DESC. SEMANAL REDUCIDO EN BASE.
+  //   El PRIMER descanso reducido de una semana natural que es EN BASE,
+  //   si había compensaciones pendientes de SEMANAS ANTERIORES a ésta, y
+  //   duraciónPrimerDescanso >= 9h + totalPendientesAnteriores → MARCA
+  //   COMPENSADAS automáticamente.
+  // ======================================================================
+  if (primerosEnBaseCheck.length > 0) {
+    // Re-ordenamos por fecha: procesamos de más antiguo a más nuevo,
+    // y cada compensación marcada NO se usa en el siguiente check.
+    primerosEnBaseCheck.sort(
+      (a, b) => a.slot.restStartAt.localeCompare(b.slot.restStartAt),
+    );
+    for (const { slot: primerSlot, semanaMondayStr } of primerosEnBaseCheck) {
+      // PENDIENTES ANTERIORES a la semana de este primer descanso:
+      // una compensación "anterior" es aquella cuyo SU DESCANSO GENERADOR
+      // (jornada.fechaInicio) pertenece a una semana ANTERIOR a semanaMondayStr.
+      const pendientesAntesSemana: Compensacion[] = [];
+      for (const c of pendientesExistentes) {
+        const j = allJornadas.find(x => x.id === c.jornadaId);
+        if (!j) continue; // sin jornada ligada → la tratamos como "anterior" por defecto
+        if (!j.previousRestStartAt) continue;
+        const week = getUtcWeekMonday(j.previousRestStartAt);
+        if (week < semanaMondayStr) pendientesAntesSemana.push(c);
+      }
+      if (pendientesAntesSemana.length === 0) continue;
+      const totalAntesMin = pendientesAntesSemana.reduce(
+        (s, c) => s + c.horasDeuda * 60 + c.minutosDeuda, 0,
       );
-      if (descansoAnteriorMin >= 9 * 60 + totalDeudaMin) {
-        const now = new Date().toISOString();
-        for (const c of pendientes) {
+      const umbralPrimeroMin = 9 * 60 + totalAntesMin;
+      if (primerSlot.restDurationMin >= umbralPrimeroMin && totalAntesMin > 0) {
+        for (const c of pendientesAntesSemana) {
           c.compensada = true;
-          c.fechaCompensacion = fechaInicio;
+          c.fechaCompensacion = primerSlot.fechaInicioJornada;
+          // Como es una marcación "regla primero en base", NO ponemos
+          // recoveredInJornadaId (identificamos esta marca como si fuera
+          // manual de usuario => no se desmarcará en migraciones futuras).
+          c.recoveredInJornadaId = null;
+          c.recoveryRestStartAt = primerSlot.restStartAt;
+          c.recoveryRestEndAt = primerSlot.restEndAt;
+          c.recoveryRestDurationMin = primerSlot.restDurationMin;
           c.updatedAt = now;
           c.syncStatus = "pending";
         }
-        await saveAllCompensaciones(comps);
+        normalizationChanged = true;
       }
+    }
+    if (normalizationChanged) await saveAllCompensaciones(comps);
+  }
+
+  // Recargamos pendientes tras la regla PRIMERO-EN-BASE:
+  comps = await getAllCompensaciones();
+  pendientesExistentes = comps
+    .filter((c) => !c.compensada)
+    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+  totalPendienteMin = pendientesExistentes.reduce(
+    (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda,
+    0,
+  );
+
+  // ======================================================================
+  // BLOQUE COMPENSAR: cada vez que hacemos UN descanso, revisamos si
+  // este descanso "completa 45h semanal regular + horas pendientes".
+  // REGLA 3-B / 3-C.
+  // ======================================================================
+  if (descansoAnteriorMin != null && descansoAnteriorMin > 0 && pendientesExistentes.length > 0) {
+    // REGLA 3-C: Umbral = 24h (mín semanal) + deuda pendiente
+    //            Equivale a: "semanal completo regular + horas extra que compensan la deuda".
+    const umbralCompensarMin = 24 * 60 + totalPendienteMin;
+
+    if (descansoAnteriorMin >= umbralCompensarMin) {
+      // REGLA 3-C: marcar TODO como compensado.
+      for (const c of pendientesExistentes) {
+        c.compensada = true;
+        c.fechaCompensacion = fechaInicio;
+        c.recoveredInJornadaId = jornadaId;
+        c.recoveryRestStartAt = restMeta?.previousRestStartAt ?? null;
+        c.recoveryRestEndAt = restMeta?.previousRestEndAt ?? null;
+        c.recoveryRestDurationMin = descansoAnteriorMin;
+        c.updatedAt = now;
+        c.syncStatus = "pending";
+      }
+      await saveAllCompensaciones(comps);
+    } else {
+      // REGLA 3-B: semanal completo (o descanso largo) PERO sin llegar a umbralCompensarMin
+      // => NO creamos nada, NO tocamos deuda, NO sumamos ni restamos nada a pendientes.
+      comps = await getAllCompensaciones();
     }
   }
 
+  // ======================================================================
+  // BLOQUE GENERAR DEUDA: SOLO si el descanso que acabo de hacer ANTES de
+  // esta jornada fue un DESCANSO SEMANAL REDUCIDO (24h ≤ duración < 45h)
+  // Y además, después de NORMALIZACIÓN MISMA SEMANA, este descanso ES EL
+  // ÚLTIMO de su semana natural (los PRIMEROS no generan).
+  // BUG 1 / BUG 2 / REGLA 3-A / REGLA MISMA SEMANA.
+  // ======================================================================
   if (
     tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" &&
-    descansoAnteriorMin != null
+    descansoAnteriorMin != null &&
+    restMeta?.previousRestStartAt
   ) {
-    const deudaMin = 45 * 60 - descansoAnteriorMin;
-    if (deudaMin > 0) {
-      comps = await getAllCompensaciones();
-      const existingPending = comps
-        .filter((c) => !c.compensada)
-        .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+    // 1) Comprobar MISMA SEMANA: ¿es el ÚLTIMO reducido de su semana natural?
+    const myWeekMonday = getUtcWeekMonday(restMeta.previousRestStartAt);
+    const myWeekSlots = (byWeek.get(myWeekMonday) ?? []).filter(s => s.isReduced);
+    const sortedWeek = [...myWeekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
+    const soyElUltimo = sortedWeek.length <= 1 ||
+      sortedWeek[sortedWeek.length - 1].jornadaId === jornadaId ||
+      sortedWeek[sortedWeek.length - 1].restStartAt === restMeta.previousRestStartAt;
 
-      let fechaLimite: string;
-      if (existingPending.length > 0) {
-        fechaLimite = existingPending[0].fechaLimite;
-      } else {
-        fechaLimite = addDays(fechaInicio, 14);
+    // 👉 LOS PRIMEROS de la semana NO GENERAN compensación (saltamos este bloque).
+    if (soyElUltimo) {
+      // Art. 8.6 CE 561/2006: deuda VARIABLE = 45h − duración REAL del descanso reducido.
+      // Ej: 44h 9m → 51m deuda; 34h → 11h deuda.
+      const deudaMin = descansoAnteriorMin < 24 * 60 ? 0 : 45 * 60 - descansoAnteriorMin;
+
+      if (deudaMin > 0) {
+        comps = await getAllCompensaciones();
+        const existingPending = comps
+          .filter((c) => !c.compensada)
+          .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+
+        if (existingPending.length > 0) {
+          // REGLA 3-A: SI HAY PENDIENTES EXISTENTES → NO creamos fila nueva.
+          // Acumulamos la nueva deuda EN EL PRIMER pendiente (fecha límite más antigua).
+          const primero = existingPending[0];
+          const actualMin = primero.horasDeuda * 60 + primero.minutosDeuda;
+          const nuevoMin = actualMin + deudaMin;
+          primero.horasDeuda = Math.floor(nuevoMin / 60);
+          primero.minutosDeuda = nuevoMin % 60;
+          primero.updatedAt = now;
+          primero.syncStatus = "pending";
+          // fechaLimite NO cambia: conservamos la FECHA MÁS ANTIGUA.
+        } else {
+          // REGLA 3-A sin pendientes → creamos la COMPENSACIÓN NUEVA.
+          // Plazo VERBATIM usuario: "14 dias desde el fin descanso que ha
+          // generado la compensacion". Origen de fecha: previousRestEndAt.
+          const fechaLimite = calculateCompensationDeadline({
+            sourceRestEndAt: restMeta?.previousRestEndAt ?? null,
+            jornadaPreviousRestEndAt: restMeta?.previousRestEndAt ?? null,
+            fechaInicioJornada: fechaInicio,
+          });
+
+          const newComp: Compensacion = {
+            id: generateId(),
+            jornadaId,
+            horasDeuda: Math.floor(deudaMin / 60),
+            minutosDeuda: deudaMin % 60,
+            fechaLimite,
+            compensada: false,
+            fechaCompensacion: null,
+            sourceRestStartAt: restMeta.previousRestStartAt ?? null,
+            sourceRestEndAt: restMeta.previousRestEndAt ?? null,
+            sourceRestDurationMin: descansoAnteriorMin,
+            sourceRestLegalType: restMeta.previousRestLegalType ?? null,
+            sourceRestLocationStart: restMeta.previousRestStartLocation ?? null,
+            sourceRestLocationEnd: restMeta.previousRestEndLocation ?? null,
+            sourceRestInBase: restMeta.previousRestInBase ?? null,
+            sourceRestDistanceKm: restMeta.previousRestDistanceKm ?? null,
+            sourceRestObservations: restMeta.previousRestObservations ?? null,
+            recoveredInJornadaId: null,
+            recoveryRestStartAt: null,
+            recoveryRestEndAt: null,
+            recoveryRestDurationMin: null,
+            updatedAt: now,
+            syncStatus: "pending",
+          };
+
+          comps.push(newComp);
+        }
+        await saveAllCompensaciones(comps);
       }
-
-      const newComp: Compensacion = {
-        id: generateId(),
-        jornadaId,
-        horasDeuda: Math.floor(deudaMin / 60),
-        minutosDeuda: deudaMin % 60,
-        fechaLimite,
-        compensada: false,
-        fechaCompensacion: null,
-        updatedAt: new Date().toISOString(),
-        syncStatus: "pending",
-      };
-
-      comps.push(newComp);
-      await saveAllCompensaciones(comps);
     }
   }
 }
@@ -672,6 +1994,12 @@ export async function crearJornadaInicio(data: {
   fechaInicio: string;
   horaInicio: string;
   lugarInicio: string;
+  paymentMode?: "dietas" | "km" | "viaje";
+  kmInicio?: number;
+  pricePerKm?: number;
+  pricePerTrip?: number;
+  isDoubleDriving?: boolean;
+  secondDriverName?: string;
   ferryRest?: {
     id: string;
     accumulatedRestMin: number;
@@ -684,12 +2012,18 @@ export async function crearJornadaInicio(data: {
   if (existing) throw new Error("Ya existe una jornada abierta");
 
   const startAt = buildIsoTimestamp(data.fechaInicio, data.horaInicio);
+  const baseConfig = await loadBaseLocationConfigFromSettings();
 
   let descansoAnteriorMin: number | null = null;
   let tipoDescansoAnterior: string | null = null;
   let previousRestSource: "normal_gap" | "ferry_rest" | null = null;
   let previousRestId: string | null = null;
   let previousRestValid: boolean | null = null;
+  let previousRestFields = buildPreviousRestFields({
+    restStartAt: null,
+    restEndAt: null,
+    assessment: null,
+  });
 
   if (data.ferryRest) {
     descansoAnteriorMin = data.ferryRest.accumulatedRestMin;
@@ -702,7 +2036,23 @@ export async function crearJornadaInicio(data: {
     previousRestSource = "normal_gap";
     if (anterior && anterior.endAt) {
       descansoAnteriorMin = calcMinutesBetween(anterior.endAt, startAt);
-      tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+      if (isSplitDailyRestGapComplete(descansoAnteriorMin, anterior)) {
+        tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
+      } else {
+        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+      }
+      previousRestFields = buildPreviousRestFields({
+        restStartAt: anterior.endAt,
+        restEndAt: startAt,
+        restStartLocation: anterior.lugarFin || anterior.lugarInicio || null,
+        restEndLocation: data.lugarInicio || null,
+        assessment: assessWeeklyRest({
+          durationMin: descansoAnteriorMin,
+          base: baseConfig,
+          startLocation: anterior.lugarFin || anterior.lugarInicio || null,
+          endLocation: data.lugarInicio || null,
+        }),
+      });
     }
   }
 
@@ -737,10 +2087,25 @@ export async function crearJornadaInicio(data: {
     previousRestSource,
     previousRestId,
     previousRestValid,
+    ...previousRestFields,
     duracionJornadaMin: null,
     countsAsDailyReduced: false,
     plannedRestMin: null,
     plannedRestType: null,
+    splitRestDetected: false,
+    splitRestFirstPartMin: null,
+    splitRestSecondPartMin: null,
+    countsAsReducedRest: true,
+    paymentMode: data.paymentMode ?? null,
+    kmInicio: data.kmInicio ?? null,
+    kmFin: null,
+    kmTotal: null,
+    pricePerKm: data.pricePerKm ?? null,
+    importeKm: null,
+    pricePerTrip: data.pricePerTrip ?? null,
+    importeViaje: null,
+    reportHideAmounts: false,
+    reportHidePluses: false,
     plusItems: null,
     observaciones: null,
     moroccoPaymentMode: null,
@@ -752,10 +2117,41 @@ export async function crearJornadaInicio(data: {
     ferryInterruptions: null,
     ferryRestCompleted: false,
     ferryRestType: null,
+    tachoDailySummaryId: null,
+    tachoDrivingMin: null,
+    tachoWorkMin: null,
+    tachoAvailableMin: null,
+    tachoRestMin: null,
+    tachoCountries: [],
+    tachoCountryEntries: 0,
+    tachoKmTotal: null,
+    tachoFirstActivityAt: null,
+    tachoLastActivityAt: null,
+    tachoDisconnections: 0,
+    tachoDataQuality: null,
+    isDoubleDriving: data.isDoubleDriving === true,
+    secondDriverName: data.secondDriverName?.trim() || null,
     legalSummary: null,
     updatedAt: new Date().toISOString(),
     syncStatus: "pending",
   };
+
+  // #region debug-point B:start-local-save
+  reportJornadaDateDebug("B", "local-storage:crearJornadaInicio", "open jornada before local save", {
+    jornadaId: jornada.id,
+    fechaInicioSeleccionada: data.fechaInicio,
+    horaInicioSeleccionada: data.horaInicio,
+    fechaFinSeleccionada: null,
+    horaFinSeleccionada: null,
+    fechaInicio: jornada.fechaInicio,
+    horaInicio: jornada.horaInicio,
+    fechaFin: jornada.fechaFin,
+    horaFin: jornada.horaFin,
+    startAt: jornada.startAt,
+    endAt: jornada.endAt,
+    paymentMode: jornada.paymentMode,
+  });
+  // #endregion
 
   all.push(jornada);
   await saveAllJornadas(all);
@@ -790,6 +2186,27 @@ export async function cerrarJornada(
     moroccoPernightRate?: number;
     ferryPending?: boolean;
     ferryRestType?: "9h" | "11h";
+    paymentMode?: "dietas" | "km" | "viaje";
+    kmInicio?: number;
+    kmFin?: number;
+    kmTotal?: number;
+    pricePerKm?: number;
+    pricePerTrip?: number;
+    importeViaje?: number;
+    tachoDailySummaryId?: string | null;
+    tachoDrivingMin?: number | null;
+    tachoWorkMin?: number | null;
+    tachoAvailableMin?: number | null;
+    tachoRestMin?: number | null;
+    tachoCountries?: string[] | null;
+    tachoCountryEntries?: number | null;
+    tachoKmTotal?: number | null;
+    tachoFirstActivityAt?: string | null;
+    tachoLastActivityAt?: string | null;
+    tachoDisconnections?: number | null;
+    tachoDataQuality?: "low" | "medium" | "high" | null;
+    isDoubleDriving?: boolean;
+    secondDriverName?: string;
   },
 ): Promise<Jornada> {
   const all = await getAllJornadas();
@@ -801,7 +2218,27 @@ export async function cerrarJornada(
   const others = all.filter((j) => j.id !== id);
   const derived = computeDerivedFields(jornada, others, data);
 
-  const merged = { ...jornada, ...derived };
+  const merged: Jornada = { ...jornada, ...derived };
+  const tachoFields = [
+    "tachoDailySummaryId",
+    "tachoDrivingMin",
+    "tachoWorkMin",
+    "tachoAvailableMin",
+    "tachoRestMin",
+    "tachoCountries",
+    "tachoCountryEntries",
+    "tachoKmTotal",
+    "tachoFirstActivityAt",
+    "tachoLastActivityAt",
+    "tachoDisconnections",
+    "tachoDataQuality",
+  ] as const;
+  for (const f of tachoFields) {
+    if ((data as any)[f] !== undefined) (merged as any)[f] = (data as any)[f];
+  }
+  if (typeof data.kmTotal === "number" && merged.kmTotal == null) {
+    merged.kmTotal = data.kmTotal;
+  }
   if (data.plannedRestMin != null) {
     merged.plannedRestMin = data.plannedRestMin;
     merged.plannedRestType = data.plannedRestType || null;
@@ -826,9 +2263,34 @@ export async function cerrarJornada(
       merged.dietaImporteEur = data.moroccoTripRate.toFixed(2);
       merged.dietBaseEur = data.moroccoTripRate.toFixed(2);
       merged.dietRule = `MOROCCO_TRIP ${data.moroccoTripRate.toFixed(2)}€`;
-      merged.dietasItems = [{ tipo: "MOROCCO_TRIP", pct: 100, importe: data.moroccoTripRate }];
+      merged.dietasItems = [{ tipo: "MOROCCO_TRIP", pct: "100", importe: data.moroccoTripRate }];
     }
   }
+  if (typeof data.isDoubleDriving === "boolean") {
+    merged.isDoubleDriving = data.isDoubleDriving;
+    merged.secondDriverName = data.secondDriverName?.trim() || null;
+  } else if (typeof data.secondDriverName === "string") {
+    merged.secondDriverName = data.secondDriverName.trim() || null;
+  }
+
+  // #region debug-point B:finish-local-save
+  reportJornadaDateDebug("B", "local-storage:cerrarJornada", "closed jornada before local save", {
+    jornadaId: merged.id,
+    fechaInicioSeleccionada: jornada.fechaInicio,
+    horaInicioSeleccionada: jornada.horaInicio,
+    fechaFinSeleccionada: data.fechaFin,
+    horaFinSeleccionada: data.horaFin,
+    fechaInicio: merged.fechaInicio,
+    horaInicio: merged.horaInicio,
+    fechaFin: merged.fechaFin,
+    horaFin: merged.horaFin,
+    startAt: merged.startAt,
+    endAt: merged.endAt,
+    resolvedFechaFin: derived.fechaFin ?? null,
+    derivedStartAt: jornada.startAt,
+    derivedEndAt: derived.endAt ?? null,
+  });
+  // #endregion
   const comps = await getAllCompensaciones();
   const legalResult = evaluateJornada(merged, others, comps);
   merged.legalSummary = {
@@ -839,6 +2301,10 @@ export async function cerrarJornada(
     conduccionBisemanalMin: legalResult.conduccionBisemanalMin,
     extensiones10hSemana: legalResult.extensiones10hSemana,
     descansosReducidosSemana: legalResult.descansosReducidosSemana,
+    splitRestDetected: merged.splitRestDetected,
+    splitRestFirstPartMin: merged.splitRestFirstPartMin,
+    splitRestSecondPartMin: merged.splitRestSecondPartMin,
+    countsAsReducedRest: merged.countsAsReducedRest,
   };
 
   all[idx] = merged;
@@ -848,6 +2314,7 @@ export async function cerrarJornada(
     derived.tipoDescansoAnterior!,
     id,
     jornada.fechaInicio,
+    merged,
   );
 
   return all[idx];
@@ -921,6 +2388,20 @@ export async function crearJornadaCompleta(data: {
     countsAsDailyReduced: false,
     plannedRestMin: null,
     plannedRestType: null,
+    splitRestDetected: false,
+    splitRestFirstPartMin: null,
+    splitRestSecondPartMin: null,
+    countsAsReducedRest: true,
+    paymentMode: null,
+    kmInicio: null,
+    kmFin: null,
+    kmTotal: null,
+    pricePerKm: null,
+    importeKm: null,
+    pricePerTrip: null,
+    importeViaje: null,
+    reportHideAmounts: false,
+    reportHidePluses: false,
     plusItems: null,
     observaciones: data.observaciones || null,
     moroccoPaymentMode: null,
@@ -932,6 +2413,20 @@ export async function crearJornadaCompleta(data: {
     ferryInterruptions: data.ferryInterruptions || null,
     ferryRestCompleted: data.ferryRestCompleted ?? false,
     ferryRestType: data.ferryRestType || null,
+    tachoDailySummaryId: null,
+    tachoDrivingMin: null,
+    tachoWorkMin: null,
+    tachoAvailableMin: null,
+    tachoRestMin: null,
+    tachoCountries: [],
+    tachoCountryEntries: 0,
+    tachoKmTotal: null,
+    tachoFirstActivityAt: null,
+    tachoLastActivityAt: null,
+    tachoDisconnections: 0,
+    tachoDataQuality: null,
+    isDoubleDriving: false,
+    secondDriverName: null,
     legalSummary: null,
     updatedAt: new Date().toISOString(),
     syncStatus: "pending",
@@ -948,6 +2443,12 @@ export async function crearJornadaCompleta(data: {
   if (data.plusItems && data.plusItems.length > 0) {
     completed.plusItems = data.plusItems;
   }
+
+  // #region debug-point D:manual-save
+  reportPdfDietDebug("D", "local-storage:crearJornadaCompleta:completed", "manual jornada completed before persistence", {
+    jornada: completed,
+  });
+  // #endregion
 
   const comps = await getAllCompensaciones();
   const legalResult = evaluateJornada(completed, all, comps);
@@ -968,6 +2469,7 @@ export async function crearJornadaCompleta(data: {
     derived.tipoDescansoAnterior!,
     completed.id,
     data.fechaInicio,
+    completed,
   );
 
   return completed;
@@ -998,6 +2500,18 @@ export async function editarJornada(
     recalcDiet?: boolean;
     plusItems?: PlusItem[];
     observaciones?: string;
+    paymentMode?: "dietas" | "km" | "viaje";
+    kmInicio?: number | null;
+    kmFin?: number | null;
+    kmTotal?: number | null;
+    pricePerKm?: number | null;
+    importeKm?: number | null;
+    pricePerTrip?: number | null;
+    importeViaje?: number | null;
+    splitRestDetected?: boolean;
+    splitRestFirstPartMin?: number | null;
+    splitRestSecondPartMin?: number | null;
+    countsAsReducedRest?: boolean;
   },
 ): Promise<Jornada> {
   const all = await getAllJornadas();
@@ -1055,6 +2569,68 @@ export async function editarJornada(
   if (data.observaciones !== undefined) {
     editMerged.observaciones = data.observaciones || null;
   }
+  if (data.paymentMode !== undefined) editMerged.paymentMode = data.paymentMode;
+  if (data.kmInicio !== undefined) editMerged.kmInicio = data.kmInicio;
+  if (data.kmFin !== undefined) editMerged.kmFin = data.kmFin;
+  if (data.kmTotal !== undefined) editMerged.kmTotal = data.kmTotal;
+  if (data.pricePerKm !== undefined) editMerged.pricePerKm = data.pricePerKm;
+  if (data.importeKm !== undefined) editMerged.importeKm = data.importeKm;
+  if (data.pricePerTrip !== undefined) editMerged.pricePerTrip = data.pricePerTrip;
+  if (data.importeViaje !== undefined) editMerged.importeViaje = data.importeViaje;
+  if (data.splitRestDetected === true) {
+    editMerged.splitRestDetected = true;
+    editMerged.splitRestFirstPartMin = data.splitRestFirstPartMin ?? null;
+    editMerged.splitRestSecondPartMin = data.splitRestSecondPartMin ?? null;
+    editMerged.countsAsReducedRest = data.countsAsReducedRest ?? false;
+  } else if (data.splitRestDetected === false) {
+    editMerged.splitRestDetected = false;
+    editMerged.splitRestFirstPartMin = null;
+    editMerged.splitRestSecondPartMin = null;
+    editMerged.countsAsReducedRest = true;
+  }
+
+  if ((editMerged.paymentMode || "dietas") === "km") {
+    const kmStart = editMerged.kmInicio;
+    const kmEnd = editMerged.kmFin;
+    if (kmStart != null && kmEnd != null && Number.isFinite(kmStart) && Number.isFinite(kmEnd)) {
+      const kmTotal = editMerged.kmTotal != null && Number.isFinite(editMerged.kmTotal) ? editMerged.kmTotal : (kmEnd - kmStart);
+      editMerged.kmTotal = kmTotal;
+      if (data.importeKm === undefined && editMerged.pricePerKm != null && Number.isFinite(editMerged.pricePerKm)) {
+        editMerged.importeKm = Math.round((kmTotal * editMerged.pricePerKm) * 100) / 100;
+      }
+    }
+  }
+  if ((editMerged.paymentMode || "dietas") === "viaje") {
+    if (data.importeViaje === undefined && editMerged.pricePerTrip != null && Number.isFinite(editMerged.pricePerTrip)) {
+      editMerged.importeViaje = editMerged.pricePerTrip;
+    }
+  }
+
+  // #region debug-point B:edit-local-save
+  reportJornadaDateDebug("B", "local-storage:editarJornada", "edited jornada before local save", {
+    jornadaId: editMerged.id,
+    fechaInicioSeleccionada: data.fechaInicio,
+    horaInicioSeleccionada: data.horaInicio,
+    fechaFinSeleccionada: data.fechaFin,
+    horaFinSeleccionada: data.horaFin,
+    original: {
+      fechaInicio: original.fechaInicio,
+      horaInicio: original.horaInicio,
+      fechaFin: original.fechaFin,
+      horaFin: original.horaFin,
+      startAt: original.startAt,
+      endAt: original.endAt,
+    },
+    next: {
+      fechaInicio: editMerged.fechaInicio,
+      horaInicio: editMerged.horaInicio,
+      fechaFin: editMerged.fechaFin,
+      horaFin: editMerged.horaFin,
+      startAt: editMerged.startAt,
+      endAt: editMerged.endAt,
+    },
+  });
+  // #endregion
   let comps = await getAllCompensaciones();
   const compsFiltered = comps.filter((c) => c.jornadaId !== id);
   const legalResult = evaluateJornada(editMerged, others, compsFiltered);
@@ -1066,6 +2642,10 @@ export async function editarJornada(
     conduccionBisemanalMin: legalResult.conduccionBisemanalMin,
     extensiones10hSemana: legalResult.extensiones10hSemana,
     descansosReducidosSemana: legalResult.descansosReducidosSemana,
+    splitRestDetected: editMerged.splitRestDetected,
+    splitRestFirstPartMin: editMerged.splitRestFirstPartMin,
+    splitRestSecondPartMin: editMerged.splitRestSecondPartMin,
+    countsAsReducedRest: editMerged.countsAsReducedRest,
   };
 
   all[idx] = editMerged;
@@ -1078,6 +2658,7 @@ export async function editarJornada(
     derived.tipoDescansoAnterior!,
     id,
     data.fechaInicio,
+    editMerged,
   );
 
   return all[idx];
@@ -1092,12 +2673,49 @@ export async function updateJornadaPlannedRest(
   id: string,
   plannedRestMin: number,
   plannedRestType: "daily" | "weekly",
+  extra?: {
+    splitRestDetected?: boolean;
+    splitRestFirstPartMin?: number | null;
+    splitRestSecondPartMin?: number | null;
+    countsAsReducedRest?: boolean;
+  },
 ): Promise<void> {
   const all = await getAllJornadas();
   const idx = all.findIndex((j) => j.id === id);
   if (idx === -1) return;
   all[idx].plannedRestMin = plannedRestMin;
   all[idx].plannedRestType = plannedRestType;
+  if (plannedRestType === "daily" && extra?.splitRestDetected) {
+    all[idx].splitRestDetected = true;
+    all[idx].splitRestFirstPartMin = extra.splitRestFirstPartMin ?? null;
+    all[idx].splitRestSecondPartMin = extra.splitRestSecondPartMin ?? plannedRestMin;
+    all[idx].countsAsReducedRest = extra.countsAsReducedRest ?? false;
+  } else {
+    all[idx].splitRestDetected = false;
+    all[idx].splitRestFirstPartMin = null;
+    all[idx].splitRestSecondPartMin = null;
+    all[idx].countsAsReducedRest = true;
+  }
+
+  try {
+    const comps = await getAllCompensaciones();
+    const others = all.filter((j) => j.id !== id);
+    const legalResult = evaluateJornada(all[idx], others, comps);
+    all[idx].legalSummary = {
+      status: legalResult.status,
+      infractions: legalResult.infractions,
+      warnings: legalResult.warnings,
+      conduccionSemanalMin: legalResult.conduccionSemanalMin,
+      conduccionBisemanalMin: legalResult.conduccionBisemanalMin,
+      extensiones10hSemana: legalResult.extensiones10hSemana,
+      descansosReducidosSemana: legalResult.descansosReducidosSemana,
+      splitRestDetected: all[idx].splitRestDetected,
+      splitRestFirstPartMin: all[idx].splitRestFirstPartMin,
+      splitRestSecondPartMin: all[idx].splitRestSecondPartMin,
+      countsAsReducedRest: all[idx].countsAsReducedRest,
+    };
+  } catch {}
+
   all[idx].updatedAt = new Date().toISOString();
   all[idx].syncStatus = all[idx].syncStatus === "synced" ? "pending" : all[idx].syncStatus;
   await saveAllJornadas(all);
@@ -1120,7 +2738,11 @@ export async function listarJornadas(from?: string, to?: string): Promise<Jornad
     );
     if (anterior && anterior.endAt) {
       j.descansoAnteriorMin = calcMinutesBetween(anterior.endAt, j.startAt);
-      j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+      if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
+        j.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
+      } else {
+        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+      }
     } else {
       j.descansoAnteriorMin = null;
       j.tipoDescansoAnterior = null;
@@ -1151,7 +2773,11 @@ export async function getResumenDietas(
 }> {
   const all = await getAllJornadas();
   const jornadasPeriodo = all.filter(
-    (j) => j.fechaFin && j.fechaInicio >= from && j.fechaInicio <= to,
+    (j) =>
+      j.fechaFin &&
+      j.fechaInicio >= from &&
+      j.fechaInicio <= to &&
+      (j.paymentMode || "dietas") === "dietas",
   );
 
   const desglose: Record<string, { cantidad: number; total: number }> = {};
@@ -1160,6 +2786,31 @@ export async function getResumenDietas(
   let totalExtras = 0;
   let totalPlus = 0;
   const plusDesglose: Record<string, { cantidad: number; total: number }> = {};
+  let extrasCfg: UserDayExtras = {
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  };
+  try {
+    const raw = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings"));
+    if (raw) {
+      const s = JSON.parse(raw);
+      const pf = (v: any, fb: number) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
+      extrasCfg = {
+        extra_saturday: pf(s.extra_saturday, 0),
+        extra_sunday: pf(s.extra_sunday, 0),
+        extra_holiday: pf(s.extra_holiday, 0),
+        offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional, 0),
+        offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional, 0),
+        offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional, 0),
+        offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional, 0),
+      };
+    }
+  } catch {}
 
   for (const j of jornadasPeriodo) {
     if (j.plusItems && j.plusItems.length > 0) {
@@ -1170,8 +2821,11 @@ export async function getResumenDietas(
         plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
       }
     }
-    if (j.dayFlag && j.dayExtraEur) {
-      const extraImporte = parseFloat(j.dayExtraEur);
+    if (j.dayFlag) {
+      let extraImporte = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+      if (!Number.isFinite(extraImporte) || extraImporte <= 0) {
+        extraImporte = calcDayExtra(j.dayFlag, extrasCfg);
+      }
       if (extraImporte > 0) {
         const extraKey = j.dayFlag;
         if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
@@ -1212,6 +2866,67 @@ export async function getResumenDietas(
     }
   }
 
+  const naturalDayDiets = await getAllNaturalDayDiets();
+  for (const nd of naturalDayDiets) {
+    if (nd.date < from || nd.date > to) continue;
+    if (!nd.confirmedByUser || nd.dismissedAt) continue;
+    totalGeneral += nd.amount;
+    const key = `${nd.type}_${nd.percentage}`;
+    if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
+    desglose[key].cantidad++;
+    desglose[key].total = Math.round((desglose[key].total + nd.amount) * 100) / 100;
+    if (nd.plusItems && nd.plusItems.length > 0) {
+      for (const pi of nd.plusItems) {
+        const amt = Number.isFinite(Number(pi.amount)) ? Number(pi.amount) : 0;
+        if (amt <= 0) continue;
+        totalPlus = Math.round((totalPlus + amt) * 100) / 100;
+        const concepto = String(pi.concepto || "Plus").trim().slice(0, 100) || "Plus";
+        if (!plusDesglose[concepto]) plusDesglose[concepto] = { cantidad: 0, total: 0 };
+        plusDesglose[concepto].cantidad++;
+        plusDesglose[concepto].total = Math.round((plusDesglose[concepto].total + amt) * 100) / 100;
+      }
+    }
+  }
+
+  const extraDays = await listDayExtraEntries(from, to);
+  for (const e of extraDays) {
+    if (e.entryType === "offsite_weekly_rest") {
+      const split = splitOffsiteWeeklyRestEntry(e, extrasCfg);
+      if (split.restAmount > 0) {
+        const key = `FUERA_BASE_${e.offsiteRestType || "WEEKLY_COMPLETE"}_${e.offsiteBase || "NACIONAL"}`;
+        if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
+        desglose[key].cantidad++;
+        desglose[key].total = Math.round((desglose[key].total + split.restAmount) * 100) / 100;
+        totalGeneral = Math.round((totalGeneral + split.restAmount) * 100) / 100;
+      }
+      if (split.plusAmount > 0) {
+        if (e.plusSunday) {
+          const k = "DOMINGO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("DOMINGO", extrasCfg)) * 100) / 100;
+        }
+        if (e.plusHoliday) {
+          const k = "FESTIVO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("FESTIVO", extrasCfg)) * 100) / 100;
+        }
+        totalExtras = Math.round((totalExtras + split.plusAmount) * 100) / 100;
+      }
+      continue;
+    }
+
+    if (!e.dayFlag) continue;
+    const extraImporte = e.amount != null ? e.amount : calcDayExtra(e.dayFlag, extrasCfg);
+    if (!Number.isFinite(extraImporte) || extraImporte <= 0) continue;
+    const extraKey = e.dayFlag;
+    if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
+    extrasDesglose[extraKey].cantidad++;
+    extrasDesglose[extraKey].total = Math.round((extrasDesglose[extraKey].total + extraImporte) * 100) / 100;
+    totalExtras = Math.round((totalExtras + extraImporte) * 100) / 100;
+  }
+
   return {
     total: Math.round(totalGeneral * 100) / 100,
     desglose: Object.entries(desglose).map(([tipo, data]) => ({
@@ -1235,16 +2950,352 @@ export async function getResumenDietas(
   };
 }
 
+export async function getResumenKm(
+  from: string,
+  to: string,
+): Promise<{
+  totalKm: number;
+  totalImporte: number;
+  desglose: Array<{ tipo: string; cantidad: number; total: number }>;
+  dietas: { totalDietas: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+  extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+  plus: { totalPlus: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+}> {
+  const all = await getAllJornadas();
+  const jornadasPeriodo = all.filter(
+    (j) =>
+      j.fechaFin &&
+      j.fechaInicio >= from &&
+      j.fechaInicio <= to &&
+      (j.paymentMode || "dietas") === "km",
+  );
+
+  const desglose: Record<string, { cantidad: number; total: number }> = {};
+  const dietasDesglose: Record<string, { cantidad: number; total: number }> = {};
+  const extrasDesglose: Record<string, { cantidad: number; total: number }> = {};
+  const plusDesglose: Record<string, { cantidad: number; total: number }> = {};
+  let totalKm = 0;
+  let totalImporte = 0;
+  let totalDietas = 0;
+  let totalExtras = 0;
+  let totalPlus = 0;
+
+  let extrasCfg: UserDayExtras = {
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  };
+  try {
+    const raw = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings"));
+    if (raw) {
+      const s = JSON.parse(raw);
+      const pf = (v: any, fb: number) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
+      extrasCfg = {
+        extra_saturday: pf(s.extra_saturday, 0),
+        extra_sunday: pf(s.extra_sunday, 0),
+        extra_holiday: pf(s.extra_holiday, 0),
+        offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional, 0),
+        offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional, 0),
+        offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional, 0),
+        offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional, 0),
+      };
+    }
+  } catch {}
+
+  const kmCategory = (tipoRuta: string | null | undefined): "NACIONAL" | "INTERNACIONAL" | "REGIONAL" => {
+    if (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL") return "INTERNACIONAL";
+    if (tipoRuta === "REGIONAL") return "REGIONAL";
+    return "NACIONAL";
+  };
+
+  for (const j of jornadasPeriodo) {
+    if (j.plusItems && j.plusItems.length > 0) {
+      for (const pi of j.plusItems) {
+        totalPlus = Math.round((totalPlus + pi.importe) * 100) / 100;
+        if (!plusDesglose[pi.concepto]) plusDesglose[pi.concepto] = { cantidad: 0, total: 0 };
+        plusDesglose[pi.concepto].cantidad++;
+        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
+      }
+    }
+
+    if (j.dayFlag) {
+      let extraImporte = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+      if (!Number.isFinite(extraImporte) || extraImporte <= 0) {
+        extraImporte = calcDayExtra(j.dayFlag, extrasCfg);
+      }
+      if (extraImporte > 0) {
+        const extraKey = j.dayFlag;
+        if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
+        extrasDesglose[extraKey].cantidad++;
+        extrasDesglose[extraKey].total = Math.round((extrasDesglose[extraKey].total + extraImporte) * 100) / 100;
+        totalExtras = Math.round((totalExtras + extraImporte) * 100) / 100;
+      }
+    }
+
+    const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
+    const kmSafe = Number.isFinite(km) ? km : 0;
+    totalKm += kmSafe;
+
+    const importe = j.importeKm != null ? j.importeKm : (j.pricePerKm != null ? kmSafe * j.pricePerKm : 0);
+    const importeSafe = Number.isFinite(importe) ? importe : 0;
+    totalImporte = Math.round((totalImporte + importeSafe) * 100) / 100;
+
+    const key = kmCategory(j.tipoRuta);
+    if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
+    desglose[key].cantidad = Math.round((desglose[key].cantidad + kmSafe) * 100) / 100;
+    desglose[key].total = Math.round((desglose[key].total + importeSafe) * 100) / 100;
+  }
+
+  const naturalDayDietsKm = await getAllNaturalDayDiets();
+  for (const nd of naturalDayDietsKm) {
+    if (nd.date < from || nd.date > to) continue;
+    if (!nd.confirmedByUser || nd.dismissedAt) continue;
+    totalDietas = Math.round((totalDietas + nd.amount) * 100) / 100;
+    const key = `${nd.type}_${nd.percentage}`;
+    if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
+    dietasDesglose[key].cantidad++;
+    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + nd.amount) * 100) / 100;
+  }
+
+  const extraDays = await listDayExtraEntries(from, to);
+  for (const e of extraDays) {
+    if (e.entryType === "offsite_weekly_rest") {
+      const split = splitOffsiteWeeklyRestEntry(e, extrasCfg);
+      if (split.restAmount > 0) {
+        const key = `FUERA_BASE_${e.offsiteRestType || "WEEKLY_COMPLETE"}_${e.offsiteBase || "NACIONAL"}`;
+        if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
+        dietasDesglose[key].cantidad++;
+        dietasDesglose[key].total = Math.round((dietasDesglose[key].total + split.restAmount) * 100) / 100;
+        totalDietas = Math.round((totalDietas + split.restAmount) * 100) / 100;
+      }
+      if (split.plusAmount > 0) {
+        if (e.plusSunday) {
+          const k = "DOMINGO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("DOMINGO", extrasCfg)) * 100) / 100;
+        }
+        if (e.plusHoliday) {
+          const k = "FESTIVO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("FESTIVO", extrasCfg)) * 100) / 100;
+        }
+        totalExtras = Math.round((totalExtras + split.plusAmount) * 100) / 100;
+      }
+      continue;
+    }
+
+    if (!e.dayFlag) continue;
+    const extraImporte = e.amount != null ? e.amount : calcDayExtra(e.dayFlag, extrasCfg);
+    if (!Number.isFinite(extraImporte) || extraImporte <= 0) continue;
+    const extraKey = e.dayFlag;
+    if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
+    extrasDesglose[extraKey].cantidad++;
+    extrasDesglose[extraKey].total = Math.round((extrasDesglose[extraKey].total + extraImporte) * 100) / 100;
+    totalExtras = Math.round((totalExtras + extraImporte) * 100) / 100;
+  }
+
+  return {
+    totalKm: Math.round(totalKm * 100) / 100,
+    totalImporte: Math.round(totalImporte * 100) / 100,
+    desglose: Object.entries(desglose).map(([tipo, data]) => ({ tipo, ...data })),
+    dietas: {
+      totalDietas,
+      desglose: Object.entries(dietasDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+    extras: {
+      totalExtras,
+      desglose: Object.entries(extrasDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+    plus: {
+      totalPlus,
+      desglose: Object.entries(plusDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+  };
+}
+
+export async function getResumenViaje(
+  from: string,
+  to: string,
+): Promise<{
+  totalViajes: number;
+  totalImporte: number;
+  desglose: Array<{ tipo: string; cantidad: number; total: number }>;
+  dietas: { totalDietas: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+  extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+  plus: { totalPlus: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> };
+}> {
+  const all = await getAllJornadas();
+  const jornadasPeriodo = all.filter(
+    (j) =>
+      j.fechaFin &&
+      j.fechaInicio >= from &&
+      j.fechaInicio <= to &&
+      (j.paymentMode || "dietas") === "viaje",
+  );
+
+  const desglose: Record<string, { cantidad: number; total: number }> = {};
+  const dietasDesglose: Record<string, { cantidad: number; total: number }> = {};
+  const extrasDesglose: Record<string, { cantidad: number; total: number }> = {};
+  const plusDesglose: Record<string, { cantidad: number; total: number }> = {};
+  let totalViajes = 0;
+  let totalImporte = 0;
+  let totalDietas = 0;
+  let totalExtras = 0;
+  let totalPlus = 0;
+
+  let extrasCfg: UserDayExtras = {
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  };
+  try {
+    const raw = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings"));
+    if (raw) {
+      const s = JSON.parse(raw);
+      const pf = (v: any, fb: number) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
+      extrasCfg = {
+        extra_saturday: pf(s.extra_saturday, 0),
+        extra_sunday: pf(s.extra_sunday, 0),
+        extra_holiday: pf(s.extra_holiday, 0),
+        offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional, 0),
+        offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional, 0),
+        offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional, 0),
+        offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional, 0),
+      };
+    }
+  } catch {}
+
+  const tripCategory = (tipoRuta: string | null | undefined): "NACIONAL" | "INTERNACIONAL" | "REGIONAL" => {
+    if (tipoRuta === "INTERNACIONAL" || tipoRuta === "REGIONAL_INTL" || tipoRuta === "NAC_INTL") return "INTERNACIONAL";
+    if (tipoRuta === "REGIONAL") return "REGIONAL";
+    return "NACIONAL";
+  };
+
+  for (const j of jornadasPeriodo) {
+    if (j.plusItems && j.plusItems.length > 0) {
+      for (const pi of j.plusItems) {
+        totalPlus = Math.round((totalPlus + pi.importe) * 100) / 100;
+        if (!plusDesglose[pi.concepto]) plusDesglose[pi.concepto] = { cantidad: 0, total: 0 };
+        plusDesglose[pi.concepto].cantidad++;
+        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
+      }
+    }
+
+    if (j.dayFlag) {
+      let extraImporte = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+      if (!Number.isFinite(extraImporte) || extraImporte <= 0) {
+        extraImporte = calcDayExtra(j.dayFlag, extrasCfg);
+      }
+      if (extraImporte > 0) {
+        const extraKey = j.dayFlag;
+        if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
+        extrasDesglose[extraKey].cantidad++;
+        extrasDesglose[extraKey].total = Math.round((extrasDesglose[extraKey].total + extraImporte) * 100) / 100;
+        totalExtras = Math.round((totalExtras + extraImporte) * 100) / 100;
+      }
+    }
+
+    const importe = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
+    const importeSafe = Number.isFinite(importe) ? importe : 0;
+    if (importeSafe > 0) {
+      totalViajes += 1;
+      totalImporte = Math.round((totalImporte + importeSafe) * 100) / 100;
+      const key = tripCategory(j.tipoRuta);
+      if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
+      desglose[key].cantidad++;
+      desglose[key].total = Math.round((desglose[key].total + importeSafe) * 100) / 100;
+    }
+  }
+
+  const naturalDayDietsViaje = await getAllNaturalDayDiets();
+  for (const nd of naturalDayDietsViaje) {
+    if (nd.date < from || nd.date > to) continue;
+    if (!nd.confirmedByUser || nd.dismissedAt) continue;
+    totalDietas = Math.round((totalDietas + nd.amount) * 100) / 100;
+    const key = `${nd.type}_${nd.percentage}`;
+    if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
+    dietasDesglose[key].cantidad++;
+    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + nd.amount) * 100) / 100;
+  }
+
+  const extraDays = await listDayExtraEntries(from, to);
+  for (const e of extraDays) {
+    if (e.entryType === "offsite_weekly_rest") {
+      const split = splitOffsiteWeeklyRestEntry(e, extrasCfg);
+      if (split.restAmount > 0) {
+        const key = `FUERA_BASE_${e.offsiteRestType || "WEEKLY_COMPLETE"}_${e.offsiteBase || "NACIONAL"}`;
+        if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
+        dietasDesglose[key].cantidad++;
+        dietasDesglose[key].total = Math.round((dietasDesglose[key].total + split.restAmount) * 100) / 100;
+        totalDietas = Math.round((totalDietas + split.restAmount) * 100) / 100;
+      }
+      if (split.plusAmount > 0) {
+        if (e.plusSunday) {
+          const k = "DOMINGO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("DOMINGO", extrasCfg)) * 100) / 100;
+        }
+        if (e.plusHoliday) {
+          const k = "FESTIVO";
+          if (!extrasDesglose[k]) extrasDesglose[k] = { cantidad: 0, total: 0 };
+          extrasDesglose[k].cantidad++;
+          extrasDesglose[k].total = Math.round((extrasDesglose[k].total + calcDayExtra("FESTIVO", extrasCfg)) * 100) / 100;
+        }
+        totalExtras = Math.round((totalExtras + split.plusAmount) * 100) / 100;
+      }
+      continue;
+    }
+
+    if (!e.dayFlag) continue;
+    const extraImporte = e.amount != null ? e.amount : calcDayExtra(e.dayFlag, extrasCfg);
+    if (!Number.isFinite(extraImporte) || extraImporte <= 0) continue;
+    const extraKey = e.dayFlag;
+    if (!extrasDesglose[extraKey]) extrasDesglose[extraKey] = { cantidad: 0, total: 0 };
+    extrasDesglose[extraKey].cantidad++;
+    extrasDesglose[extraKey].total = Math.round((extrasDesglose[extraKey].total + extraImporte) * 100) / 100;
+    totalExtras = Math.round((totalExtras + extraImporte) * 100) / 100;
+  }
+
+  return {
+    totalViajes,
+    totalImporte: Math.round(totalImporte * 100) / 100,
+    desglose: Object.entries(desglose).map(([tipo, data]) => ({ tipo, ...data })),
+    dietas: {
+      totalDietas,
+      desglose: Object.entries(dietasDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+    extras: {
+      totalExtras,
+      desglose: Object.entries(extrasDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+    plus: {
+      totalPlus,
+      desglose: Object.entries(plusDesglose).map(([tipo, data]) => ({ tipo, ...data })),
+    },
+  };
+}
+
 export async function getEstadoLegal(): Promise<EstadoLegal> {
   const ahora = new Date();
-  const lunes = getMondayOfWeek(ahora);
-  const domingo = getSundayOfWeek(ahora);
-  const lunesStr = formatDateStr(lunes);
-  const domingoStr = formatDateStr(domingo);
+  const lunes = getMondayOfUtcWeek(ahora);
+  const domingo = getSundayOfUtcWeek(ahora);
+  const lunesStr = formatUTCDateStr(lunes);
+  const domingoStr = formatUTCDateStr(domingo);
 
   const lunesAnterior = new Date(lunes);
-  lunesAnterior.setDate(lunesAnterior.getDate() - 7);
-  const lunesAnteriorStr = formatDateStr(lunesAnterior);
+  lunesAnterior.setUTCDate(lunesAnterior.getUTCDate() - 7);
+  const lunesAnteriorStr = formatUTCDateStr(lunesAnterior);
 
   const all = await getAllJornadas();
 
@@ -1256,22 +3307,26 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     );
     if (anterior && anterior.endAt) {
       j.descansoAnteriorMin = calcMinutesBetween(anterior.endAt, j.startAt);
-      j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+      if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
+        j.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
+      } else {
+        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+      }
     }
   }
 
-  const domingoAnteriorStr = formatDateStr(new Date(lunes.getTime() - 86400000));
+  const domingoAnteriorStr = formatUTCDateStr(new Date(lunes.getTime() - 86400000));
 
   const jornadasSemana = all.filter(
     (j) => j.fechaFin && (
-      (j.fechaInicio >= lunesStr && j.fechaInicio <= domingoStr) ||
+      (getJornadaUtcStartDateStr(j) >= lunesStr && getJornadaUtcStartDateStr(j) <= domingoStr) ||
       jornadaOverlapsWeek(j, lunesStr, domingoStr)
     ),
   );
 
   const jornadasBisemana = all.filter(
     (j) => j.fechaFin && (
-      (j.fechaInicio >= lunesAnteriorStr && j.fechaInicio <= domingoStr) ||
+      (getJornadaUtcStartDateStr(j) >= lunesAnteriorStr && getJornadaUtcStartDateStr(j) <= domingoStr) ||
       jornadaOverlapsWeek(j, lunesStr, domingoStr) ||
       jornadaOverlapsWeek(j, lunesAnteriorStr, domingoAnteriorStr)
     ),
@@ -1293,9 +3348,15 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   const abierta = all.find((j) => !j.fechaFin);
-  const descansosReducidos = computeReducidosSinceLastWeeklyRest(
+  const descansosReducidos = computeReducedRestsInUtcWeek(
     all,
-    abierta ? { descansoAnteriorMin: abierta.descansoAnteriorMin } : null,
+    lunesStr,
+    domingoStr,
+    abierta ? {
+      startAt: abierta.startAt,
+      descansoAnteriorMin: abierta.descansoAnteriorMin,
+      tipoDescansoAnterior: abierta.tipoDescansoAnterior,
+    } : null,
   );
 
   let conduccionBisemanalMin = 0;
@@ -1312,9 +3373,15 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   const maxBisemanalMin = 90 * 60;
 
   const comps = await getAllCompensaciones();
+  // REGLA 52 DÍAS: sólo pendientes DENTRO de la ventana de policía activa
+  // participan en el banner / agregada / alertas. Se filtra por FECHA de la
+  // JORNADA (fechaInicio) que generó la compensación; NO por fechaLimite.
+  // Las compensaciones fuera de 52d hacia atrás quedan en BBDD pero "prescritas en UI".
   const compPendientes = comps
-    .filter((c) => !c.compensada)
+    .filter(c => isCompWithinPoliceWindow(c, all, ahora))
     .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+
+  const compFueraVentana = comps.filter(c => !c.compensada && !isCompWithinPoliceWindow(c, all, ahora));
 
   const hoyStr = formatDateStr(ahora);
 
@@ -1326,7 +3393,11 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     const ids: string[] = [];
 
     for (const c of compPendientes) {
-      totalDeudaMin += c.horasDeuda * 60 + c.minutosDeuda;
+      const hOk = Number.isFinite(c.horasDeuda) ? Number(c.horasDeuda) : 0;
+      const mOk = Number.isFinite(c.minutosDeuda) ? Number(c.minutosDeuda) : 0;
+      const cMin = Math.max(0, hOk * 60 + mOk);
+      const cMinClamped = Math.min(cMin, 48 * 60);
+      totalDeudaMin += cMinClamped;
       ids.push(c.id);
 
       let fechaDescanso = "-";
@@ -1339,12 +3410,13 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
 
       detalle.push({
         id: c.id,
-        horasDeuda: c.horasDeuda,
-        minutosDeuda: c.minutosDeuda,
+        horasDeuda: Math.floor(cMinClamped / 60),
+        minutosDeuda: cMinClamped % 60,
         fechaDescanso,
       });
     }
 
+    totalDeudaMin = Math.max(0, Math.floor(totalDeudaMin));
     const fechaLimite = compPendientes[0].fechaLimite;
     const fechaPrimerReducido = detalle.length > 0 ? detalle[0].fechaDescanso : null;
 
@@ -1390,15 +3462,19 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   if (compensacionAgregada) {
+    const totalMin = Number(compensacionAgregada.totalDeudaHoras || 0) * 60 + Number(compensacionAgregada.totalDeudaMinutos || 0);
+    const hTot = Math.floor(totalMin / 60);
+    const mTot = totalMin % 60;
+    const fmtTot = mTot > 0 ? `${hTot}h ${mTot}m` : `${hTot}h`;
     if (compensacionAgregada.vencida) {
       alertas.push({
         tipo: "danger",
-        mensaje: `INFRACCION: ${compensacionAgregada.totalDeudaHoras}h ${compensacionAgregada.totalDeudaMinutos}m de descanso reducido no compensado (limite: ${compensacionAgregada.fechaLimite})`,
+        mensaje: `INFRACCION: ${fmtTot} de descanso reducido no compensado (limite: ${formatFechaES(compensacionAgregada.fechaLimite)})`,
       });
     } else {
       alertas.push({
         tipo: "warning",
-        mensaje: `Compensar ${compensacionAgregada.totalDeudaHoras}h ${compensacionAgregada.totalDeudaMinutos}m antes del ${compensacionAgregada.fechaLimite}`,
+        mensaje: `Compensar ${fmtTot} antes del ${formatFechaES(compensacionAgregada.fechaLimite)}`,
       });
     }
   }
@@ -1438,12 +3514,15 @@ export async function marcarTodasCompensadas(): Promise<void> {
 export async function getPendingSyncData(): Promise<{
   jornadas: Jornada[];
   compensaciones: Compensacion[];
+  dayExtraEntries: DayExtraEntry[];
 }> {
   const jornadas = await getAllJornadas();
   const compensaciones = await getAllCompensaciones();
+  const dayExtraEntries = await getAllDayExtraEntries();
   return {
     jornadas: jornadas.filter((j) => j.syncStatus === "pending" || j.syncStatus === "local"),
     compensaciones: compensaciones.filter((c) => c.syncStatus === "pending" || c.syncStatus === "local"),
+    dayExtraEntries: dayExtraEntries.filter((e) => e.syncStatus === "pending" || e.syncStatus === "local"),
   };
 }
 
@@ -1459,17 +3538,25 @@ export async function markAllSynced(): Promise<void> {
     if (c.syncStatus !== "synced") c.syncStatus = "synced";
   }
   await saveAllCompensaciones(comps);
+
+  const extraDays = await getAllDayExtraEntries();
+  for (const e of extraDays) {
+    if (e.syncStatus !== "synced") e.syncStatus = "synced";
+  }
+  await saveAllDayExtraEntries(extraDays);
 }
 
-export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensaciones: Compensacion[]): Promise<void> {
+export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensaciones: Compensacion[], cloudDayExtraEntries: DayExtraEntry[] = []): Promise<void> {
   const localJornadas = await getAllJornadas();
   const localComps = await getAllCompensaciones();
+  const localExtraDays = await getAllDayExtraEntries();
 
   const cloudJIds = new Set(cloudJornadas.map((cj) => cj.id));
   const cloudCIds = new Set(cloudCompensaciones.map((cc) => cc.id));
+  const cloudEIds = new Set(cloudDayExtraEntries.map((ce) => ce.id));
 
   const localSyncedCount = localJornadas.filter((j) => j.syncStatus === "synced").length;
-  const cloudIsEmpty = cloudJornadas.length === 0 && cloudCompensaciones.length === 0;
+  const cloudIsEmpty = cloudJornadas.length === 0 && cloudCompensaciones.length === 0 && cloudDayExtraEntries.length === 0;
   const shouldPruneDeleted = !(cloudIsEmpty && localSyncedCount > 3);
 
   const jMap = new Map<string, Jornada>();
@@ -1485,6 +3572,29 @@ export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensacion
     if (!existing) {
       jMap.set(cj.id, { ...cj, syncStatus: "synced" });
     } else if (cj.updatedAt > existing.updatedAt) {
+      // #region debug-point D:merge-cloud-overwrite
+      reportJornadaDateDebug("D", "local-storage:mergeFromCloud", "cloud jornada overwrites local jornada", {
+        jornadaId: cj.id,
+        localBefore: {
+          updatedAt: existing.updatedAt,
+          fechaInicio: existing.fechaInicio,
+          horaInicio: existing.horaInicio,
+          fechaFin: existing.fechaFin,
+          horaFin: existing.horaFin,
+          startAt: existing.startAt,
+          endAt: existing.endAt,
+        },
+        cloudIncoming: {
+          updatedAt: cj.updatedAt,
+          fechaInicio: cj.fechaInicio,
+          horaInicio: cj.horaInicio,
+          fechaFin: cj.fechaFin,
+          horaFin: cj.horaFin,
+          startAt: cj.startAt,
+          endAt: cj.endAt,
+        },
+      });
+      // #endregion
       if (existing.ferryPending) {
         console.log("[mergeFromCloud] OVERWRITING ferry jornada id=", cj.id, "cloud.ferryPending=", cj.ferryPending, "cloud.ferryRestCompleted=", cj.ferryRestCompleted, "cloud.updatedAt=", cj.updatedAt, "local.updatedAt=", existing.updatedAt);
       }
@@ -1527,8 +3637,23 @@ export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensacion
     }
   }
 
+  const eMap = new Map<string, DayExtraEntry>();
+  for (const e of localExtraDays) {
+    if (shouldPruneDeleted && e.syncStatus === "synced" && !cloudEIds.has(e.id)) {
+      continue;
+    }
+    eMap.set(e.id, e);
+  }
+  for (const ce of cloudDayExtraEntries) {
+    const existing = eMap.get(ce.id);
+    if (!existing || ce.updatedAt > existing.updatedAt) {
+      eMap.set(ce.id, { ...ce, syncStatus: "synced" });
+    }
+  }
+
   await saveAllJornadas(Array.from(jMap.values()));
   await saveAllCompensaciones(Array.from(cMap.values()));
+  await saveAllDayExtraEntries(Array.from(eMap.values()));
 }
 
 export async function getLastLugarFin(): Promise<string | null> {
@@ -1541,7 +3666,7 @@ export async function getLastLugarFin(): Promise<string | null> {
 
 export async function getRecentPlaces(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem(RECENT_PLACES_KEY);
+    const raw = await getItemScoped(RECENT_PLACES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -1558,7 +3683,1209 @@ export async function addRecentPlace(place: string): Promise<void> {
   const existing = await getRecentPlaces();
   const filtered = existing.filter((p) => p.toLowerCase() !== trimmed.toLowerCase());
   const updated = [trimmed, ...filtered].slice(0, 20);
-  await AsyncStorage.setItem(RECENT_PLACES_KEY, JSON.stringify(updated));
+  await setItemScoped(RECENT_PLACES_KEY, JSON.stringify(updated));
+}
+
+export async function getAllDayExtraEntries(): Promise<DayExtraEntry[]> {
+  const raw = await getItemScoped(DAY_EXTRA_ENTRIES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const nowIso = new Date().toISOString();
+    return parsed
+      .filter(Boolean)
+      .map((e: any) => {
+        const entryType: DayExtraEntryType =
+          e.entryType === "offsite_weekly_rest" ? "offsite_weekly_rest" : "day_extra";
+        const dayFlag =
+          e.dayFlag === "SABADO" || e.dayFlag === "DOMINGO" || e.dayFlag === "FESTIVO"
+            ? e.dayFlag
+            : null;
+        const offsiteRestType =
+          e.offsiteRestType === "WEEKLY_REDUCED" || e.offsiteRestType === "WEEKLY_COMPLETE"
+            ? e.offsiteRestType
+            : null;
+        const offsiteBase =
+          e.offsiteBase === "NACIONAL" || e.offsiteBase === "INTERNACIONAL"
+            ? e.offsiteBase
+            : null;
+        const normalized: DayExtraEntry = {
+          id: String(e.id || generateId()),
+          date: String(e.date || ""),
+          entryType,
+          dayFlag,
+          offsiteRestType,
+          offsiteBase,
+          plusSunday: Boolean(e.plusSunday),
+          plusHoliday: Boolean(e.plusHoliday),
+          locationStart: typeof e.locationStart === "string" ? e.locationStart : null,
+          locationEnd: typeof e.locationEnd === "string" ? e.locationEnd : null,
+          inBase: e.inBase == null ? null : Boolean(e.inBase),
+          distanceToBaseKm: e.distanceToBaseKm == null ? null : Number(e.distanceToBaseKm),
+          amount: e.amount == null ? null : Number(e.amount),
+          note: typeof e.note === "string" ? e.note : null,
+          createdAt: typeof e.createdAt === "string" ? e.createdAt : nowIso,
+          updatedAt: typeof e.updatedAt === "string" ? e.updatedAt : nowIso,
+          syncStatus: e.syncStatus === "pending" || e.syncStatus === "synced" || e.syncStatus === "local" ? e.syncStatus : "local",
+        };
+        return normalized;
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function saveAllDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
+  await setItemScoped(DAY_EXTRA_ENTRIES_KEY, JSON.stringify(list));
+}
+
+export async function replaceImportedDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
+  await saveAllDayExtraEntries(list);
+}
+
+export async function listDayExtraEntries(from?: string, to?: string): Promise<DayExtraEntry[]> {
+  const all = await getAllDayExtraEntries();
+  const filtered = all.filter((e) => {
+    if (!e?.date) return false;
+    if (from && e.date < from) return false;
+    if (to && e.date > to) return false;
+    return true;
+  });
+  filtered.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  return filtered;
+}
+
+export async function addDayExtraEntry(data: {
+  date: string;
+  dayFlag: Exclude<DayExtraEntry["dayFlag"], null>;
+  amount?: number | null;
+  note?: string | null;
+}): Promise<DayExtraEntry> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) throw new Error("Fecha inválida (YYYY-MM-DD)");
+  if (data.dayFlag !== "SABADO" && data.dayFlag !== "DOMINGO" && data.dayFlag !== "FESTIVO") {
+    throw new Error("Tipo de día inválido");
+  }
+  const all = await getAllDayExtraEntries();
+  const now = new Date().toISOString();
+  let resolvedAmount: number | null = data.amount ?? null;
+  if (resolvedAmount == null) {
+    try {
+      const settingsRaw = await getItemScoped("tacoplan_user_settings");
+      const s = settingsRaw ? JSON.parse(settingsRaw) : {};
+      const pf = (v: any) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const extrasCfg: UserDayExtras = {
+        extra_saturday: pf(s.extra_saturday),
+        extra_sunday: pf(s.extra_sunday),
+        extra_holiday: pf(s.extra_holiday),
+        offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional),
+        offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional),
+        offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional),
+        offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional),
+      };
+      const calc = calcDayExtra(data.dayFlag, extrasCfg);
+      resolvedAmount = Number.isFinite(calc) ? calc : 0;
+    } catch {
+      resolvedAmount = 0;
+    }
+  }
+  const entry: DayExtraEntry = {
+    id: generateId(),
+    date: data.date,
+    entryType: "day_extra",
+    dayFlag: data.dayFlag,
+    offsiteRestType: null,
+    offsiteBase: null,
+    plusSunday: false,
+    plusHoliday: false,
+    amount: resolvedAmount,
+    note: data.note?.trim() || null,
+    createdAt: now,
+    updatedAt: now,
+    syncStatus: "pending",
+  };
+  all.push(entry);
+  await saveAllDayExtraEntries(all);
+  return entry;
+}
+
+export async function listAvailableOffsiteWeeklyRestDates(): Promise<string[]> {
+  const allJ = await getAllJornadas();
+  const existing = await getAllDayExtraEntries();
+  const usedDates = new Set(existing.filter((e) => e.entryType === "offsite_weekly_rest").map((e) => e.date));
+
+  const today = formatDateStr(new Date());
+  const maxFuture = addDays(today, 31);
+
+  const jornadasSorted = allJ
+    .filter((j) => /^\d{4}-\d{2}-\d{2}$/.test(j.fechaInicio))
+    .slice()
+    .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
+
+  if (jornadasSorted.length === 0) return [];
+
+  const coveredDates = new Set<string>();
+  for (const j of jornadasSorted) {
+    const start = j.fechaInicio;
+    const end = j.fechaFin && /^\d{4}-\d{2}-\d{2}$/.test(j.fechaFin) ? j.fechaFin : j.fechaInicio;
+    let cur = start;
+    while (cur <= end) {
+      coveredDates.add(cur);
+      cur = addDays(cur, 1);
+    }
+  }
+
+  const candidates = new Set<string>();
+  for (let i = 0; i < jornadasSorted.length - 1; i++) {
+    const a = jornadasSorted[i];
+    const b = jornadasSorted[i + 1];
+    if (!a.fechaFin || !/^\d{4}-\d{2}-\d{2}$/.test(a.fechaFin)) continue;
+    const start = addDays(a.fechaFin, 1);
+    const rawEnd = addDays(b.fechaInicio, -1);
+    const end = rawEnd > maxFuture ? maxFuture : rawEnd;
+    let cur = start;
+    while (cur <= end) {
+      candidates.add(cur);
+      cur = addDays(cur, 1);
+    }
+  }
+
+  const last = jornadasSorted[jornadasSorted.length - 1];
+  if (last.fechaFin && /^\d{4}-\d{2}-\d{2}$/.test(last.fechaFin)) {
+    let cur = addDays(last.fechaFin, 1);
+    while (cur <= today) {
+      candidates.add(cur);
+      cur = addDays(cur, 1);
+    }
+  }
+
+  const out = Array.from(candidates).filter((d) => !coveredDates.has(d) && !usedDates.has(d));
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+export async function addOffsiteWeeklyRestEntry(data: {
+  date: string;
+  restType: DayExtraEntry["offsiteRestType"];
+  base: DayExtraEntry["offsiteBase"];
+  plusSunday?: boolean;
+  plusHoliday?: boolean;
+  amount?: number | null;
+  note?: string | null;
+}): Promise<DayExtraEntry> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) throw new Error("Fecha inválida (YYYY-MM-DD)");
+  if (data.restType !== "WEEKLY_REDUCED" && data.restType !== "WEEKLY_COMPLETE") throw new Error("Tipo de descanso inválido");
+  if (data.base !== "NACIONAL" && data.base !== "INTERNACIONAL") throw new Error("Tipo de ruta inválido");
+
+  const allJ = await getAllJornadas();
+  if (allJ.some((j) => {
+    if (!j.fechaInicio) return false;
+    const start = j.fechaInicio;
+    const end = j.fechaFin || j.fechaInicio;
+    return data.date >= start && data.date <= end;
+  })) {
+    throw new Error("Ya existe una jornada en esa fecha");
+  }
+
+  const all = await getAllDayExtraEntries();
+  if (all.some((e) => e.entryType === "offsite_weekly_rest" && e.date === data.date)) {
+    throw new Error("Ya existe un descanso fuera de base en esa fecha");
+  }
+
+  const now = new Date().toISOString();
+  const plusSunday = Boolean(data.plusSunday);
+  const plusHoliday = Boolean(data.plusHoliday);
+
+  let resolvedAmount: number | null = data.amount ?? null;
+  if (resolvedAmount == null) {
+    try {
+      const settingsRaw = await getItemScoped("tacoplan_user_settings");
+      const s = settingsRaw ? JSON.parse(settingsRaw) : {};
+      const pf = (v: any) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const extrasCfg: UserDayExtras = {
+        extra_saturday: pf(s.extra_saturday),
+        extra_sunday: pf(s.extra_sunday),
+        extra_holiday: pf(s.extra_holiday),
+        offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional),
+        offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional),
+        offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional),
+        offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional),
+      };
+      const baseKey = data.base === "NACIONAL" ? "nacional" : "internacional";
+      const restKey = data.restType === "WEEKLY_REDUCED" ? "reduced" : "complete";
+      const baseAmount =
+        restKey === "reduced"
+          ? (baseKey === "nacional" ? extrasCfg.offsite_weekly_reduced_nacional : extrasCfg.offsite_weekly_reduced_internacional)
+          : (baseKey === "nacional" ? extrasCfg.offsite_weekly_complete_nacional : extrasCfg.offsite_weekly_complete_internacional);
+      resolvedAmount = Math.round(Number(baseAmount) * 100) / 100;
+    } catch {
+      resolvedAmount = 0;
+    }
+  }
+
+  const entry: DayExtraEntry = {
+    id: generateId(),
+    date: data.date,
+    entryType: "offsite_weekly_rest",
+    dayFlag: null,
+    offsiteRestType: data.restType,
+    offsiteBase: data.base,
+    plusSunday,
+    plusHoliday,
+    amount: resolvedAmount,
+    note: data.note?.trim() || null,
+    createdAt: now,
+    updatedAt: now,
+    syncStatus: "pending",
+  };
+  all.push(entry);
+  await saveAllDayExtraEntries(all);
+  return entry;
+}
+
+export async function deleteDayExtraEntry(id: string): Promise<void> {
+  const all = await getAllDayExtraEntries();
+  const filtered = all.filter((e) => e.id !== id);
+  await saveAllDayExtraEntries(filtered);
+}
+
+export async function updateDayExtraEntry(
+  id: string,
+  patch: {
+    date?: string;
+    restType?: DayExtraEntry["offsiteRestType"];
+    base?: DayExtraEntry["offsiteBase"];
+    plusSunday?: boolean;
+    plusHoliday?: boolean;
+    amount?: number | null;
+    note?: string | null;
+  },
+): Promise<DayExtraEntry> {
+  const all = await getAllDayExtraEntries();
+  const idx = all.findIndex((e) => e.id === id);
+  if (idx < 0) throw new Error("No se encontró el registro");
+  const cur = all[idx];
+  if (cur.entryType !== "offsite_weekly_rest") throw new Error("Edición no soportada para este tipo de registro");
+
+  const nextDate = typeof patch.date === "string" ? patch.date : cur.date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) throw new Error("Fecha inválida (YYYY-MM-DD)");
+
+  const nextRestType = patch.restType ?? cur.offsiteRestType;
+  if (nextRestType !== "WEEKLY_REDUCED" && nextRestType !== "WEEKLY_COMPLETE") throw new Error("Tipo de descanso inválido");
+
+  const nextBase = patch.base ?? cur.offsiteBase;
+  if (nextBase !== "NACIONAL" && nextBase !== "INTERNACIONAL") throw new Error("Tipo de ruta inválido");
+
+  const nextAmount = patch.amount !== undefined ? patch.amount : cur.amount;
+  if (nextAmount != null) {
+    const n = Number(nextAmount);
+    if (!Number.isFinite(n) || n < 0) throw new Error("Importe inválido");
+  }
+
+  if (nextDate !== cur.date) {
+    const allJ = await getAllJornadas();
+    if (allJ.some((j) => {
+      if (!j.fechaInicio) return false;
+      const start = j.fechaInicio;
+      const end = j.fechaFin || j.fechaInicio;
+      return nextDate >= start && nextDate <= end;
+    })) {
+      throw new Error("Ya existe una jornada en esa fecha");
+    }
+    if (all.some((e) => e.id !== cur.id && e.entryType === "offsite_weekly_rest" && e.date === nextDate)) {
+      throw new Error("Ya existe un descanso fuera de base en esa fecha");
+    }
+  }
+
+  const now = new Date().toISOString();
+  const updated: DayExtraEntry = {
+    ...cur,
+    date: nextDate,
+    offsiteRestType: nextRestType,
+    offsiteBase: nextBase,
+    plusSunday: patch.plusSunday !== undefined ? !!patch.plusSunday : cur.plusSunday,
+    plusHoliday: patch.plusHoliday !== undefined ? !!patch.plusHoliday : cur.plusHoliday,
+    amount: nextAmount != null ? Math.round(Number(nextAmount) * 100) / 100 : null,
+    note: patch.note !== undefined ? (patch.note?.trim() || null) : cur.note,
+    updatedAt: now,
+    syncStatus: cur.syncStatus === "local" ? "local" : "pending",
+  };
+  all[idx] = updated;
+  await saveAllDayExtraEntries(all);
+  return updated;
+}
+
+async function getAllDismissedNaturalDayDates(): Promise<Set<string>> {
+  const raw = await getItemScoped(NATURAL_DAY_DIETS_DISMISSED_KEY);
+  if (!raw) return new Set();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((d: unknown) => typeof d === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+async function saveAllDismissedNaturalDayDates(set: Set<string>): Promise<void> {
+  await setItemScoped(NATURAL_DAY_DIETS_DISMISSED_KEY, JSON.stringify(Array.from(set)));
+}
+
+export async function getAllNaturalDayDiets(): Promise<NaturalDayDietEntry[]> {
+  const raw = await getItemScoped(NATURAL_DAY_DIETS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const nowIso = new Date().toISOString();
+    return parsed
+      .filter(Boolean)
+      .map((e: any) => {
+        const validTypes: NaturalDayDietType[] = ["INTERNACIONAL", "NACIONAL", "REGIONAL"];
+        const type: NaturalDayDietType = validTypes.includes(e.type) ? (e.type as NaturalDayDietType) : "NACIONAL";
+        const rawPct = Number(e.percentage);
+        let percentage: 100 | 60 | 30 = 100;
+        if (rawPct === 60) percentage = 60;
+        else if (rawPct === 30) percentage = 30;
+        else percentage = 100;
+        const rawPluses =
+          Array.isArray(e.plusItems) || Array.isArray((e as any).pluses)
+            ? (Array.isArray(e.plusItems) ? e.plusItems : (e as any).pluses)
+            : null;
+        const plusClean: Array<{ concepto: string; amount: number; id: string }> | null =
+          Array.isArray(rawPluses)
+            ? rawPluses
+                .filter((p) => p && String(p.concepto || "").trim().length > 0 && Number.isFinite(Number(p.amount)))
+                .map((p) => ({
+                  concepto: String(p.concepto).trim().slice(0, 200),
+                  amount: Math.max(0, Math.min(99999, +Number(p.amount).toFixed(2))),
+                  id: String(p.id || `${e.date}_${p.concepto}_${Math.random().toString(36).slice(2, 7)}`),
+                }))
+            : null;
+        const normalized: NaturalDayDietEntry = {
+          id: String(e.id || generateId()),
+          date: String(e.date || ""),
+          type,
+          percentage,
+          amount: Number.isFinite(Number(e.amount)) ? Number(e.amount) : 0,
+          location: typeof e.location === "string" ? e.location : (e.location ?? null),
+          source: "NATURAL_DAY_OUT_OF_BASE",
+          previousJourneyId: typeof e.previousJourneyId === "string" ? e.previousJourneyId : (e.previousJourneyId ?? null),
+          nextJourneyId: typeof e.nextJourneyId === "string" ? e.nextJourneyId : (e.nextJourneyId ?? null),
+          confirmedByUser: Boolean(e.confirmedByUser),
+          dismissedAt: typeof e.dismissedAt === "string" ? e.dismissedAt : (e.dismissedAt ?? null),
+          createdAt: typeof e.createdAt === "string" ? e.createdAt : nowIso,
+          updatedAt: typeof e.updatedAt === "string" ? e.updatedAt : nowIso,
+          syncStatus: e.syncStatus === "pending" || e.syncStatus === "synced" || e.syncStatus === "local" ? e.syncStatus : "local",
+          plusItems: plusClean && plusClean.length > 0 ? plusClean : null,
+          isDomingo: typeof e.isDomingo === "boolean" ? e.isDomingo : (typeof e.is_domingo === "boolean" ? e.is_domingo : null),
+          isFestivo: typeof e.isFestivo === "boolean" ? e.isFestivo : (typeof e.is_festivo === "boolean" ? e.is_festivo : null),
+        };
+        return normalized;
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function saveAllNaturalDayDiets(list: NaturalDayDietEntry[]): Promise<void> {
+  await setItemScoped(NATURAL_DAY_DIETS_KEY, JSON.stringify(list));
+}
+
+export async function replaceImportedNaturalDayDiets(list: NaturalDayDietEntry[]): Promise<void> {
+  await saveAllNaturalDayDiets(list);
+}
+
+export async function upsertNaturalDayDiets(entries: NaturalDayDietEntry[]): Promise<NaturalDayDietEntry[]> {
+  if (!entries || entries.length === 0) return [];
+  const all = await getAllNaturalDayDiets();
+  const map = new Map<string, NaturalDayDietEntry>();
+  for (const e of all) map.set(e.id, e);
+  const now = new Date().toISOString();
+  const results: NaturalDayDietEntry[] = [];
+  for (const raw of entries) {
+    const existing = raw.id ? map.get(raw.id) : undefined;
+    const now2 = new Date().toISOString();
+    const entry: NaturalDayDietEntry = {
+      ...raw,
+      id: raw.id || generateId(),
+      createdAt: existing?.createdAt || raw.createdAt || now2,
+      updatedAt: now2,
+      syncStatus: existing?.syncStatus === "synced" ? "pending" : (raw.syncStatus || "pending"),
+    };
+    map.set(entry.id, entry);
+    results.push(entry);
+  }
+  await saveAllNaturalDayDiets(Array.from(map.values()));
+  return results;
+}
+
+export async function deleteNaturalDayDiet(id: string): Promise<void> {
+  const all = await getAllNaturalDayDiets();
+  const filtered = all.filter((e) => e.id !== id);
+  await saveAllNaturalDayDiets(filtered);
+}
+
+export async function dismissNaturalDayDiets(dates: string[]): Promise<void> {
+  if (!dates || dates.length === 0) return;
+  const set = await getAllDismissedNaturalDayDates();
+  const now = new Date().toISOString();
+  const validDates = dates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  for (const d of validDates) set.add(d);
+  await saveAllDismissedNaturalDayDates(set);
+  const all = await getAllNaturalDayDiets();
+  let changed = false;
+  for (const e of all) {
+    if (validDates.includes(e.date) && !e.dismissedAt) {
+      e.dismissedAt = now;
+      e.updatedAt = now;
+      e.syncStatus = e.syncStatus === "synced" ? "pending" : e.syncStatus;
+      changed = true;
+    }
+  }
+  if (changed) await saveAllNaturalDayDiets(all);
+}
+
+export async function clearDismissedNaturalDayDiets(dates?: string[]): Promise<void> {
+  const set = await getAllDismissedNaturalDayDates();
+  if (dates && dates.length > 0) {
+    for (const d of dates) set.delete(d);
+  } else {
+    set.clear();
+  }
+  await saveAllDismissedNaturalDayDates(set);
+  if (!dates || dates.length === 0) return;
+  const all = await getAllNaturalDayDiets();
+  const validDates = dates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  let changed = false;
+  const now = new Date().toISOString();
+  for (const e of all) {
+    if (validDates.includes(e.date) && e.dismissedAt) {
+      e.dismissedAt = null;
+      e.updatedAt = now;
+      e.syncStatus = e.syncStatus === "synced" ? "pending" : e.syncStatus;
+      changed = true;
+    }
+  }
+  if (changed) await saveAllNaturalDayDiets(all);
+}
+
+/**
+ * Limpia el set de fechas "descartadas" solo dentro de un rango [from,to] inclusive.
+ * Útil para el botón "Re-evaluar" del periodo actual en Historial/Dietas.
+ */
+export async function clearDismissedNaturalDayDietsInRange(from: string, to: string): Promise<void> {
+  if (!from || !to) return;
+  const set = await getAllDismissedNaturalDayDates();
+  const clearDates: string[] = [];
+  for (const d of set) {
+    if (d >= from && d <= to) clearDates.push(d);
+  }
+  if (clearDates.length === 0) return;
+  await clearDismissedNaturalDayDiets(clearDates);
+}
+
+function normalizeLocationForCompare(loc: string | null | undefined): string {
+  if (!loc) return "";
+  return String(loc)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function locationsMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const na = normalizeLocationForCompare(a);
+  const nb = normalizeLocationForCompare(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const tokensA = na
+    .split(/[\s,;./\\|()]+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 4);
+  const tokensB = nb
+    .split(/[\s,;./\\|()]+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 4);
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+  for (const ta of tokensA) {
+    for (const tb of tokensB) {
+      if (ta === tb) return true;
+      if (ta.includes(tb) || tb.includes(ta)) return true;
+    }
+  }
+  return false;
+}
+
+export async function detectMissingOutOfBaseDietDays(options?: {
+  fromDate?: string;
+  toDate?: string;
+  extraPendingJourney?: {
+    startAt: string;
+    fechaInicio?: string;
+    lugarInicio?: string | null;
+    tipoRuta?: string | null;
+    id?: string;
+  };
+}): Promise<DetectedMissingNaturalDay[]> {
+  const allJornadas = await getAllJornadas();
+  const extra = options?.extraPendingJourney;
+  const extraAsJornada: Jornada | null = extra
+    ? ({
+        id: extra.id || "__pending_new__",
+        startAt: extra.startAt,
+        fechaInicio: extra.fechaInicio ?? extractYyyyMmDd(extra.startAt),
+        fechaFin: extra.fechaInicio ?? extractYyyyMmDd(extra.startAt),
+        endAt: extra.startAt,
+        lugarInicio: extra.lugarInicio ?? null,
+        lugarFin: extra.lugarInicio ?? null,
+        tipoRuta: (extra.tipoRuta as Jornada["tipoRuta"]) || "NINGUNO",
+        updatedAt: new Date().toISOString(),
+      } as any)
+    : null;
+  const combined = extraAsJornada ? [...allJornadas, extraAsJornada] : allJornadas;
+  const sorted = combined
+    .filter((j) => j && j.startAt && (j.fechaInicio || j.fechaFin || j.endAt))
+    .sort((a, b) => a.startAt.localeCompare(b.startAt));
+
+  if (sorted.length < 2) return [];
+
+  let baseLocation: string | null = null;
+  try {
+    const settingsRaw = await getItemScoped("tacoplan_user_settings");
+    const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+    const firstNonEmpty = (...vals: any[]): string | null => {
+      for (const v of vals) {
+        if (typeof v === "string" && v.trim() !== "") return v.trim();
+      }
+      return null;
+    };
+    const buildAddress = (parts: (string | null | undefined)[]): string | null => {
+      const clean = parts
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter((s) => s.length > 0);
+      return clean.length > 0 ? clean.join(", ") : null;
+    };
+    baseLocation = firstNonEmpty(
+      settings.baseLocation,
+      settings.base_city,
+      settings.base_name,
+      settings.base_address,
+      settings.base,
+      buildAddress([settings.base_name, settings.base_city, settings.base_country || settings.baseCountry]),
+    );
+    if (!baseLocation) {
+      try {
+        const { data: { user } = {} } = await supabase.auth.getUser();
+        const uid = user?.id;
+        if (uid) {
+          const profileCols = "base_name,base_city,base_country,baseCountry,base_address,baseLocation,base_location";
+          const { data: profileRow, error } = await supabase
+            .from("profiles")
+            .select(profileCols)
+            .eq("id", uid)
+            .maybeSingle();
+          if (!error && profileRow) {
+            baseLocation = firstNonEmpty(
+              profileRow.baseLocation || profileRow.base_location,
+              profileRow.base_city,
+              profileRow.base_name,
+              profileRow.base_address,
+              buildAddress([
+                profileRow.base_name,
+                profileRow.base_city,
+                profileRow.base_country || profileRow.baseCountry,
+              ]),
+            );
+          }
+          if (!baseLocation) {
+            const meta = user?.user_metadata || {};
+            baseLocation = firstNonEmpty(
+              meta.baseLocation || meta.base_location,
+              meta.base_city,
+              meta.base_name,
+              meta.base_address,
+              meta.base,
+              buildAddress([meta.base_name, meta.base_city, meta.base_country || meta.baseCountry]),
+            );
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  try {
+    console.log("[detectMissingOutOfBaseDietDays:BASE_RESOLVED]", {
+      baseLocation,
+    });
+  } catch {}
+
+  // Set de tokens STOP (países, adjetivos genéricos) — no cuentan como token diferenciador.
+  const STOP_TOKENS_LOWER = new Set([
+    "espana","españa","spain","catalunya","cataluna","cataluña","barcelona","provincia","ciudad","pueblo","base","s/n","sn","calle","avenida","avda","av","plaza","pl","plza","carretera","crta","carrera","poligono","poligono","industrial","parque","france","francia","alemania","germany","deutschland","polonia","poland","belgica","belgium","luxemburgo","luxembourg","italia","italy","portugal","republica","checa","czech","netherlands","bajos","paises","countries","espanol","catalan","localidad","municipio","nacional","regional","internacional","sp",
+  ]);
+
+  /**
+   * isBaseLocation V2 — robusta contra variantes ciudad vs ciu+prov vs ciu+pais
+   * Match if:
+   *   - loc vacío → false
+   *   - isBaseLocation mismo texto normalizado o match tokens 1 común "no stop"
+   */
+  const isBaseLocation = (loc: string | null | undefined, base: string | null): boolean => {
+    if (!base) return false;
+    if (!loc || typeof loc !== "string") return false;
+    const baseTrim = base.trim();
+    if (baseTrim === "") return false;
+    const tokensBase = normalizeLocationForCompare(baseTrim)
+      .split(/[\s,;./\\|()\-\[\]{}]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3 && !STOP_TOKENS_LOWER.has(s));
+    const tokensLoc = normalizeLocationForCompare(loc)
+      .split(/[\s,;./\\|()\-\[\]{}]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3 && !STOP_TOKENS_LOWER.has(s));
+    if (tokensLoc.length === 0 || tokensBase.length === 0) {
+      return locationsMatch(loc, base);
+    }
+    for (const tb of tokensBase) {
+      for (const tl of tokensLoc) {
+        if (tb === tl || tb.includes(tl) || tl.includes(tb)) return true;
+      }
+    }
+    return locationsMatch(loc, base);
+  };
+
+  type OutOfBasePeriod = {
+    startDate: string;
+    endDate: string | null;
+    startJourneyId: string;
+    endJourneyId: string | null;
+    closedByBaseArrival: boolean;
+    routeTypeAtStart: NaturalDayDietType;
+    reliableLocationStart: string | null;
+    reliableLocationEnd: string | null;
+    includesArrivalDay: boolean;
+  };
+
+  const periods: OutOfBasePeriod[] = [];
+  let openPeriod: (OutOfBasePeriod & { state: "OPEN" }) | null = null;
+  for (const j of sorted) {
+    if (!j) continue;
+    const jStart = extractYyyyMmDd(j.fechaInicio ?? j.startAt);
+    const jEnd = extractYyyyMmDd(j.fechaFin ?? j.endAt);
+    const startsFromBase = isBaseLocation(j.lugarInicio, baseLocation);
+    const startsAtBase = startsFromBase;
+    const endsAtBase = isBaseLocation(j.lugarFin, baseLocation);
+
+    function resolveRouteTypeForOpen(): NaturalDayDietType {
+      const tipo = j.tipoRuta || "NINGUNO";
+      if (tipo === "INTERNACIONAL" || tipo === "REGIONAL_INTL" || tipo === "NAC_INTL") return "INTERNACIONAL";
+      if (tipo === "REGIONAL") return "REGIONAL";
+      if (tipo === "NACIONAL" || tipo === "NAC_REGIONAL") return "NACIONAL";
+      return openPeriod?.routeTypeAtStart || "NACIONAL";
+    }
+
+    if (!openPeriod) {
+      if (!endsAtBase && jEnd) {
+        const rt = resolveRouteTypeForOpen();
+        openPeriod = {
+          state: "OPEN",
+          startDate: jStart || jEnd,
+          endDate: jEnd,
+          startJourneyId: j.id,
+          endJourneyId: j.id,
+          closedByBaseArrival: false,
+          includesArrivalDay: false,
+          routeTypeAtStart: rt,
+          reliableLocationStart: j.lugarFin || j.lugarInicio || null,
+          reliableLocationEnd: j.lugarFin || j.lugarInicio || null,
+        };
+        try {
+          console.log("[detectMissingOutOfBaseDietDays:STATE_MACHINE_OPEN]", {
+            journey: { id: j.id, jStart, jEnd, lugarInicio: j.lugarInicio ?? null, lugarFin: j.lugarFin ?? null, tipoRuta: j.tipoRuta || null, startsAtBase, endsAtBase },
+            openPeriod: { startDate: openPeriod.startDate, endDate: openPeriod.endDate, routeType: rt, reliableEnd: openPeriod.reliableLocationEnd },
+          });
+        } catch {}
+      }
+    } else {
+      const beforeEnd = openPeriod.endDate;
+      const beforeType = openPeriod.routeTypeAtStart;
+      openPeriod.endDate = jEnd ?? openPeriod.endDate;
+      openPeriod.endJourneyId = j.id;
+      openPeriod.reliableLocationEnd = j.lugarFin || j.lugarInicio || openPeriod.reliableLocationEnd;
+      if (openPeriod.routeTypeAtStart === "NACIONAL") {
+        openPeriod.routeTypeAtStart = resolveRouteTypeForOpen();
+      }
+      if (endsAtBase) {
+        periods.push({
+          startDate: openPeriod.startDate,
+          endDate: openPeriod.endDate,
+          startJourneyId: openPeriod.startJourneyId,
+          endJourneyId: openPeriod.endJourneyId,
+          closedByBaseArrival: true,
+          includesArrivalDay: true,
+          routeTypeAtStart: openPeriod.routeTypeAtStart,
+          reliableLocationStart: openPeriod.reliableLocationStart,
+          reliableLocationEnd: openPeriod.reliableLocationEnd,
+        });
+        try {
+          console.log("[detectMissingOutOfBaseDietDays:STATE_MACHINE_CLOSE_BASE]", {
+            journey: { id: j.id, jStart, jEnd, lugarInicio: j.lugarInicio ?? null, lugarFin: j.lugarFin ?? null, tipoRuta: j.tipoRuta || null, startsAtBase, endsAtBase },
+            closedPeriod: { startDate: openPeriod.startDate, endDate: openPeriod.endDate, routeTypeBefore: beforeType, routeTypeNow: openPeriod.routeTypeAtStart, reliableStart: openPeriod.reliableLocationStart, reliableEnd: openPeriod.reliableLocationEnd },
+          });
+        } catch {}
+        openPeriod = null;
+      } else {
+        try {
+          console.log("[detectMissingOutOfBaseDietDays:STATE_MACHINE_EXTEND]", {
+            journey: { id: j.id, jStart, jEnd, lugarInicio: j.lugarInicio ?? null, lugarFin: j.lugarFin ?? null, tipoRuta: j.tipoRuta || null, startsAtBase, endsAtBase },
+            before: { endDate: beforeEnd, routeType: beforeType },
+            after: { endDate: openPeriod.endDate, routeType: openPeriod.routeTypeAtStart, reliableEnd: openPeriod.reliableLocationEnd },
+          });
+        } catch {}
+      }
+    }
+  }
+  if (openPeriod) {
+    periods.push({
+      startDate: openPeriod.startDate,
+      endDate: openPeriod.endDate,
+      startJourneyId: openPeriod.startJourneyId,
+      endJourneyId: openPeriod.endJourneyId,
+      closedByBaseArrival: false,
+      includesArrivalDay: false,
+      routeTypeAtStart: openPeriod.routeTypeAtStart,
+      reliableLocationStart: openPeriod.reliableLocationStart,
+      reliableLocationEnd: openPeriod.reliableLocationEnd,
+    });
+    try {
+      console.log("[detectMissingOutOfBaseDietDays:STATE_MACHINE_OPEN_LEFTOVER]", {
+        openPeriod: { startDate: openPeriod.startDate, endDate: openPeriod.endDate, routeType: openPeriod.routeTypeAtStart, reliableStart: openPeriod.reliableLocationStart, reliableEnd: openPeriod.reliableLocationEnd },
+        reason: "no journey after returned to base; kept open",
+      });
+    } catch {}
+  }
+
+  function periodContainsDate(p: OutOfBasePeriod, date: string): boolean {
+    if (!(date >= p.startDate)) return false;
+    if (p.endDate) {
+      if (p.closedByBaseArrival) {
+        return date <= p.endDate;
+      }
+      return date <= p.endDate;
+    }
+    return true;
+  }
+  try {
+    console.log("[detectMissingOutOfBaseDietDays:PERIODS_BUILT]", {
+      periodsCount: periods.length,
+      baseLocation,
+      sortedCount: sorted.length,
+      periods: periods.map((p) => ({
+        startDate: p.startDate,
+        endDate: p.endDate,
+        routeType: p.routeTypeAtStart,
+        closedByBaseArrival: p.closedByBaseArrival,
+        includesArrivalDay: p.includesArrivalDay,
+        reliableStart: p.reliableLocationStart,
+        reliableEnd: p.reliableLocationEnd,
+      })),
+    });
+  } catch {}
+
+  // Carga de holidays cache (festivos) + pluses por jornada para no duplicar conceptos
+  let holidaysSet: Set<string> = new Set();
+  try {
+    const holidaysRaw = await getItemScoped("tacoplan_user_holidays_cache");
+    const parsed = holidaysRaw ? JSON.parse(holidaysRaw) : [];
+    const flat = Array.isArray(parsed)
+      ? parsed
+          .map((item) => (typeof item === "string" ? item : item?.date))
+          .filter((item): item is string => /^\d{4}-\d{2}-\d{2}$/.test(String(item || "")))
+      : [];
+    holidaysSet = new Set(flat);
+  } catch {}
+
+  // Pluses map por jornada id -> los pluses de una jornada (plusItems array)
+  type PlusItemLike = { concepto?: string | null; concept?: string | null; amount?: number | null; importe?: number | null; id?: string | null };
+  const plusesByJourney = new Map<string, PlusItemLike[]>();
+  const allJornadasForPluses = sorted;
+  for (const j of allJornadasForPluses) {
+    if (!j?.id || j.id.startsWith("__")) continue;
+    let items: PlusItemLike[] = [];
+    const jany = j as any;
+    if (Array.isArray(jany.plusItems) && jany.plusItems.length > 0) items = jany.plusItems as PlusItemLike[];
+    else if (Array.isArray(jany.extras) && jany.extras.length) {
+      // fallback intento extraer plus de extras si están
+    }
+    if (items.length > 0) plusesByJourney.set(j.id, items);
+  }
+  // Clave única para comprobar plus duplicado: `date||concepto||sourceJourneyId`
+  const usedPlusKeysGlobal = new Set<string>();
+  for (const [jId, list] of plusesByJourney.entries()) {
+    const j = allJornadasForPluses.find((x) => x?.id === jId);
+    if (!j) continue;
+    const jFin = extractYyyyMmDd(j.fechaFin ?? j.endAt);
+    const jIni = extractYyyyMmDd(j.fechaInicio ?? j.startAt);
+    for (const p of list) {
+      const concepto = (p.concepto || p.concept || "").trim();
+      if (!concepto) continue;
+      if (jFin) usedPlusKeysGlobal.add(`${jFin}||${concepto}||${jId}`);
+      if (jIni && jIni !== jFin) usedPlusKeysGlobal.add(`${jIni}||${concepto}||${jId}`);
+    }
+  }
+
+  // Helper Domingo + Festivo
+  function isDomingoDate(date: string): boolean {
+    if (!date) return false;
+    const y = +date.slice(0, 4); const m = +date.slice(5, 7); const d = +date.slice(8, 10);
+    if (!y || !m || !d) return false;
+    return new Date(y, m - 1, d).getDay() === 0;
+  }
+  function isFestivoDate(date: string): boolean {
+    return holidaysSet.has(date);
+  }
+  function getPlusItemsForCandidateDate(params: {
+    candidateDate: string;
+    prevId: string | null;
+    currId: string | null;
+  }): PlusItemLike[] {
+    const out: PlusItemLike[] = [];
+    const ids = [params.prevId, params.currId].filter((s): s is string => Boolean(s));
+    for (const id of ids) {
+      const list = plusesByJourney.get(id);
+      if (!list) continue;
+      for (const p of list) {
+        const concepto = (p.concepto || p.concept || "").trim();
+        if (!concepto) continue;
+        const globalKey = `${params.candidateDate}||${concepto}||${id}`;
+        if (usedPlusKeysGlobal.has(globalKey)) continue;
+        out.push(p);
+        // marcar usada para este candidate (porque ahora vamos a añadirla a NDDE); no tocar jornadas originales.
+      }
+    }
+    return out;
+  }
+
+  const allNatural = await getAllNaturalDayDiets();
+  const confirmedByDate = new Map<string, NaturalDayDietEntry>();
+  for (const n of allNatural) {
+    if (n.confirmedByUser) confirmedByDate.set(n.date, n);
+  }
+
+  const dismissedSet = await getAllDismissedNaturalDayDates();
+  const dismissedWithInfo = new Map<string, string>();
+  for (const n of allNatural) {
+    if (n.dismissedAt) dismissedWithInfo.set(n.date, n.dismissedAt);
+  }
+
+  const journeyStartDatesWithDiet = new Set<string>();
+  for (const j of allJornadas) {
+    const dietAmount = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
+    if (dietAmount > 0 && j.fechaInicio) journeyStartDatesWithDiet.add(j.fechaInicio);
+  }
+  const anyJourneyStartByDate = new Map<string, Jornada>();
+  for (const j of allJornadas) {
+    if (j.fechaInicio && !anyJourneyStartByDate.has(j.fechaInicio)) anyJourneyStartByDate.set(j.fechaInicio, j);
+  }
+  const journeyEndsAtBaseByDate = new Map<string, Jornada>();
+  for (const j of allJornadas) {
+    const f = extractYyyyMmDd(j.fechaFin ?? j.endAt);
+    if (f && isBaseLocation(j.lugarFin, baseLocation)) journeyEndsAtBaseByDate.set(f, j);
+  }
+
+  const { customRates } = await loadDietDerivationContext();
+  const findRateSafe = (t: NaturalDayDietType, pct: 100 | 60 | 30) => {
+    try { return findRate(customRates, t, pct); } catch { return 0; }
+  };
+
+  const candidates: DetectedMissingNaturalDay[] = [];
+  const seenDates = new Set<string>();
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const curr = sorted[i];
+    const prevIni = extractYyyyMmDd(prev.fechaInicio ?? prev.startAt);
+    const prevFin = extractYyyyMmDd(prev.fechaFin ?? prev.endAt);
+    const currIni = extractYyyyMmDd(curr.fechaInicio ?? curr.startAt);
+    if (!prevIni || !prevFin || !currIni) continue;
+
+    // ——— CAPA 0: REGLA DEFINITIVA GAP EN_BASE ↔ EN_BASE ———
+    // Si el GAP empieza EN_BASE (lugarFin previo = base) Y además termina EN_BASE (lugarInicio actual = base)
+    //   → se trata de un descanso completo EN BASE → NUNCA dietas naturales, pase lo que pase con la máquina periods.
+    // Ejemplo user: 30/07 fin Abrera → 24/08 ini Abrera → SKIP 31/07…23/08.
+    // Si la fechaIni del gap siguiente EN BASE, pero la jornada INICIO también termina EN BASE al final → también aplica a arrival days.
+    const prevEndsAtBase = isBaseLocation(prev.lugarFin, baseLocation);
+    const currStartsAtBase = isBaseLocation(curr.lugarInicio, baseLocation);
+    const gapBothEndsBase = Boolean(prevEndsAtBase && currStartsAtBase);
+    // GAP DISTANCIA (días naturales entre última fecha útil de PREV y primera fecha útil de CURR)
+    let gapStartDayInclusive: string | null = addDays(prevFin < prevIni ? prevIni : prevFin, 1);
+    let gapEndDayInclusive: string | null = addDays(currIni, -1);
+    let gapDayCount = 0;
+    if (gapStartDayInclusive && gapEndDayInclusive && gapStartDayInclusive <= gapEndDayInclusive) {
+      const y1 = +gapStartDayInclusive.slice(0,4), m1 = +gapStartDayInclusive.slice(5,7), d1 = +gapStartDayInclusive.slice(8,10);
+      const y2 = +gapEndDayInclusive.slice(0,4), m2 = +gapEndDayInclusive.slice(5,7), d2 = +gapEndDayInclusive.slice(8,10);
+      gapDayCount = Math.round((new Date(y2, m2-1, d2).getTime() - new Date(y1, m1-1, d1).getTime()) / 86400000) + 1;
+    }
+    // CAPA 0.5 BIS: GAP >= 2 días Y (algún extremo BASE) → se asume descanso en base (no es ruta continua single-night)
+    const oneSideBaseLongRest = Boolean((prevEndsAtBase || currStartsAtBase) && gapDayCount >= 2);
+
+    const gapFrom = prevFin < prevIni ? prevIni : prevFin; // en gaps normales, la última fecha útil del prev = fechaFin
+    const gapTo = currIni;
+    try {
+      console.log("[detectMissingOutOfBaseDietDays:GAP]", {
+        gapIndex: i,
+        prev: { id: prev.id, fechaFin: prevFin, lugarFin: prev.lugarFin ?? null, endsAtBase: prevEndsAtBase, tipoRuta: prev.tipoRuta || null },
+        curr: { id: curr.id, fechaInicio: currIni, lugarInicio: curr.lugarInicio ?? null, startsAtBase: currStartsAtBase, tipoRuta: curr.tipoRuta || null },
+        gapRange: { from: addDays(gapFrom, 1), to: addDays(gapTo, -1), dayCount: gapDayCount },
+        gapBothEndsBase,
+        oneSideBaseLongRest,
+        note: oneSideBaseLongRest ? "gap >= 2d & one endpoint = base → treated as in-base full rest" : null,
+      });
+    } catch {}
+    if (gapBothEndsBase || oneSideBaseLongRest) {
+      try { console.log("[detectMissingOutOfBaseDietDays:GAP_SKIP_ENDPOINTS_BASE]", { reason: gapBothEndsBase ? "BOTH_ENDS_BASE" : "ONE_END_BASE_GAP>=2DAYS" }); } catch {}
+      continue;
+    }
+
+    let curDate = prevIni;
+    while (curDate <= currIni) {
+      if (options?.fromDate && curDate < options.fromDate) {
+        curDate = addDays(curDate, 1);
+        continue;
+      }
+      if (options?.toDate && curDate > options.toDate) {
+        break;
+      }
+      if (curDate === prevIni) {
+        curDate = addDays(curDate, 1);
+        continue;
+      }
+      if (curDate === currIni) {
+        curDate = addDays(curDate, 1);
+        continue;
+      }
+      if (dismissedSet.has(curDate)) {
+        curDate = addDays(curDate, 1);
+        continue;
+      }
+
+      const periodForDate = periods.find(p => periodContainsDate(p, curDate));
+      const isInsideOOBDuration = Boolean(periodForDate);
+      const alreadyHasDiet = confirmedByDate.has(curDate) || journeyStartDatesWithDiet.has(curDate);
+      const anyJourneyStartsToday = anyJourneyStartByDate.has(curDate);
+
+      const arrivalJ = journeyEndsAtBaseByDate.get(curDate);
+
+      // FIX A: SI ESTA FECHA ES DÍA DE LLEGADA A BASE (una jornada terminó EN BASE hoy),
+      //        NO la procesa el GAP loop. La deja AL BLOQUE CROSSDAY_ARRIVAL para que
+      //        marque isBaseArrivalDay=true, location=lugarFin, y lance el selector %.
+      if (arrivalJ) {
+        try {
+          console.log("[detectMissingOutOfBaseDietDays:GAP_SKIP_ARRIVAL_DAY]", {
+            date: curDate,
+            reason: "SKIP gap-loop, handled by CROSSDAY_ARRIVAL block to set isBaseArrivalDay=true",
+            arrivalJourney: { id: arrivalJ.id, lugarFin: arrivalJ.lugarFin ?? null, fechaFin: extractYyyyMmDd(arrivalJ.fechaFin ?? arrivalJ.endAt), horaFin: (arrivalJ as any).horaFin ?? null },
+          });
+        } catch {}
+        curDate = addDays(curDate, 1);
+        continue;
+      }
+
+      const nextStartsSameDay = anyJourneyStartsToday;
+      let result: "SKIP" | "CANDIDATE" = "SKIP";
+      if (anyJourneyStartsToday || alreadyHasDiet || !periodForDate) {
+        result = "SKIP";
+      } else {
+        result = "CANDIDATE";
+      }
+
+      try {
+        console.log("[detectMissingOutOfBaseDietDays]", {
+          date: curDate,
+          previousJourney: { id: prev.id, fechaInicio: prevIni, fechaFin: prevFin, lugarFin: prev.lugarFin ?? null, tipo: prev.tipoRuta ?? null, endsAtBase: prevEndsAtBase },
+          nextJourney: { id: curr.id, fechaInicio: currIni, lugarInicio: curr.lugarInicio ?? null, startsAtBase: currStartsAtBase },
+          gapBothEndsBase,
+          baseLocation,
+          isAtBase: Boolean(isBaseLocation(baseLocation, baseLocation)) && !isInsideOOBDuration,
+          isInsideOutOfBasePeriod: isInsideOOBDuration,
+          periodMatched: periodForDate ? { startDate: periodForDate.startDate, endDate: periodForDate.endDate, routeType: periodForDate.routeTypeAtStart, closedByBaseArrival: periodForDate.closedByBaseArrival, includesArrivalDay: periodForDate.includesArrivalDay, reliableStart: periodForDate.reliableLocationStart, reliableEnd: periodForDate.reliableLocationEnd } : null,
+          alreadyHasDiet,
+          anyJourneyStartsToday,
+          dismissed: dismissedSet.has(curDate),
+          result,
+        });
+      } catch {}
+
+      if (result === "CANDIDATE" && !seenDates.has(curDate)) {
+        seenDates.add(curDate);
+        const p = periodForDate!;
+        const tipoPrev = prev.tipoRuta || "NINGUNO";
+        const tipoCurr = curr.tipoRuta || "NINGUNO";
+        let resolvedType: NaturalDayDietType = p.routeTypeAtStart;
+        if (resolvedType === "NACIONAL" && (tipoPrev === "INTERNACIONAL" || tipoCurr === "INTERNACIONAL" || tipoPrev === "REGIONAL_INTL" || tipoCurr === "REGIONAL_INTL" || tipoPrev === "NAC_INTL" || tipoCurr === "NAC_INTL")) {
+          resolvedType = "INTERNACIONAL";
+        }
+        const percentage: 100 | 60 | 30 = 100;
+        const amount = findRateSafe(resolvedType, percentage);
+        let location: string | null = null;
+        // FIX B: Regla ubicación FIABLE por cercanía temporal (nunca arrastrar FIN periodo a días antiguos):
+        //   1. Si es EXACTAMENTE endDate del periodo por regreso a base → reliableLocationEnd (base)
+        //   2. Si es EXACTAMENTE startDate del periodo → reliableLocationStart (fin jornada opener)
+        //   3. SINO (día intermedio): la UBICACIÓN MÁS RECIENTE ANTERIOR = lugarFin de la jornada anterior (cruzada o no).
+        //      Solo si no hay lugarFin previo, usamos reliableStart/end como fallback último.
+        if (p.closedByBaseArrival && p.endDate === curDate) {
+          location = p.reliableLocationEnd;
+        } else if (p.startDate === curDate) {
+          location = p.reliableLocationStart;
+        } else {
+          // Día intermedio: 1ª opción = lugarFin jornada anterior (última que pasó antes del gap).
+          location = prev.lugarFin || null;
+          if (!location && prevFin < curDate) {
+            // 2ª opción: si hay fechaFin cruzada, usar reliableLocationStart (fin del opener)
+            location = p.reliableLocationStart || null;
+          }
+          if (!location) {
+            // 3ª opción fallback (siempre válido, pero menos preciso): reliableEnd del periodo o lugarInicio sgte
+            location = p.reliableLocationEnd || curr.lugarInicio || p.reliableLocationStart || null;
+          }
+        }
+        // CAPA 3 DEFENSA FINAL: si la location resuelta coincide con BASE → es un día EN BASE.
+        // SKIP incondicional aunque periodForDate diga lo contrario.
+        if (location && isBaseLocation(location, baseLocation)) {
+          try {
+            console.log("[detectMissingOutOfBaseDietDays:CANDIDATE_SKIP_BASE_LOCATION]", {
+              date: curDate,
+              resolvedLocation: location,
+              reason: "SKIP incondicional: candidate resolved location matches user baseLocation",
+            });
+          } catch {}
+          curDate = addDays(curDate, 1);
+          continue;
+        }
+        candidates.push({
+          date: curDate,
+          type: resolvedType,
+          percentage,
+          amount,
+          location,
+          previousJourneyId: prev.id && !prev.id.startsWith("__") ? prev.id : null,
+          nextJourneyId: curr.id && !curr.id.startsWith("__") ? curr.id : null,
+          isBaseArrivalDay: false,
+
+          // Campos richer nueva UI:
+          previousJourneyStartAt: (prev as any).startAt ?? (prev as any).fechaInicio ?? null,
+          previousJourneyEndAt: (prev as any).endAt ?? (prev as any).fechaFin ?? null,
+          previousJourneyLugarInicio: prev.lugarInicio ?? null,
+          previousJourneyLugarFin: prev.lugarFin ?? null,
+          arrivesAtBase: prevEndsAtBase ?? false,
+          arrivalHHMM: (prevEndsAtBase && (prev as any).horaFin) ? (prev as any).horaFin : null,
+          nextJourneyStartAt: (curr as any).startAt ?? (curr as any).fechaInicio ?? null,
+          nextJourneyLugarInicio: curr.lugarInicio ?? null,
+          isDomingo: isDomingoDate(curDate),
+          isFestivo: isFestivoDate(curDate),
+          motivo: "Día completo fuera de base entre jornadas (periodo OutOfBase activo)",
+          plusItems: getPlusItemsForCandidateDate({
+            candidateDate: curDate,
+            prevId: prev.id && !prev.id.startsWith("__") ? prev.id : null,
+            currId: curr.id && !curr.id.startsWith("__") ? curr.id : null,
+          }).map((p, idx) => ({
+            id: p.id ?? `plus-${curDate}-${idx}`,
+            concepto: (p.concepto ?? (p as any).concept ?? "").trim() || "Plus",
+            amount: Number((p.amount ?? p.importe ?? 0)) || 0,
+            selected: true,
+          })),
+        } as any);
+      }
+
+      curDate = addDays(curDate, 1);
+    }
+  }
+
+  // --- BLOQUE ADICIONAL: día de regreso a base en jornada CRUZADA (empieza en base, termina en base, fechaInicio != fechaFin)
+  // Caso 13 Abrera → 14 Abrera, tipo Internacional: NO abría OutOfBasePeriod (sale y vuelve a base),
+  // pero el día natural 14 SÍ puede necesitar dieta (selector 100/60/30/sin dieta).
+  try {
+    const realJornadas = sorted.filter(j => j && !j.id?.startsWith("__"));
+    for (const j of realJornadas) {
+      const jIni = extractYyyyMmDd(j.fechaInicio ?? j.startAt);
+      const jFin = extractYyyyMmDd(j.fechaFin ?? j.endAt);
+      if (!jIni || !jFin) continue;
+      if (jIni === jFin) continue;
+      const endsBase = isBaseLocation(j.lugarFin, baseLocation);
+      if (!endsBase) continue;
+      const tipo = j.tipoRuta || "NINGUNO";
+      if (tipo === "NINGUNO") continue;
+
+      const candidateDate = jFin;
+      if (options?.fromDate && candidateDate < options.fromDate) continue;
+      if (options?.toDate && candidateDate > options.toDate) continue;
+      if (dismissedSet.has(candidateDate)) continue;
+      if (seenDates.has(candidateDate)) continue;
+      if (confirmedByDate.has(candidateDate)) continue;
+      if (journeyStartDatesWithDiet.has(candidateDate)) continue;
+      // la jornada empieza en jIni y acaba en jFin (otro día). jFin no es el startDate de esa jornada. Pero SÍ una posterior o la del arrivalDay mismo.
+      // No salta si ya tiene NDDE o dieta asociada al start. Ahora la marcamos.
+      let rtype: NaturalDayDietType = "NACIONAL";
+      if (tipo === "INTERNACIONAL" || tipo === "REGIONAL_INTL" || tipo === "NAC_INTL") rtype = "INTERNACIONAL";
+      else if (tipo === "REGIONAL") rtype = "REGIONAL";
+      const pct: 100 | 60 | 30 = 100;
+      const amt = findRateSafe(rtype, pct);
+      const loc = j.lugarFin || j.lugarInicio || null;
+      let arrivalHHMM: string | null = null;
+      if (j && (j as any).horaFin) arrivalHHMM = (j as any).horaFin;
+      seenDates.add(candidateDate);
+      const rawPluses = getPlusItemsForCandidateDate({ candidateDate, prevId: j.id.startsWith("__") ? null : j.id, currId: null });
+      candidates.push({
+        date: candidateDate,
+        type: rtype,
+        percentage: pct,
+        amount: amt,
+        location: loc,
+        previousJourneyId: j.id.startsWith("__") ? null : j.id,
+        nextJourneyId: null,
+        isBaseArrivalDay: true,
+        arrivalTime: arrivalHHMM,
+
+        // Campos richer nueva UI:
+        previousJourneyStartAt: (j as any).startAt ?? (j as any).fechaInicio ?? null,
+        previousJourneyEndAt: (j as any).endAt ?? (j as any).fechaFin ?? null,
+        previousJourneyLugarInicio: j.lugarInicio ?? null,
+        previousJourneyLugarFin: j.lugarFin ?? null,
+        arrivesAtBase: true,
+        arrivalHHMM,
+        nextJourneyStartAt: null,
+        nextJourneyLugarInicio: null,
+        isDomingo: isDomingoDate(candidateDate),
+        isFestivo: isFestivoDate(candidateDate),
+        motivo: "Jornada iniciada el día anterior y finalizada hoy en base (llegada a base)",
+        plusItems: rawPluses.map((p, idx) => ({
+          id: p.id ?? `plus-${candidateDate}-${idx}`,
+          concepto: (p.concepto ?? (p as any).concept ?? "").trim() || "Plus",
+          amount: Number((p.amount ?? p.importe ?? 0)) || 0,
+          selected: true,
+        })),
+      } as any);
+      try {
+        console.log("[detectMissingOutOfBaseDietDays:CROSSDAY_ARRIVAL]", {
+          date: candidateDate,
+          journey: { id: j.id, fechaInicio: jIni, fechaFin: jFin, lugarInicio: j.lugarInicio ?? null, lugarFin: j.lugarFin ?? null, tipoRuta: tipo },
+          baseLocation,
+          type: rtype,
+        });
+      } catch {}
+    }
+  } catch {}
+
+  candidates.sort((a, b) => a.date.localeCompare(b.date));
+  return candidates;
 }
 
 export async function importFromServer(serverJornadas: any[], serverCompensaciones: any[]): Promise<void> {
@@ -1607,7 +4934,7 @@ const VIAJES_KEY = "tacoplan_viajes";
 const VIAJE_PLACES_KEY = "tacoplan_viaje_places";
 
 export async function getAllViajes(): Promise<Viaje[]> {
-  const raw = await AsyncStorage.getItem(VIAJES_KEY);
+  const raw = await getItemScoped(VIAJES_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -1677,7 +5004,36 @@ function migrateViaje(v: any): Viaje {
 }
 
 async function saveAllViajes(list: Viaje[]): Promise<void> {
-  await AsyncStorage.setItem(VIAJES_KEY, JSON.stringify(list));
+  await setItemScoped(VIAJES_KEY, JSON.stringify(list));
+}
+
+export async function replaceImportedViajes(list: Viaje[]): Promise<void> {
+  await saveAllViajes(list);
+}
+
+export async function upsertViajesImported(viajes: Viaje[]): Promise<{ added: number; skipped: number }> {
+  if (viajes.length === 0) return { added: 0, skipped: 0 };
+  const all = await getAllViajes();
+  const map = new Map<string, Viaje>();
+  for (const v of all) map.set(v.id, v);
+  let added = 0;
+  let skipped = 0;
+  let changed = false;
+  for (const v of viajes) {
+    if (!v.id) continue;
+    if (!map.has(v.id)) {
+      map.set(v.id, v);
+      added++;
+      changed = true;
+      for (const p of v.paradas || []) {
+        if (p.lugar?.trim()) await addViajePlace(p.lugar.trim());
+      }
+    } else {
+      skipped++;
+    }
+  }
+  if (changed) await saveAllViajes(Array.from(map.values()));
+  return { added, skipped };
 }
 
 export async function crearViaje(data: {
@@ -1898,7 +5254,7 @@ export async function eliminarViaje(viajeId: string): Promise<void> {
 
 export async function getViajePlaces(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem(VIAJE_PLACES_KEY);
+    const raw = await getItemScoped(VIAJE_PLACES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -1914,7 +5270,61 @@ export async function addViajePlace(place: string): Promise<void> {
   const existing = await getViajePlaces();
   const filtered = existing.filter((p) => p.toLowerCase() !== trimmed.toLowerCase());
   const updated = [trimmed, ...filtered].slice(0, 20);
-  await AsyncStorage.setItem(VIAJE_PLACES_KEY, JSON.stringify(updated));
+  await setItemScoped(VIAJE_PLACES_KEY, JSON.stringify(updated));
+}
+
+export type TachoActivityType = "conduccion" | "pausa" | "trabajo";
+
+export interface TachoActivity {
+  id: string;
+  fecha: string;
+  tipo: TachoActivityType;
+  inicio: string;
+  fin: string;
+  duracionMin: number;
+  origen: string | null;
+  destino: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const TACHO_ACTIVITIES_KEY = "tacoplan_tacho_activities";
+
+export async function getAllTachoActivities(): Promise<TachoActivity[]> {
+  const raw = await getItemScoped(TACHO_ACTIVITIES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertTachoActivitiesImported(items: TachoActivity[]): Promise<{ added: number; skipped: number }> {
+  if (items.length === 0) return { added: 0, skipped: 0 };
+  const all = await getAllTachoActivities();
+  const map = new Map<string, TachoActivity>();
+  for (const a of all) map.set(a.id, a);
+  let added = 0;
+  let skipped = 0;
+  let changed = false;
+  for (const a of items) {
+    if (!a.id) continue;
+    if (!map.has(a.id)) {
+      map.set(a.id, a);
+      added++;
+      changed = true;
+    } else {
+      skipped++;
+    }
+  }
+  if (changed) await setItemScoped(TACHO_ACTIVITIES_KEY, JSON.stringify(Array.from(map.values())));
+  return { added, skipped };
+}
+
+export async function replaceImportedTachoActivities(items: TachoActivity[]): Promise<void> {
+  await setItemScoped(TACHO_ACTIVITIES_KEY, JSON.stringify(items));
 }
 
 export interface MoroccoTrip {
@@ -1949,7 +5359,7 @@ export interface FerryRestRecord {
 
 export async function getAllMoroccoTrips(): Promise<MoroccoTrip[]> {
   try {
-    const raw = await AsyncStorage.getItem(MOROCCO_TRIPS_KEY);
+    const raw = await getItemScoped(MOROCCO_TRIPS_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -1967,7 +5377,7 @@ export async function addMoroccoTrip(trip: Omit<MoroccoTrip, "id" | "createdAt" 
     updatedAt: now,
   };
   all.push(newTrip);
-  await AsyncStorage.setItem(MOROCCO_TRIPS_KEY, JSON.stringify(all));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(all));
   return newTrip;
 }
 
@@ -1976,13 +5386,13 @@ export async function updateMoroccoTrip(id: string, updates: Partial<MoroccoTrip
   const idx = all.findIndex((t) => t.id === id);
   if (idx === -1) return;
   all[idx] = { ...all[idx], ...updates, updatedAt: new Date().toISOString() };
-  await AsyncStorage.setItem(MOROCCO_TRIPS_KEY, JSON.stringify(all));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(all));
 }
 
 export async function deleteMoroccoTrip(id: string): Promise<void> {
   const all = await getAllMoroccoTrips();
   const filtered = all.filter((t) => t.id !== id);
-  await AsyncStorage.setItem(MOROCCO_TRIPS_KEY, JSON.stringify(filtered));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(filtered));
 }
 
 export async function getMoroccoTripsSummary(desde: string, hasta: string): Promise<{
@@ -1997,11 +5407,12 @@ export async function getMoroccoTripsSummary(desde: string, hasta: string): Prom
 }
 
 export async function getMoroccoPernoctaSummary(desde: string, hasta: string, pernightRate: number): Promise<{
+  trips: MoroccoTrip[];
   count: number;
   totalImporte: number;
 }> {
   const all = await getAllMoroccoTrips();
-  const filtered = all.filter((t) => t.estado === "pernocta" && t.fecha >= desde && t.fecha <= hasta);
+  const filtered = all.filter((t) => t.fecha >= desde && t.fecha <= hasta);
   const totalImporte = filtered.reduce((s, t) => s + t.importe, 0);
   return { trips: filtered, count: filtered.length, totalImporte };
 }
@@ -2036,12 +5447,16 @@ export async function getMoroccoJornadaSummary(
 
 export async function getAllFerryRests(): Promise<FerryRestRecord[]> {
   try {
-    const raw = await AsyncStorage.getItem(FERRY_RESTS_KEY);
+    const raw = await getItemScoped(FERRY_RESTS_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
     return [];
   }
+}
+
+export async function replaceImportedFerryRests(list: FerryRestRecord[]): Promise<void> {
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(list));
 }
 
 export async function addFerryRest(rest: Omit<FerryRestRecord, "id" | "createdAt">): Promise<FerryRestRecord> {
@@ -2052,7 +5467,7 @@ export async function addFerryRest(rest: Omit<FerryRestRecord, "id" | "createdAt
     createdAt: new Date().toISOString(),
   };
   all.push(newRest);
-  await AsyncStorage.setItem(FERRY_RESTS_KEY, JSON.stringify(all));
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(all));
   return newRest;
 }
 
@@ -2061,14 +5476,14 @@ export async function updateFerryRest(id: string, updates: Partial<Omit<FerryRes
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return null;
   all[idx] = { ...all[idx], ...updates };
-  await AsyncStorage.setItem(FERRY_RESTS_KEY, JSON.stringify(all));
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(all));
   return all[idx];
 }
 
 export async function deleteFerryRest(id: string): Promise<void> {
   const all = await getAllFerryRests();
   const filtered = all.filter((r) => r.id !== id);
-  await AsyncStorage.setItem(FERRY_RESTS_KEY, JSON.stringify(filtered));
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(filtered));
 }
 
 export interface ActiveFerryRest {
@@ -2121,7 +5536,7 @@ export function hasOpenInterruption(interruptions: FerryInterruption[]): boolean
 
 export async function getActiveFerryRest(): Promise<ActiveFerryRest | null> {
   try {
-    const raw = await AsyncStorage.getItem(ACTIVE_FERRY_REST_KEY);
+    const raw = await getItemScoped(ACTIVE_FERRY_REST_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -2130,11 +5545,11 @@ export async function getActiveFerryRest(): Promise<ActiveFerryRest | null> {
 }
 
 export async function setActiveFerryRest(rest: ActiveFerryRest): Promise<void> {
-  await AsyncStorage.setItem(ACTIVE_FERRY_REST_KEY, JSON.stringify(rest));
+  await setItemScoped(ACTIVE_FERRY_REST_KEY, JSON.stringify(rest));
 }
 
 export async function clearActiveFerryRest(): Promise<void> {
-  await AsyncStorage.removeItem(ACTIVE_FERRY_REST_KEY);
+  await removeItemScoped(ACTIVE_FERRY_REST_KEY);
 }
 
 export async function startFerryInterruption(): Promise<ActiveFerryRest | null> {

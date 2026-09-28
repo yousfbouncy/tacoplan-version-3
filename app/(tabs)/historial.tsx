@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   Text,
@@ -18,16 +18,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import {
   formatFecha,
   formatDescanso,
   formatMinutosHoras,
+  formatDateForDisplay,
+  parseDisplayDateToISO,
 } from "@/lib/utils";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
 import { useFerry } from "@/lib/ferry-context";
+import { useAuth } from "@/lib/auth-context";
 import {
   listarJornadas,
   eliminarJornada,
@@ -35,9 +39,16 @@ import {
   getAllViajes,
   getAllFerryRests,
   getActiveFerryRest,
+  listDayExtraEntries,
+  deleteDayExtraEntry,
+  updateDayExtraEntry,
   updateFerryRest,
   deleteFerryRest,
   updateJornadaFerryData,
+  splitOffsiteWeeklyRestEntry,
+  calcDayExtra,
+  type UserDayExtras,
+  type DayExtraEntry,
   type Jornada,
   type Compensacion,
   type Viaje,
@@ -46,14 +57,111 @@ import {
   type FerryInterruption,
   getFerryInterruptionsTotalMin,
 } from "@/lib/local-storage";
+
+const PDF_DIETS_DEBUG_URL = "http://127.0.0.1:7777/event";
+const PDF_DIETS_DEBUG_SESSION = "pdf-diets-not-saved";
+const PDF_DIETS_DEBUG_RUN = "pre-fix";
+const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
+const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
+const JORNADA_DATE_DEBUG_RUN = "pre-fix";
+const historialDietDebugSeen = new Set<string>();
+const historialDateDebugSeen = new Set<string>();
+
+function reportHistorialDietDebug(kind: "manual" | "imported", item: Jornada, totalCalculado: number, paymentMode: string): void {
+  const key = `${kind}:${item.id}`;
+  if (historialDietDebugSeen.has(key) || typeof fetch !== "function") return;
+  historialDietDebugSeen.add(key);
+  fetch(PDF_DIETS_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: PDF_DIETS_DEBUG_SESSION,
+      runId: PDF_DIETS_DEBUG_RUN,
+      hypothesisId: "B",
+      location: "historial:JornadaItem:render",
+      msg: `[DEBUG] ${kind.toUpperCase()} DIETA DEBUG`,
+      data: {
+        kind,
+        id: item.id,
+        paymentMode,
+        dietaImporteEur: item.dietaImporteEur,
+        dietBaseEur: item.dietBaseEur,
+        dietaPercent: item.dietaPercent,
+        dietaModo: item.dietaModo,
+        dietaManualTipo: item.dietaManualTipo,
+        dietaManualPct: item.dietaManualPct,
+        dietasItems: item.dietasItems,
+        dayFlag: item.dayFlag,
+        dayExtraEur: item.dayExtraEur,
+        plusItems: item.plusItems,
+        pernocta: item.pernocta,
+        totalCalculado,
+      },
+      ts: Date.now(),
+    }),
+  }).catch(() => {
+    historialDietDebugSeen.delete(key);
+  });
+}
+
+function reportJornadaDateDebug(item: Jornada, renderedDate: string): void {
+  const key = `${item.id}:${item.updatedAt || ""}:${renderedDate}`;
+  if (historialDateDebugSeen.has(key) || typeof fetch !== "function") return;
+  historialDateDebugSeen.add(key);
+  let timezone: string | null = null;
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {}
+  fetch(JORNADA_DATE_DEBUG_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: JORNADA_DATE_DEBUG_SESSION,
+      runId: JORNADA_DATE_DEBUG_RUN,
+      hypothesisId: "E",
+      location: "historial:JornadaItem:renderDate",
+      msg: "[JORNADA_DATE_DEBUG] jornada rendered in Historial",
+      data: {
+        timezone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        platform: Platform.OS,
+        jornadaId: item.id,
+        fechaInicio: item.fechaInicio,
+        horaInicio: item.horaInicio,
+        fechaFin: item.fechaFin,
+        horaFin: item.horaFin,
+        startAt: item.startAt,
+        endAt: item.endAt,
+        fechaMostradaHistorial: renderedDate,
+      },
+      ts: Date.now(),
+    }),
+  }).catch(() => {
+    historialDateDebugSeen.delete(key);
+  });
+}
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   getLegalStatusColor,
   getLegalStatusLabel,
+  getQualifiedSplitDailyRestFirstPartMin,
   getSeverityColor,
-  getSeverityLabel,
+  getSplitDailyRestComputedTotalMin,
 } from "@/lib/legalEngine";
 import { useSync } from "@/lib/sync-context";
+import { userScopedKey } from "@/lib/user-scope";
+import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
+import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
+import {
+  detectMissingOutOfBaseDietDays,
+  getAllNaturalDayDiets,
+  deleteNaturalDayDiet,
+  dismissNaturalDayDiets,
+  upsertNaturalDayDiets,
+  clearDismissedNaturalDayDietsInRange,
+  type NaturalDayDietEntry,
+  type DetectedMissingNaturalDay,
+} from "@/lib/local-storage";
 
 function getLegalStatus(item: Jornada): { color: string; label: string } {
   if (!item.fechaFin) return { color: Colors.light.textSecondary, label: "-" };
@@ -65,13 +173,17 @@ function getLegalStatus(item: Jornada): { color: string; label: string } {
     };
   }
 
+  const isDouble = (item as any).isDoubleDriving === true;
   const durMin = item.duracionJornadaMin || 0;
   const condMin = item.conduccionMin || Math.round(durMin * 0.65);
+
+  const maxDutyForViolation = isDouble ? 21 * 60 : 15 * 60;
+  const maxDutyForWarning = isDouble ? 19 * 60 : 13 * 60;
 
   if (
     item.tipoDescansoAnterior === "INFRACCION_DESCANSO" ||
     condMin > 10 * 60 ||
-    durMin > 15 * 60
+    durMin > maxDutyForViolation
   ) {
     return { color: Colors.light.danger, label: "Infraccion" };
   }
@@ -79,7 +191,7 @@ function getLegalStatus(item: Jornada): { color: string; label: string } {
   if (
     item.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" ||
     condMin > 9 * 60 ||
-    durMin > 13 * 60
+    durMin > maxDutyForWarning
   ) {
     return { color: Colors.light.warning, label: "Advertencia" };
   }
@@ -125,6 +237,20 @@ function formatDateTimeShort(iso: string | null): string {
   return `${dd}/${mm} ${hh}:${mi}`;
 }
 
+function normalizeFerryInterruptions(
+  interruptions: FerryRestRecord["interruptions"] | Jornada["ferryInterruptions"] | null | undefined,
+): FerryInterruption[] {
+  if (!interruptions || interruptions.length === 0) return [];
+  return (interruptions as any[])
+    .map((int) => {
+      if (int && typeof int.start === "string") {
+        return { start: int.start, end: typeof int.end === "string" ? int.end : null };
+      }
+      return null;
+    })
+    .filter((v): v is FerryInterruption => !!v);
+}
+
 function clasificarDescansoLocal(minutos: number): { tipo: string; labelKey: string; color: string } {
   if (minutos < 9 * 60) return { tipo: "INFRACCION", labelKey: "historial.restInfraction", color: Colors.light.danger };
   if (minutos < 11 * 60) return { tipo: "REDUCIDO_DIARIO", labelKey: "historial.dailyReduced", color: Colors.light.warning };
@@ -133,23 +259,83 @@ function clasificarDescansoLocal(minutos: number): { tipo: string; labelKey: str
   return { tipo: "COMPLETO_SEMANAL", labelKey: "historial.weeklyComplete", color: Colors.light.success };
 }
 
+function isSplitDailyCompleteForHistory(restMin: number, restJornada?: Jornada): boolean {
+  return !!restJornada &&
+    restMin >= 9 * 60 &&
+    restMin < 11 * 60 &&
+    restJornada.tipoDescansoAnterior === "DESCANSO_DIARIO_COMPLETO";
+}
+
+function formatSplitDailyRestLabel(t: (key: string) => string): string {
+  return t("historial.dailyCompleteSplitPrefix");
+}
+
+function formatSplitDailyRestSummary(
+  t: (key: string) => string,
+  firstPartMin: number,
+  finalPartMin: number,
+  totalMin: number,
+): string {
+  return `${formatDescanso(finalPartMin)} ${t("historial.dailySplitContinuousShort")} + ${formatDescanso(firstPartMin)} ${t("historial.dailySplitDuringShiftShort")} = ${formatDescanso(totalMin)}`;
+}
+
+function formatRestLocationStatus(value: Jornada["previousRestInBase"] | Compensacion["sourceRestInBase"] | undefined): string | null {
+  if (value === "in_base") return "En base";
+  if (value === "out_of_base") return "Fuera de base";
+  if (value === "unknown") return "Ubicación desconocida";
+  return null;
+}
+
+function formatRestLegalType(value: Jornada["previousRestLegalType"] | Compensacion["sourceRestLegalType"] | undefined): string | null {
+  if (value === "weekly_normal") return "Descanso semanal normal";
+  if (value === "weekly_reduced") return "Descanso semanal reducido";
+  if (value === "weekly_invalid") return "Descanso inferior a 24h";
+  return null;
+}
+
+function formatCompensationLabel(minutos: number | null | undefined): string | null {
+  if (minutos == null || minutos <= 0) return "Sin compensación generada";
+  return `Compensación generada: ${formatMinutosHoras(minutos)}`;
+}
+
 function RestGapItem({
   restMin,
   compensacion,
   isFerryRest,
   ferryJornada,
+  restJornada,
+  previousRestSourceJornada,
   onEditFerryJornada,
 }: {
   restMin: number;
   compensacion?: Compensacion;
   isFerryRest?: boolean;
   ferryJornada?: Jornada;
+  restJornada?: Jornada;
+  previousRestSourceJornada?: Jornada;
   onEditFerryJornada?: (jornada: Jornada) => void;
 }) {
   const { t } = useI18n();
-  const info = clasificarDescansoLocal(restMin);
+  const isSplitDailyComplete = isSplitDailyCompleteForHistory(restMin, restJornada);
+  const splitFirstPartMin = getQualifiedSplitDailyRestFirstPartMin(previousRestSourceJornada);
+  const splitComputedTotalMin = getSplitDailyRestComputedTotalMin(restMin, previousRestSourceJornada);
+  const info = isSplitDailyComplete
+    ? { tipo: "COMPLETO_DIARIO", labelKey: "historial.dailyComplete", color: Colors.light.success }
+    : clasificarDescansoLocal(restMin);
   const isReduced = info.tipo === "REDUCIDO_DIARIO" || info.tipo === "REDUCIDO_SEMANAL";
   const isInfraction = info.tipo === "INFRACCION" && !isFerryRest;
+  const restLegalLabel = formatRestLegalType(restJornada?.previousRestLegalType ?? compensacion?.sourceRestLegalType);
+  const restLocationLabel = formatRestLocationStatus(restJornada?.previousRestInBase ?? compensacion?.sourceRestInBase);
+  const restDistanceLabel =
+    restJornada?.previousRestDistanceKm != null
+      ? `${restJornada.previousRestDistanceKm.toFixed(1)} km de la base`
+      : compensacion?.sourceRestDistanceKm != null
+        ? `${compensacion.sourceRestDistanceKm.toFixed(1)} km de la base`
+        : null;
+  const restCompLabel = formatCompensationLabel(
+    restJornada?.previousRestCompGeneratedMin
+      ?? (compensacion ? compensacion.horasDeuda * 60 + compensacion.minutosDeuda : null),
+  );
 
   if (isFerryRest && ferryJornada) {
     const FERRY_BLUE = "#0284c7";
@@ -213,7 +399,11 @@ function RestGapItem({
   }
 
   const displayColor = isFerryRest ? Colors.light.success : info.color;
-  const displayLabel = isFerryRest ? t("ferry.restInFerry") : t(info.labelKey);
+  const displayLabel = isFerryRest
+    ? t("ferry.restInFerry")
+    : isSplitDailyComplete
+      ? formatSplitDailyRestLabel(t)
+      : t(info.labelKey);
 
   return (
     <View style={[styles.restGap, isInfraction && styles.restGapDanger, !isFerryRest && isReduced && styles.restGapWarning]}>
@@ -248,6 +438,25 @@ function RestGapItem({
           <Text style={[styles.restGapAlertText, { color: Colors.light.success }]}>
             {t("historial.compensated")}{compensacion.fechaCompensacion ? ` ${formatFecha(compensacion.fechaCompensacion)}` : ""}
           </Text>
+        </View>
+      )}
+      {!isFerryRest && isSplitDailyComplete && splitComputedTotalMin != null && (
+        <View style={styles.restGapMeta}>
+          <Text style={[styles.restGapMetaText, styles.restGapMetaTextSuccess]}>
+            {formatSplitDailyRestSummary(t, splitFirstPartMin ?? 3 * 60, restMin, splitComputedTotalMin)}
+          </Text>
+        </View>
+      )}
+      {!isFerryRest && !isSplitDailyComplete && (restLegalLabel || restLocationLabel || restDistanceLabel || restCompLabel) && (
+        <View style={styles.restGapMeta}>
+          {restLegalLabel && (
+            <Text style={styles.restGapMetaText}>
+              {restLegalLabel} - {formatDescanso(restMin)}
+            </Text>
+          )}
+          {restLocationLabel && <Text style={styles.restGapMetaText}>{restLocationLabel}</Text>}
+          {restDistanceLabel && <Text style={styles.restGapMetaText}>{restDistanceLabel}</Text>}
+          {restCompLabel && <Text style={styles.restGapMetaText}>{restCompLabel}</Text>}
         </View>
       )}
       <View style={styles.restGapLine} />
@@ -308,6 +517,117 @@ function ActiveFerryItem({ item }: { item: ActiveFerryRest }) {
         )}
       </View>
       <View style={styles.restGapLine} />
+    </View>
+  );
+}
+
+function OffsiteWeeklyRestItem({
+  entry,
+  extrasCfg,
+  onEdit,
+  onDelete,
+}: {
+  entry: DayExtraEntry;
+  extrasCfg: UserDayExtras;
+  onEdit?: (entry: DayExtraEntry) => void;
+  onDelete?: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const split = splitOffsiteWeeklyRestEntry(entry, extrasCfg);
+  const restLabel =
+    entry.offsiteRestType === "WEEKLY_REDUCED"
+      ? t("dietas.offsiteWeeklyRestReduced")
+      : t("dietas.offsiteWeeklyRestComplete");
+  const baseLabel = entry.offsiteBase === "INTERNACIONAL" ? t("common.internacional") : t("common.nacional");
+
+  return (
+    <View style={[styles.card, { backgroundColor: Colors.light.tint + "08", borderLeftWidth: 3, borderLeftColor: Colors.light.tint }]}>
+      <View style={styles.cardTop}>
+        <View style={styles.cardDates}>
+          <Text style={styles.dateText}>{formatFecha(entry.date)}</Text>
+          <View style={[styles.infoChip, { backgroundColor: Colors.light.tint + "10" }]}>
+            <Text style={[styles.chipLabel, { color: Colors.light.tint }]}>{t("dietas.offsiteWeeklyRestHistorialTitle")}</Text>
+          </View>
+        </View>
+        <View style={styles.cardActions}>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              onEdit?.(entry);
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="create-outline" size={18} color={Colors.light.tint} />
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              const doDelete = () => onDelete?.(entry.id);
+              if (Platform.OS === "web") {
+                if (window.confirm(t("historial.deleteQuestion"))) doDelete();
+              } else {
+                Alert.alert(t("common.delete"), t("historial.deleteQuestion"), [
+                  { text: t("common.cancel"), style: "cancel" },
+                  { text: t("common.delete"), style: "destructive", onPress: doDelete },
+                ]);
+              }
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="trash-outline" size={18} color={Colors.light.danger} />
+          </Pressable>
+        </View>
+      </View>
+      <View style={styles.cardBottom}>
+        <View style={styles.infoChip}>
+          <Text style={styles.chipLabel}>{restLabel}</Text>
+        </View>
+        <View style={styles.infoChip}>
+          <Text style={styles.chipLabel}>{baseLabel}</Text>
+        </View>
+        {entry.plusSunday && (
+          <View style={styles.infoChip}>
+            <Text style={styles.chipLabel}>{t("dietas.offsiteWeeklyRestPlusSunday")}</Text>
+          </View>
+        )}
+        {entry.plusHoliday && (
+          <View style={styles.infoChip}>
+            <Text style={styles.chipLabel}>{t("dietas.offsiteWeeklyRestPlusHoliday")}</Text>
+          </View>
+        )}
+        <View style={{ flex: 1 }} />
+        <Text style={styles.dietaAmount}>{split.totalAmount > 0 ? `${split.totalAmount.toFixed(2)} \u20AC` : ""}</Text>
+      </View>
+      <View style={{ paddingHorizontal: 16, paddingBottom: entry.note ? 6 : 10, gap: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>Tipo de descanso</Text>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>
+            {split.restAmount.toFixed(2)} \u20AC
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>Plus</Text>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.warning }}>
+            {split.plusAmount.toFixed(2)} \u20AC
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_700Bold", color: Colors.light.text }}>{t("common.total")}</Text>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_700Bold", color: Colors.light.text }}>
+            {split.totalAmount.toFixed(2)} \u20AC
+          </Text>
+        </View>
+        <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+          {restLabel} · {baseLabel}
+        </Text>
+      </View>
+      {entry.note ? (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
+            {entry.note}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -450,11 +770,13 @@ function JornadaItem({
   onDelete,
   onEdit,
   viajes,
+  billingMode,
 }: {
   item: Jornada;
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
   viajes: Viaje[];
+  billingMode: "dietas" | "km" | "viaje";
 }) {
   const { t } = useI18n();
   const isCerrada = !!item.fechaFin;
@@ -463,6 +785,33 @@ function JornadaItem({
   const durMin = item.duracionJornadaMin || 0;
   const condMin = item.conduccionMin || Math.round(durMin * 0.65);
   const matchedViajes = findViajesForJornada(item, viajes);
+  const pm = item.moroccoPaymentMode ? (item.paymentMode || "dietas") : billingMode;
+  const kmTotal = item.kmTotal != null ? item.kmTotal : (item.kmInicio != null && item.kmFin != null ? (item.kmFin - item.kmInicio) : null);
+  const kmRate = item.pricePerKm;
+  const kmImporte = item.importeKm != null
+    ? item.importeKm
+    : (kmTotal != null && kmRate != null ? kmTotal * kmRate : null);
+  const tripImporte = item.importeViaje != null ? item.importeViaje : (item.pricePerTrip != null ? item.pricePerTrip : null);
+  const visibleDietTotal = (() => {
+    if (pm === "km") return kmImporte != null && kmImporte > 0 ? kmImporte : 0;
+    if (pm === "viaje") return tripImporte != null && tripImporte > 0 ? tripImporte : 0;
+    const full = item.dietaImporteEur ? parseFloat(item.dietaImporteEur) : 0;
+    const dayEx = item.dayExtraEur ? parseFloat(item.dayExtraEur) : 0;
+    const base = full - dayEx;
+    return base > 0 ? base : 0;
+  })();
+
+  // #region debug-point B:historial-render
+  if (String(item.id || "").startsWith("pdf_")) {
+    reportHistorialDietDebug("imported", item, visibleDietTotal, pm);
+  } else if (visibleDietTotal > 0) {
+    reportHistorialDietDebug("manual", item, visibleDietTotal, pm);
+  }
+  // #endregion
+
+  // #region debug-point E:historial-date-render
+  reportJornadaDateDebug(item, item.fechaInicio || "");
+  // #endregion
 
   const tipoRutaKey: Record<string, string> = {
     NACIONAL: "common.nacional",
@@ -565,6 +914,32 @@ function JornadaItem({
         </View>
       )}
 
+      {(item as any).isDoubleDriving === true && (
+        <View style={{ marginTop: 10, gap: 4 }}>
+          <View style={[styles.infoChip, {
+            alignSelf: "flex-start" as const,
+            backgroundColor: Colors.light.accent + "18",
+            paddingVertical: 4,
+            paddingHorizontal: 10,
+          }]}>
+            <Ionicons name="people" size={11} color={Colors.light.accent} />
+            <Text style={[styles.chipLabel, { color: Colors.light.accent, fontFamily: "Inter_600SemiBold" }]}>
+              Doble conducción
+            </Text>
+          </View>
+          {typeof (item as any).secondDriverName === "string" && (item as any).secondDriverName && (
+            <Text style={{
+              fontSize: 12,
+              fontFamily: "Inter_400Regular",
+              color: Colors.light.textSecondary,
+              paddingLeft: 2,
+            }}>
+              Segundo conductor: {(item as any).secondDriverName}
+            </Text>
+          )}
+        </View>
+      )}
+
       {isCerrada && (
         <>
           <View style={styles.cardStats}>
@@ -576,6 +951,12 @@ function JornadaItem({
               <Ionicons name="car-outline" size={13} color={Colors.light.textSecondary} />
               <Text style={styles.statText}>{formatMinutosHoras(condMin)}</Text>
             </View>
+            {pm === "km" && kmTotal != null && (
+              <View style={styles.statItem}>
+                <Ionicons name="speedometer-outline" size={13} color={Colors.light.textSecondary} />
+                <Text style={styles.statText}>{kmTotal} km</Text>
+              </View>
+            )}
           </View>
           {item.legalSummary && (item.legalSummary.infractions.length > 0 || item.legalSummary.warnings.length > 0) && (
             <View style={styles.legalDetails}>
@@ -599,10 +980,15 @@ function JornadaItem({
           )}
           <View style={styles.cardBottom}>
             {item.moroccoPaymentMode === "morocco_trip" ? (
-              <View style={[styles.infoChip, { backgroundColor: Colors.light.accent + "18" }]}>
-                <Ionicons name="airplane" size={11} color={Colors.light.accent} />
-                <Text style={[styles.chipLabel, { color: Colors.light.accent }]}>{t("morocco.diet.tripPayment")}</Text>
-              </View>
+              <>
+                <View style={[styles.infoChip, { backgroundColor: Colors.light.accent + "18" }]}>
+                  <Ionicons name="airplane" size={11} color={Colors.light.accent} />
+                  <Text style={[styles.chipLabel, { color: Colors.light.accent }]}>{t("morocco.diet.tripPayment")}</Text>
+                </View>
+                <View style={styles.infoChip}>
+                  <Text style={styles.chipLabel}>{t((item.tipoRuta ? tipoRutaKey[item.tipoRuta as keyof typeof tipoRutaKey] : undefined) || "common.nacional")}</Text>
+                </View>
+              </>
             ) : item.moroccoPaymentMode === "morocco_pernight" ? (
               <>
                 <View style={[styles.infoChip, { backgroundColor: Colors.light.accent + "18" }]}>
@@ -610,15 +996,25 @@ function JornadaItem({
                   <Text style={[styles.chipLabel, { color: Colors.light.accent }]}>{t("onboarding.paymentPernight")}</Text>
                 </View>
                 <View style={styles.infoChip}>
-                  <Text style={styles.chipLabel}>{t(tipoRutaKey[item.tipoRuta] || "common.nacional")}</Text>
+                  <Text style={styles.chipLabel}>{t((item.tipoRuta ? tipoRutaKey[item.tipoRuta as keyof typeof tipoRutaKey] : undefined) || "common.nacional")}</Text>
                 </View>
               </>
             ) : (
               <View style={styles.infoChip}>
-                <Text style={styles.chipLabel}>{t(tipoRutaKey[item.tipoRuta] || "common.nacional")}</Text>
+                <Text style={styles.chipLabel}>{t((item.tipoRuta ? tipoRutaKey[item.tipoRuta as keyof typeof tipoRutaKey] : undefined) || "common.nacional")}</Text>
               </View>
             )}
-            {item.moroccoPaymentMode !== "morocco_trip" && item.dietaPercent != null && item.dietaPercent > 0 && (
+            {pm === "km" && (
+              <View style={[styles.infoChip, { backgroundColor: Colors.light.tint + "10" }]}>
+                <Text style={[styles.chipLabel, { color: Colors.light.tint }]}>{t("usuario.paymentModeKm")}</Text>
+              </View>
+            )}
+            {pm === "viaje" && (
+              <View style={[styles.infoChip, { backgroundColor: Colors.light.tint + "10" }]}>
+                <Text style={[styles.chipLabel, { color: Colors.light.tint }]}>{t("usuario.paymentModeTrip")}</Text>
+              </View>
+            )}
+            {pm === "dietas" && item.moroccoPaymentMode !== "morocco_trip" && item.dietaPercent != null && item.dietaPercent > 0 && (
               <View style={[styles.infoChip, { backgroundColor: Colors.light.accentLight }]}>
                 <Text style={[styles.chipLabel, { color: Colors.light.accent }]}>{item.dietaPercent}%</Text>
               </View>
@@ -650,12 +1046,28 @@ function JornadaItem({
             <View style={{ alignItems: "flex-end" as const }}>
               <Text style={styles.dietaAmount}>
                 {(() => {
+                  if (pm === "km") {
+                    return kmImporte != null && kmImporte > 0 ? `${kmImporte.toFixed(2)} \u20AC` : "";
+                  }
+                  if (pm === "viaje") {
+                    return tripImporte != null && tripImporte > 0 ? `${tripImporte.toFixed(2)} \u20AC` : "";
+                  }
                   const full = item.dietaImporteEur ? parseFloat(item.dietaImporteEur) : 0;
                   const dayEx = item.dayExtraEur ? parseFloat(item.dayExtraEur) : 0;
                   const base = full - dayEx;
                   return base > 0 ? `${base.toFixed(2)} \u20AC` : "";
                 })()}
               </Text>
+              {pm === "km" && kmTotal != null && kmRate != null && (
+                <Text style={styles.cardExtrasAmount}>
+                  {kmTotal} km \u00D7 {kmRate.toFixed(2)} \u20AC
+                </Text>
+              )}
+              {pm === "viaje" && item.pricePerTrip != null && Number.isFinite(item.pricePerTrip) && item.pricePerTrip > 0 && (
+                <Text style={styles.cardExtrasAmount}>
+                  1 \u00D7 {item.pricePerTrip.toFixed(2)} \u20AC
+                </Text>
+              )}
               {(() => {
                 const dayEx = item.dayExtraEur ? parseFloat(item.dayExtraEur) : 0;
                 const plusTotal = item.plusItems ? item.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
@@ -687,13 +1099,70 @@ export default function HistorialScreen() {
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const qc = useQueryClient();
-  const { triggerDeleteSync, syncVersion } = useSync();
+  const { triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, syncVersion } = useSync();
   const { getPeriod } = usePeriod();
+  const { user } = useAuth();
   const [periodoIdx, setPeriodoIdx] = useState(0);
+  const [billingMode, setBillingMode] = useState<"dietas" | "km" | "viaje">("dietas");
+  const [dayExtrasCfg, setDayExtrasCfg] = useState<UserDayExtras>({
+    extra_saturday: 0,
+    extra_sunday: 0,
+    extra_holiday: 0,
+    offsite_weekly_reduced_nacional: 0,
+    offsite_weekly_reduced_internacional: 0,
+    offsite_weekly_complete_nacional: 0,
+    offsite_weekly_complete_internacional: 0,
+  });
+  const [pendingDietsVisible, setPendingDietsVisible] = useState(false);
+  const [pendingDietsBannerVisible, setPendingDietsBannerVisible] = useState(false);
+  const [pendingDiets, setPendingDiets] = useState<DetectedMissingNaturalDay[]>([]);
+  const [pendingDietsSaving, setPendingDietsSaving] = useState(false);
+  const [naturalDayDiets, setNaturalDayDiets] = useState<NaturalDayDietEntry[]>([]);
+  const [arrivalSelectorVisible, setArrivalSelectorVisible] = useState(false);
+  const [arrivalSelectorDay, setArrivalSelectorDay] = useState<Parameters<typeof ArrivalDayDietSelectorModal>[0]["day"]>(null);
+  const [pendingConfirmedDiets, setPendingConfirmedDiets] = useState<DetectedDiet[]>([]);
+  const [arrivalSelectorQueue, setArrivalSelectorQueue] = useState<DetectedDiet[]>([]);
+  // NDDE Modo edición: abrir PendingNaturalDietsModal en editMode con 1 fila
+  const [nddEditItem, setNddEditItem] = useState<NaturalDayDietEntry | null>(null);
+  const [nddEditVisible, setNddEditVisible] = useState(false);
 
   const periodo = useMemo(() => {
     return getPeriod(periodoIdx);
   }, [periodoIdx, getPeriod]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        try {
+          const raw = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings", user?.id));
+          if (!active) return;
+          if (raw) {
+            const s = JSON.parse(raw);
+            if (s.payment_mode === "km" || s.payment_mode === "viaje" || s.payment_mode === "dietas") {
+              setBillingMode(s.payment_mode);
+            }
+            const pf = (v: any, fb: number) => {
+              const n = parseFloat(String(v ?? "").replace(",", "."));
+              return Number.isFinite(n) ? n : fb;
+            };
+            setDayExtrasCfg((prev) => ({
+              extra_saturday: pf(s.extra_saturday, prev.extra_saturday),
+              extra_sunday: pf(s.extra_sunday, prev.extra_sunday),
+              extra_holiday: pf(s.extra_holiday, prev.extra_holiday),
+              offsite_weekly_reduced_nacional: pf(s.offsite_weekly_reduced_nacional, prev.offsite_weekly_reduced_nacional),
+              offsite_weekly_reduced_internacional: pf(s.offsite_weekly_reduced_internacional, prev.offsite_weekly_reduced_internacional),
+              offsite_weekly_complete_nacional: pf(s.offsite_weekly_complete_nacional, prev.offsite_weekly_complete_nacional),
+              offsite_weekly_complete_internacional: pf(s.offsite_weekly_complete_internacional, prev.offsite_weekly_complete_internacional),
+            }));
+          }
+        } catch {}
+      })();
+      return () => {
+        active = false;
+      };
+    }, [user?.id])
+  );
 
   const jornadasQuery = useQuery<Jornada[]>({
     queryKey: ["jornadas", periodo.from, periodo.to, syncVersion],
@@ -721,6 +1190,35 @@ export default function HistorialScreen() {
     queryFn: () => getAllFerryRests(),
   });
   const allFerryRests = ferryRestsQuery.data || [];
+
+  const extraDaysQuery = useQuery<DayExtraEntry[]>({
+    queryKey: ["day-extra-entries", periodo.from, periodo.to, syncVersion],
+    queryFn: () => listDayExtraEntries(periodo.from, periodo.to),
+  });
+  const extraDaysSplit = useMemo(() => {
+    const list = extraDaysQuery.data || [];
+    let offsiteBase = 0;
+    let offsitePlus = 0;
+    let otherExtras = 0;
+    for (const e of list) {
+      if (e.entryType === "offsite_weekly_rest") {
+        const split = splitOffsiteWeeklyRestEntry(e, dayExtrasCfg);
+        offsiteBase = Math.round((offsiteBase + (split.restAmount || 0)) * 100) / 100;
+        offsitePlus = Math.round((offsitePlus + (split.plusAmount || 0)) * 100) / 100;
+        continue;
+      }
+      if (e.dayFlag) {
+        const amt = e.amount != null ? Number(e.amount) : calcDayExtra(e.dayFlag, dayExtrasCfg);
+        if (Number.isFinite(amt) && amt > 0) otherExtras = Math.round((otherExtras + amt) * 100) / 100;
+      }
+    }
+    return {
+      offsiteBase,
+      offsitePlus,
+      otherExtras,
+      totalExtras: Math.round((offsitePlus + otherExtras) * 100) / 100,
+    };
+  }, [extraDaysQuery.data, dayExtrasCfg]);
   const ferryRests = useMemo(() => allFerryRests.filter((fr) => {
     if (!fr.fecha) return false;
     return fr.fecha >= periodo.from && fr.fecha <= periodo.to;
@@ -731,6 +1229,26 @@ export default function HistorialScreen() {
     queryFn: () => getActiveFerryRest(),
   });
   const activeFerry = activeFerryQuery.data ?? null;
+
+  const refreshNaturalDayDiets = useCallback(async () => {
+    const nats = await getAllNaturalDayDiets();
+    setNaturalDayDiets(nats);
+    const det = await detectMissingOutOfBaseDietDays({
+      fromDate: periodo.from,
+      toDate: periodo.to,
+    });
+    if (det.length > 0) {
+      setPendingDiets(det);
+      setPendingDietsBannerVisible(true);
+    } else {
+      setPendingDiets([]);
+      setPendingDietsBannerVisible(false);
+    }
+  }, [periodo.from, periodo.to]);
+
+  useEffect(() => {
+    refreshNaturalDayDiets();
+  }, [refreshNaturalDayDiets, syncVersion, periodo.from, periodo.to]);
 
   const [editFerry, setEditFerry] = useState<FerryRestRecord | null>(null);
   const [editFerryStartTime, setEditFerryStartTime] = useState("");
@@ -746,6 +1264,16 @@ export default function HistorialScreen() {
   const [editFjTransit, setEditFjTransit] = useState(0);
   const [editFjCabin, setEditFjCabin] = useState(0);
 
+  const [editOffsite, setEditOffsite] = useState<DayExtraEntry | null>(null);
+  const [editOffsiteDate, setEditOffsiteDate] = useState("");
+  const [editOffsiteDateInput, setEditOffsiteDateInput] = useState("");
+  const [editOffsiteRestType, setEditOffsiteRestType] = useState<"WEEKLY_REDUCED" | "WEEKLY_COMPLETE">("WEEKLY_COMPLETE");
+  const [editOffsiteBase, setEditOffsiteBase] = useState<"NACIONAL" | "INTERNACIONAL">("NACIONAL");
+  const [editOffsitePlusSunday, setEditOffsitePlusSunday] = useState(false);
+  const [editOffsitePlusHoliday, setEditOffsitePlusHoliday] = useState(false);
+  const [editOffsiteAmount, setEditOffsiteAmount] = useState("");
+  const [editOffsiteNote, setEditOffsiteNote] = useState("");
+
   useEffect(() => {
     if (editingFerryJornada) {
       setEditFjDest(editingFerryJornada.ferryDestination || "");
@@ -754,6 +1282,19 @@ export default function HistorialScreen() {
       setEditFjCabin(editingFerryJornada.ferryExtras?.cabinOvernight || 0);
     }
   }, [editingFerryJornada]);
+
+  useEffect(() => {
+    if (!editOffsite) return;
+    const split = splitOffsiteWeeklyRestEntry(editOffsite, dayExtrasCfg);
+    setEditOffsiteDate(editOffsite.date);
+    setEditOffsiteDateInput(formatDateForDisplay(editOffsite.date));
+    setEditOffsiteRestType((editOffsite.offsiteRestType as any) === "WEEKLY_REDUCED" ? "WEEKLY_REDUCED" : "WEEKLY_COMPLETE");
+    setEditOffsiteBase((editOffsite.offsiteBase as any) === "INTERNACIONAL" ? "INTERNACIONAL" : "NACIONAL");
+    setEditOffsitePlusSunday(!!editOffsite.plusSunday);
+    setEditOffsitePlusHoliday(!!editOffsite.plusHoliday);
+    setEditOffsiteAmount((Number.isFinite(split.restAmount) ? split.restAmount : 0).toFixed(2));
+    setEditOffsiteNote(editOffsite.note || "");
+  }, [editOffsite, dayExtrasCfg]);
 
   const saveFerryJornadaEdit = useMutation({
     mutationFn: async () => {
@@ -802,9 +1343,11 @@ export default function HistorialScreen() {
 
   type ListItem =
     | { type: "jornada"; jornada: Jornada }
-    | { type: "rest-gap"; restMin: number; afterJornadaId: string; compensacion?: Compensacion; isFerryRest?: boolean; ferryJornada?: Jornada }
+    | { type: "rest-gap"; restMin: number; afterJornadaId: string; compensacion?: Compensacion; isFerryRest?: boolean; ferryJornada?: Jornada; restJornada?: Jornada; previousRestSourceJornada?: Jornada }
     | { type: "ferry-rest"; ferryRest: FerryRestRecord }
-    | { type: "active-ferry"; activeFerry: ActiveFerryRest };
+    | { type: "active-ferry"; activeFerry: ActiveFerryRest }
+    | { type: "offsite-weekly-rest"; entry: DayExtraEntry }
+    | { type: "natural_day_diet"; naturalDayDiet: NaturalDayDietEntry };
 
   const listItems = useMemo<ListItem[]>(() => {
     const sorted = [...jornadasData];
@@ -814,6 +1357,23 @@ export default function HistorialScreen() {
     for (const j of sorted) {
       const ts = j.startAt ? new Date(j.startAt).getTime() : j.endAt ? new Date(j.endAt).getTime() : 0;
       allEvents.push({ ts, item: { type: "jornada", jornada: j } });
+    }
+
+    const filteredNDDs = naturalDayDiets.filter((ndd) => {
+      if (!ndd.confirmedByUser) return false;
+      if (ndd.dismissedAt) return false;
+      if (ndd.date < periodo.from || ndd.date > periodo.to) return false;
+      return true;
+    });
+    for (const ndd of filteredNDDs) {
+      const ts = new Date(`${ndd.date}T23:59:59`).getTime();
+      allEvents.push({ ts, item: { type: "natural_day_diet", naturalDayDiet: ndd } });
+    }
+
+    const offsiteEntries = (extraDaysQuery.data || []).filter((e) => e.entryType === "offsite_weekly_rest");
+    for (const e of offsiteEntries) {
+      const ts = new Date(`${e.date}T23:59:58`).getTime();
+      allEvents.push({ ts, item: { type: "offsite-weekly-rest", entry: e } });
     }
 
     const linkedJornadaIds = new Set(ferryRests.map((fr) => fr.linkedJornadaId).filter(Boolean));
@@ -864,21 +1424,24 @@ export default function HistorialScreen() {
 
       if (ev.item.type === "jornada") {
         const current = ev.item.jornada;
+        let previousJornadaForRest: Jornada | null = null;
+        for (let j = i + 1; j < allEvents.length; j++) {
+          if (allEvents[j].item.type === "jornada") {
+            previousJornadaForRest = (allEvents[j].item as any).jornada;
+            break;
+          }
+        }
         if (!current.fechaFin && current.descansoAnteriorMin && current.descansoAnteriorMin > 0) {
           items.push({
             type: "rest-gap",
             restMin: current.descansoAnteriorMin,
             afterJornadaId: `open-${current.id}`,
             compensacion: compMap.get(current.id),
+            restJornada: current,
+            previousRestSourceJornada: previousJornadaForRest ?? undefined,
           });
         } else if (current.fechaFin) {
-          let nextJornada: Jornada | null = null;
-          for (let j = i + 1; j < allEvents.length; j++) {
-            if (allEvents[j].item.type === "jornada") {
-              nextJornada = (allEvents[j].item as any).jornada;
-              break;
-            }
-          }
+          const nextJornada = previousJornadaForRest;
           if (nextJornada && current.startAt && nextJornada.endAt) {
             const currentStart = new Date(current.startAt).getTime();
             const nextEnd = new Date(nextJornada.endAt).getTime();
@@ -895,6 +1458,8 @@ export default function HistorialScreen() {
                 compensacion: compMap.get(current.id),
                 isFerryRest: isFromFerry,
                 ferryJornada: isFromFerry && nextJornada ? nextJornada : undefined,
+                restJornada: current,
+                previousRestSourceJornada: nextJornada,
               });
             }
           }
@@ -903,7 +1468,7 @@ export default function HistorialScreen() {
     }
 
     return items;
-  }, [jornadasData, compMap, ferryRests, activeFerry]);
+  }, [jornadasData, compMap, ferryRests, activeFerry, extraDaysQuery.data, naturalDayDiets, periodo.from, periodo.to]);
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -919,17 +1484,293 @@ export default function HistorialScreen() {
     },
   });
 
-  const totalDietas = jornadasData.reduce((acc, j) => {
+  const deleteDayExtraMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await deleteDayExtraEntry(id);
+      return id;
+    },
+    onSuccess: (id: string) => {
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      qc.invalidateQueries({ queryKey: ["day-extra-entries"] });
+      qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
+      qc.invalidateQueries({ queryKey: ["km-resumen"] });
+      qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
+      qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] });
+      triggerDeleteDayExtraEntrySync(id);
+    },
+    onError: (e: Error) => Alert.alert(t("common.error"), e.message),
+  });
+
+  const updateOffsiteMutation = useMutation({
+    mutationFn: async () => {
+      if (!editOffsite) return null;
+      const isoDate = editOffsiteDate;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) throw new Error("Fecha inválida");
+      const amtRaw = editOffsiteAmount.trim().replace(",", ".");
+      const amt = amtRaw ? parseFloat(amtRaw) : 0;
+      if (!Number.isFinite(amt) || amt < 0) throw new Error("Importe inválido");
+      const updated = await updateDayExtraEntry(editOffsite.id, {
+        date: isoDate,
+        restType: editOffsiteRestType,
+        base: editOffsiteBase,
+        plusSunday: editOffsitePlusSunday,
+        plusHoliday: editOffsitePlusHoliday,
+        amount: Math.round(amt * 100) / 100,
+        note: editOffsiteNote.trim() || null,
+      });
+      return updated;
+    },
+    onSuccess: () => {
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setEditOffsite(null);
+      qc.invalidateQueries({ queryKey: ["day-extra-entries"] });
+      qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
+      qc.invalidateQueries({ queryKey: ["km-resumen"] });
+      qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
+      qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] });
+      triggerSync();
+    },
+    onError: (e: Error) => Alert.alert(t("common.error"), e.message),
+  });
+
+  const upsertAllPendingSelections = useCallback(async (
+    items: DetectedDiet[],
+  ) => {
+    const nowIso = new Date().toISOString();
+    const entries: NaturalDayDietEntry[] = [];
+    const dismissDates: string[] = [];
+    for (const item of items) {
+      if (!item?.date) continue;
+      if (item.removed === true) {
+        dismissDates.push(item.date);
+        continue;
+      }
+      const finalPct = item.userPercentage != null && item.userPercentage !== ("SIN_DIETA" as any)
+        ? (item.userPercentage as 100 | 60 | 30)
+        : null;
+      if (item.isBaseArrivalDay && finalPct == null) {
+        dismissDates.push(item.date);
+        continue;
+      }
+      const effectivePct: 100 | 60 | 30 = finalPct ?? item.percentage;
+      const effectiveAmount = Number.isFinite(Number(item.userAmount)) && item.userAmount != null
+        ? Number(item.userAmount)
+        : Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0;
+      let t: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" = "NACIONAL";
+      const rawType = item.type;
+      if (rawType === "INTERNACIONAL" || rawType === "NACIONAL" || rawType === "REGIONAL") t = rawType;
+      const plusItems = Array.isArray(item.plusItems)
+        ? item.plusItems
+            .filter((pl) => pl && (pl.selected !== false))
+            .map((pl) => ({
+              id: pl.id,
+              concepto: pl.concepto,
+              amount: Number.isFinite(Number(pl.amount)) ? Number(pl.amount) : 0,
+            }))
+        : undefined;
+      entries.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9) + `_${item.date}`,
+        date: item.date,
+        type: t,
+        percentage: effectivePct,
+        amount: effectiveAmount,
+        location: typeof item?.location === "string" ? item.location : (item?.location ?? null),
+        source: "NATURAL_DAY_OUT_OF_BASE" as const,
+        previousJourneyId: typeof item?.previousJourneyId === "string" ? item.previousJourneyId : (item?.previousJourneyId ?? null),
+        nextJourneyId: typeof item?.nextJourneyId === "string" ? item.nextJourneyId : (item?.nextJourneyId ?? null),
+        confirmedByUser: true,
+        dismissedAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        syncStatus: "pending" as const,
+        plusItems: plusItems && plusItems.length > 0 ? plusItems : null,
+      });
+      dismissDates.push(item.date);
+    }
+    if (entries.length > 0) {
+      await upsertNaturalDayDiets(entries);
+    }
+    if (dismissDates.length > 0) {
+      await dismissNaturalDayDiets(Array.from(new Set(dismissDates)));
+    }
+    setPendingDietsVisible(false);
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    setPendingConfirmedDiets([]);
+    qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {});
+    qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {});
+    await refreshNaturalDayDiets();
+  }, [qc, refreshNaturalDayDiets]);
+
+  const handleConfirmPendingDiets = useCallback(
+    async (items: DetectedDiet[] | string[]) => {
+      try {
+        setPendingDietsSaving(true);
+        const richer: DetectedDiet[] = Array.isArray(items) && items.length > 0 && typeof (items[0] as any) === "object" && (items[0] as DetectedDiet)?.date
+          ? (items as DetectedDiet[])
+          : (items as string[])
+              .map((d) => {
+                const date = typeof d === "string" ? d : (d as any)?.date;
+                if (!date) return null;
+                const src = pendingDiets.find((p) => p.date === date);
+                if (!src) return null;
+                return src as unknown as DetectedDiet;
+              })
+              .filter((v): v is DetectedDiet => !!v);
+
+        setPendingConfirmedDiets(richer);
+
+        const arrivalsPending = richer.filter((r) =>
+          r.isBaseArrivalDay === true && r.userPercentage == null
+        );
+
+        if (arrivalsPending.length === 0) {
+          await upsertAllPendingSelections(richer);
+          return;
+        }
+
+        setArrivalSelectorQueue(arrivalsPending);
+        setPendingDietsSaving(false);
+
+        const first = arrivalsPending[0];
+        let arrivalHHMM: string | null = null;
+        if (first.previousJourneyId) {
+          const all = await import("@/lib/local-storage").then((m) => m.listarJornadas());
+          const j = all.find((x: any) => x.id === first.previousJourneyId);
+          if (j && j.horaFin) arrivalHHMM = j.horaFin;
+        }
+        setArrivalSelectorDay({
+          date: first.date,
+          type: first.type,
+          location: first.location || null,
+          arrivalTime: arrivalHHMM,
+          routeLabel: first.type,
+        });
+        setArrivalSelectorVisible(true);
+
+      } catch (e: any) {
+        Alert.alert(t("common.error"), e?.message || String(e));
+        setPendingDietsSaving(false);
+      }
+    },
+    [pendingDiets, t, upsertAllPendingSelections],
+  );
+
+  const handleArrivalChoiceConfirm = useCallback(async (choice: { percentage: 100|60|30|null; amount: number }) => {
+    try {
+      setPendingDietsSaving(true);
+      const queue = arrivalSelectorQueue.slice();
+      const current = queue.shift();
+
+      const updatedRicher = pendingConfirmedDiets.slice();
+      if (current) {
+        const idx = updatedRicher.findIndex((r) => r.date === current.date);
+        if (idx >= 0) {
+          updatedRicher[idx] = {
+            ...updatedRicher[idx],
+            userPercentage: choice.percentage as any,
+            userAmount: choice.amount,
+          };
+        } else {
+          updatedRicher.push({
+            ...current,
+            userPercentage: choice.percentage as any,
+            userAmount: choice.amount,
+          });
+        }
+        setPendingConfirmedDiets(updatedRicher);
+      }
+
+      if (queue.length > 0) {
+        const next = queue[0];
+        setArrivalSelectorQueue(queue);
+        let arrivalHHMM: string | null = null;
+        if (next.previousJourneyId) {
+          const all = await import("@/lib/local-storage").then((m) => m.listarJornadas());
+          const j = all.find((x: any) => x.id === next.previousJourneyId);
+          if (j && j.horaFin) arrivalHHMM = j.horaFin;
+        }
+        setArrivalSelectorDay({
+          date: next.date,
+          type: next.type,
+          location: next.location || null,
+          arrivalTime: arrivalHHMM,
+          routeLabel: next.type,
+        });
+        setPendingDietsSaving(false);
+        return;
+      }
+
+      await upsertAllPendingSelections(updatedRicher);
+    } catch (e: any) {
+      Alert.alert(t("common.error"), e?.message || String(e));
+    } finally {
+      setPendingDietsSaving(false);
+    }
+  }, [arrivalSelectorQueue, pendingConfirmedDiets, t, upsertAllPendingSelections]);
+
+  const handleArrivalChoiceClose = useCallback(async () => {
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    setPendingConfirmedDiets([]);
+    setPendingDietsSaving(false);
+    try {
+      await dismissNaturalDayDiets(pendingDiets.map((d) => d.date));
+      setPendingDietsVisible(false);
+      setPendingDietsBannerVisible(false);
+      setPendingDiets([]);
+    } catch {}
+  }, [pendingDiets, t]);
+
+  const handleCancelPendingDiets = useCallback(async () => {
+    try {
+      await dismissNaturalDayDiets(pendingDiets.map((d) => d.date));
+    } catch {}
+    setPendingDietsVisible(false);
+    setPendingDietsBannerVisible(false);
+    setPendingDiets([]);
+    setArrivalSelectorVisible(false);
+    setArrivalSelectorDay(null);
+    setArrivalSelectorQueue([]);
+    setPendingConfirmedDiets([]);
+  }, [pendingDiets, t]);
+
+  const totalKm = billingMode === "km" ? jornadasData.reduce((acc, j) => {
+    const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
+    return acc + (Number.isFinite(km) ? km : 0);
+  }, 0) : 0;
+  const naturalDayDietsTotal = useMemo(() => {
+    return naturalDayDiets.reduce((acc, ndd) => {
+      if (!ndd.confirmedByUser || ndd.dismissedAt) return acc;
+      if (ndd.date < periodo.from || ndd.date > periodo.to) return acc;
+      return acc + (Number.isFinite(ndd.amount) ? ndd.amount : 0);
+    }, 0);
+  }, [naturalDayDiets, periodo.from, periodo.to]);
+
+  const totalBaseBilling = jornadasData.reduce((acc, j) => {
+    if (billingMode === "km") {
+      const kmTotal = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : null);
+      const importeKm = j.importeKm != null ? j.importeKm : (kmTotal != null && j.pricePerKm != null ? kmTotal * j.pricePerKm : 0);
+      return acc + (Number.isFinite(importeKm) ? importeKm : 0);
+    }
+    if (billingMode === "viaje") {
+      const importeViaje = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
+      return acc + (Number.isFinite(importeViaje) ? importeViaje : 0);
+    }
     if (!j.dietaImporteEur) return acc;
     const dietaFull = parseFloat(j.dietaImporteEur);
     const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
-    return acc + (dietaFull - dayExtra);
-  }, 0);
+    const base = dietaFull - dayExtra;
+    return acc + (Number.isFinite(base) ? base : 0);
+  }, 0) + (extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal;
   const totalExtras = jornadasData.reduce((acc, j) => {
     const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
     const plus = j.plusItems ? j.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
     return acc + dayExtra + plus;
-  }, 0);
+  }, 0) + (extraDaysSplit.totalExtras || 0);
   const totalFerryExtras = useMemo(() => {
     let total = 0;
     const linkedJornadaIds = new Set<string>();
@@ -955,9 +1796,69 @@ export default function HistorialScreen() {
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t("historial.title")}</Text>
-        <Pressable onPress={() => router.push("/exportar")} hitSlop={10}>
-          <Ionicons name="download-outline" size={22} color={Colors.light.tint} />
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Pressable
+            onPress={async () => {
+              try {
+                await clearDismissedNaturalDayDietsInRange(periodo.from, periodo.to);
+                const fresh = await detectMissingOutOfBaseDietDays({
+                  fromDate: periodo.from,
+                  toDate: periodo.to,
+                });
+                setPendingDiets(fresh);
+                if (fresh && fresh.length > 0) {
+                  setPendingDietsVisible(true);
+                  setPendingDietsBannerVisible(true);
+                } else {
+                  setPendingDietsBannerVisible(false);
+                }
+                await refreshNaturalDayDiets();
+              } catch {}
+            }}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.reportBtn,
+              {
+                backgroundColor: "#fff",
+                borderWidth: 1,
+                borderColor: Colors.light.tint,
+                opacity: pressed ? 0.9 : 1,
+              },
+            ]}
+          >
+            <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
+            <Text style={{ color: Colors.light.tint, fontSize: 13, fontWeight: "600", marginLeft: 4 }}>
+              Re-evaluar dietas
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push("/exportar")}
+            style={({ pressed }) => [styles.reportBtn, { opacity: pressed ? 0.9 : 1 }]}
+            hitSlop={8}
+          >
+            <Ionicons name="document-text-outline" size={16} color="#fff" />
+            <Text style={styles.reportBtnText}>{t("Generar informe")}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push("/usuario")}
+            hitSlop={8}
+            style={({ pressed }) => [
+              {
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                borderWidth: 1,
+                borderColor: Colors.light.border,
+                backgroundColor: Colors.light.surface,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: pressed ? 0.9 : 1,
+              },
+            ]}
+          >
+            <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
+          </Pressable>
+        </View>
       </View>
       <View style={styles.periodoNav}>
         <Pressable onPress={() => setPeriodoIdx((p) => p + 1)}>
@@ -980,7 +1881,7 @@ export default function HistorialScreen() {
             {ferryRests.length > 0 ? ` · ${ferryRests.length} ferry` : ""}
           </Text>
           <View style={{ alignItems: "flex-end" as const }}>
-            <Text style={styles.summaryValue}>{(totalDietas + totalFerryExtras).toFixed(2)} \u20AC</Text>
+            <Text style={styles.summaryValue}>{(totalBaseBilling + totalFerryExtras).toFixed(2)} \u20AC</Text>
             {totalExtras > 0 && (
               <Text style={styles.summaryExtras}>+{totalExtras.toFixed(2)} \u20AC {t("historial.extras")}</Text>
             )}
@@ -989,6 +1890,118 @@ export default function HistorialScreen() {
                 {totalFerryExtras.toFixed(2)} \u20AC ferry
               </Text>
             )}
+            {totalKm > 0 && (
+              <Text style={styles.summaryExtras}>{totalKm} km</Text>
+            )}
+          </View>
+        </View>
+      )}
+
+      {pendingDietsBannerVisible && pendingDiets.length > 0 && (
+        <View
+          style={{
+            backgroundColor: "#FEF3C7",
+            borderWidth: 1,
+            borderColor: Colors.light.tint,
+            opacity: 0.3,
+            borderRadius: 12,
+            padding: 14,
+            marginHorizontal: 16,
+            marginBottom: 10,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="warning-outline" size={22} color={Colors.light.tint} />
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "bold",
+                color: Colors.light.tint,
+                marginLeft: 8,
+              }}
+            >
+              Dietas pendientes detectadas
+            </Text>
+          </View>
+          <Text
+            style={{
+              fontSize: 14,
+              color: Colors.light.text,
+              opacity: 0.8,
+              marginTop: 6,
+            }}
+          >
+            Hay {pendingDiets.length} días fuera de base sin dieta registrada.
+          </Text>
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <Pressable
+              onPress={async () => {
+                try {
+                  const fresh = await detectMissingOutOfBaseDietDays({
+                    fromDate: periodo.from,
+                    toDate: periodo.to,
+                  });
+                  setPendingDiets(fresh);
+                  setPendingDietsBannerVisible(false);
+                  if (fresh && fresh.length > 0) {
+                    setPendingDietsVisible(true);
+                  }
+                } catch {
+                  setPendingDietsBannerVisible(false);
+                  if (pendingDiets.length > 0) setPendingDietsVisible(true);
+                }
+              }}
+              style={{
+                backgroundColor: Colors.light.tint,
+                paddingVertical: 8,
+                paddingHorizontal: 16,
+                borderRadius: 8,
+                flexShrink: 0,
+              }}
+            >
+              <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Revisar</Text>
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                try {
+                  await clearDismissedNaturalDayDietsInRange(periodo.from, periodo.to);
+                  const fresh = await detectMissingOutOfBaseDietDays({
+                    fromDate: periodo.from,
+                    toDate: periodo.to,
+                  });
+                  setPendingDiets(fresh);
+                  if (fresh && fresh.length > 0) {
+                    setPendingDietsVisible(true);
+                  }
+                  setPendingDietsBannerVisible(fresh.length > 0);
+                } catch {}
+              }}
+              style={{
+                backgroundColor: "#fff",
+                borderWidth: 1,
+                borderColor: Colors.light.tint,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 8,
+                maxWidth: "100%",
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="refresh-outline" size={14} color={Colors.light.tint} />
+                <Text
+                  style={{
+                    color: Colors.light.tint,
+                    fontSize: 13,
+                    fontWeight: "600",
+                    flexShrink: 1,
+                    flexWrap: "wrap",
+                  }}
+                  numberOfLines={2}
+                >
+                  Re-evaluar (olvidar cancelados)
+                </Text>
+              </View>
+            </Pressable>
           </View>
         </View>
       )}
@@ -1000,9 +2013,14 @@ export default function HistorialScreen() {
       ) : (
         <FlatList
           data={listItems}
-          keyExtractor={(item) =>
-            item.type === "jornada" ? item.jornada.id : item.type === "ferry-rest" ? `ferry-${item.ferryRest.id}` : item.type === "active-ferry" ? "active-ferry" : `rest-${item.afterJornadaId}`
-          }
+          keyExtractor={(item) => {
+            if (item.type === "jornada") return "j_" + item.jornada.id;
+            if (item.type === "ferry-rest") return `ferry-${item.ferryRest.id}`;
+            if (item.type === "active-ferry") return "active-ferry";
+            if (item.type === "offsite-weekly-rest") return `offsite-${item.entry.id}`;
+            if (item.type === "natural_day_diet") return "ndd_" + item.naturalDayDiet.id;
+            return `rest-${item.afterJornadaId}`;
+          }}
           renderItem={({ item: listItem }) => {
             if (listItem.type === "rest-gap") {
               return (
@@ -1011,6 +2029,8 @@ export default function HistorialScreen() {
                   compensacion={listItem.compensacion}
                   isFerryRest={listItem.isFerryRest}
                   ferryJornada={listItem.ferryJornada}
+                  restJornada={listItem.restJornada}
+                previousRestSourceJornada={listItem.previousRestSourceJornada}
                   onEditFerryJornada={(j) => setEditingFerryJornada(j)}
                 />
               );
@@ -1046,12 +2066,168 @@ export default function HistorialScreen() {
                 />
               );
             }
+            if (listItem.type === "offsite-weekly-rest") {
+              return (
+                <OffsiteWeeklyRestItem
+                  entry={listItem.entry}
+                  extrasCfg={dayExtrasCfg}
+                  onEdit={(e) => setEditOffsite(e)}
+                  onDelete={(id) => deleteDayExtraMutation.mutate(id)}
+                />
+              );
+            }
+            if (listItem.type === "natural_day_diet") {
+              const ndd = listItem.naturalDayDiet;
+              const pillBg = ndd.type === "INTERNACIONAL" ? "#FEF3C7" : "#EEF2FF";
+              const formatDateDDMM = (iso: string) => {
+                const d = new Date(iso);
+                const dd = String(d.getDate()).padStart(2, "0");
+                const mm = String(d.getMonth() + 1).padStart(2, "0");
+                const yy = d.getFullYear();
+                return `${dd}/${mm}/${yy}`;
+              };
+              return (
+                <View
+                  style={{
+                    backgroundColor: Colors.light.surface,
+                    borderWidth: 1,
+                    borderColor: Colors.light.border,
+                    opacity: 0.6,
+                    borderRadius: 14,
+                    padding: 14,
+                    marginHorizontal: 16,
+                    marginVertical: 8,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <View style={{ flex: 1, flexDirection: "column", gap: 4 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>Dieta fuera de base</Text>
+                      <View
+                        style={{
+                          backgroundColor: pillBg,
+                          borderRadius: 100,
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
+                          marginLeft: 8,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: "bold" }}>{ndd.type}</Text>
+                      </View>
+                      {ndd.isDomingo === true && (
+                        <View style={{
+                          backgroundColor: "#FFF7ED",
+                          borderRadius: 100,
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
+                          marginLeft: 6,
+                        }}>
+                          <Text style={{ fontSize: 11, color: "#9A3412", fontWeight: "700" }}>
+                            Domingo
+                          </Text>
+                        </View>
+                      )}
+                      {ndd.isFestivo === true && (
+                        <View style={{
+                          backgroundColor: "#FCE7F3",
+                          borderRadius: 100,
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
+                          marginLeft: 6,
+                        }}>
+                          <Text style={{ fontSize: 11, color: "#9D174D", fontWeight: "700" }}>
+                            Festivo
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 13, color: Colors.light.text, opacity: 0.7 }}>{formatDateDDMM(ndd.date)}</Text>
+                    {ndd.location ? (
+                      <Text style={{ fontSize: 12, color: Colors.light.text, opacity: 0.6 }}>📍 {ndd.location}</Text>
+                    ) : null}
+                    <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.5 }}>
+                      Día natural sin jornada propia · {ndd.percentage}%
+                    </Text>
+                    {ndd.plusItems && ndd.plusItems.length > 0 && (() => {
+                      const plusTotal = ndd.plusItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+                      return (
+                        <View style={{ marginTop: 6 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                            <Text style={{ fontSize: 11.5, fontWeight: "700", color: Colors.light.text, opacity: 0.75 }}>
+                              Pluses ({ndd.plusItems.length})
+                            </Text>
+                            <Text style={{ fontSize: 11.5, color: Colors.light.tint, marginLeft: 8, fontWeight: "700" }}>
+                              +{plusTotal.toFixed(2)} €
+                            </Text>
+                          </View>
+                          {ndd.plusItems.map((pi, idx) => (
+                            <View key={pi.id || idx} style={[styles.plusRow, { marginLeft: 0, marginRight: 0, borderBottomWidth: idx < ndd.plusItems!.length - 1 ? 1 : 0 }]}>
+                              <Text style={styles.plusConcepto} numberOfLines={1}>{pi.concepto}</Text>
+                              <Text style={styles.plusImporte}>{(Number(pi.amount) || 0).toFixed(2)} €</Text>
+                            </View>
+                          ))}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                  <View style={{ alignItems: "flex-end", flexDirection: "column", gap: 8 }}>
+                    <Text style={{ fontSize: 17, fontWeight: "bold", color: Colors.light.tint }}>
+                      {ndd.amount.toFixed(2)} €
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 12 }}>
+                      <Pressable
+                        onPress={() => {
+                          // Abre el modal COMPLETO (no el menú tosco anterior)
+                          // en modo editMode con 1 sola fila editable:
+                          // porcentajes 100/60/30/SIN, tipo, Domingo, Festivo,
+                          // pluses built-in + añadir/eliminar manuales, importe live, etc.
+                          setNddEditItem(ndd);
+                          setNddEditVisible(true);
+                        }}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="create-outline" size={18} color={Colors.light.tint} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          const doDelete = async () => {
+                            await deleteNaturalDayDiet(ndd.id);
+                            qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
+                            qc.invalidateQueries({ queryKey: ["km-resumen"] });
+                            qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
+                            await refreshNaturalDayDiets();
+                          };
+                          if (Platform.OS === "web") {
+                            if (window.confirm("¿Eliminar dieta del día?")) doDelete();
+                          } else {
+                            Alert.alert("¿Eliminar dieta del día?", "", [
+                              { text: t("common.cancel"), style: "cancel" },
+                              {
+                                text: t("common.delete"),
+                                style: "destructive",
+                                onPress: doDelete,
+                              },
+                            ]);
+                          }
+                        }}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              );
+            }
             return (
               <JornadaItem
                 item={listItem.jornada}
                 onDelete={(id) => deleteMutation.mutate(id)}
                 onEdit={(id) => router.push({ pathname: "/editar-jornada", params: { id } })}
                 viajes={allViajes}
+                billingMode={billingMode}
               />
             );
           }}
@@ -1065,6 +2241,8 @@ export default function HistorialScreen() {
                 qc.invalidateQueries({ queryKey: ["jornadas"] });
                 qc.invalidateQueries({ queryKey: ["compensaciones"] });
                 qc.invalidateQueries({ queryKey: ["all-viajes"] });
+                qc.invalidateQueries({ queryKey: ["day-extra-entries"] });
+                refreshNaturalDayDiets();
               }}
               tintColor={Colors.light.tint}
             />
@@ -1077,6 +2255,172 @@ export default function HistorialScreen() {
           }
         />
       )}
+
+      <Modal visible={!!editOffsite} transparent animationType="fade" onRequestClose={() => setEditOffsite(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+              <View style={{ alignItems: "center", marginBottom: 14 }}>
+                <View style={{ backgroundColor: Colors.light.tint + "18", width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
+                  <Ionicons name="bed-outline" size={24} color={Colors.light.tint} />
+                </View>
+                <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: Colors.light.text }}>
+                  Editar descanso fuera de base
+                </Text>
+              </View>
+
+              <View style={styles.ferryEditRow}>
+                <Text style={styles.ferryEditLabel}>Fecha</Text>
+                <TextInput
+                  value={editOffsiteDateInput}
+                  onChangeText={(v) => {
+                    setEditOffsiteDateInput(v);
+                    const iso = parseDisplayDateToISO(v);
+                    if (iso) setEditOffsiteDate(iso);
+                  }}
+                  placeholder="DD/MM/YYYY"
+                  placeholderTextColor="#9CA3AF"
+                  style={[styles.ferryEditInput, { flex: 1 }]}
+                />
+              </View>
+
+              <View style={styles.ferryEditRow}>
+                <Text style={styles.ferryEditLabel}>Tipo</Text>
+                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" as const }}>
+                  <Pressable
+                    onPress={() => setEditOffsiteRestType("WEEKLY_COMPLETE")}
+                    style={[styles.ferryEditToggle, editOffsiteRestType === "WEEKLY_COMPLETE" && styles.ferryEditToggleActive]}
+                  >
+                    <Text style={[styles.ferryEditToggleText, editOffsiteRestType === "WEEKLY_COMPLETE" && styles.ferryEditToggleTextActive]}>
+                      Completo
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setEditOffsiteRestType("WEEKLY_REDUCED")}
+                    style={[styles.ferryEditToggle, editOffsiteRestType === "WEEKLY_REDUCED" && styles.ferryEditToggleActive]}
+                  >
+                    <Text style={[styles.ferryEditToggleText, editOffsiteRestType === "WEEKLY_REDUCED" && styles.ferryEditToggleTextActive]}>
+                      Reducido
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.ferryEditRow}>
+                <Text style={styles.ferryEditLabel}>Base</Text>
+                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" as const }}>
+                  <Pressable
+                    onPress={() => setEditOffsiteBase("NACIONAL")}
+                    style={[styles.ferryEditToggle, editOffsiteBase === "NACIONAL" && styles.ferryEditToggleActive]}
+                  >
+                    <Text style={[styles.ferryEditToggleText, editOffsiteBase === "NACIONAL" && styles.ferryEditToggleTextActive]}>
+                      Nacional
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setEditOffsiteBase("INTERNACIONAL")}
+                    style={[styles.ferryEditToggle, editOffsiteBase === "INTERNACIONAL" && styles.ferryEditToggleActive]}
+                  >
+                    <Text style={[styles.ferryEditToggleText, editOffsiteBase === "INTERNACIONAL" && styles.ferryEditToggleTextActive]}>
+                      Internacional
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={{ gap: 8, marginBottom: 10 }}>
+                <Pressable
+                  style={styles.ferryToggleRow}
+                  onPress={() => setEditOffsitePlusSunday((v) => !v)}
+                >
+                  <View style={styles.ferryToggleLabel}>
+                    <Ionicons name={editOffsitePlusSunday ? "checkbox" : "square-outline"} size={18} color={Colors.light.tint} />
+                    <Text style={styles.ferryToggleText}>Plus domingo</Text>
+                  </View>
+                </Pressable>
+                <Pressable
+                  style={styles.ferryToggleRow}
+                  onPress={() => setEditOffsitePlusHoliday((v) => !v)}
+                >
+                  <View style={styles.ferryToggleLabel}>
+                    <Ionicons name={editOffsitePlusHoliday ? "checkbox" : "square-outline"} size={18} color={Colors.light.tint} />
+                    <Text style={styles.ferryToggleText}>Plus festivo</Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              <View style={styles.ferryEditRow}>
+                <Text style={styles.ferryEditLabel}>Importe descanso</Text>
+                <TextInput
+                  value={editOffsiteAmount}
+                  onChangeText={setEditOffsiteAmount}
+                  placeholder="0.00"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="decimal-pad"
+                  style={[styles.ferryEditInput, { flex: 1 }]}
+                />
+              </View>
+
+              <View style={styles.ferryEditRow}>
+                <Text style={styles.ferryEditLabel}>Nota</Text>
+                <TextInput
+                  value={editOffsiteNote}
+                  onChangeText={setEditOffsiteNote}
+                  placeholder="(opcional)"
+                  placeholderTextColor="#9CA3AF"
+                  style={[styles.ferryEditInput, { flex: 1 }]}
+                />
+              </View>
+
+              {(() => {
+                const baseRaw = editOffsiteAmount.trim().replace(",", ".");
+                const baseAmt = baseRaw ? parseFloat(baseRaw) : 0;
+                const baseSafe = Number.isFinite(baseAmt) && baseAmt >= 0 ? Math.round(baseAmt * 100) / 100 : 0;
+                const plusAmt =
+                  (editOffsitePlusSunday ? calcDayExtra("DOMINGO", dayExtrasCfg) : 0) +
+                  (editOffsitePlusHoliday ? calcDayExtra("FESTIVO", dayExtrasCfg) : 0);
+                const totalAmt = Math.round((baseSafe + plusAmt) * 100) / 100;
+                return (
+                  <View style={{ backgroundColor: Colors.light.background, borderRadius: 12, padding: 12, marginTop: 6 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>Tipo de descanso</Text>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>{baseSafe.toFixed(2)} €</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>Plus</Text>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.warning }}>{plusAmt.toFixed(2)} €</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_700Bold", color: Colors.light.text }}>{t("common.total")}</Text>
+                      <Text style={{ fontSize: 12, fontFamily: "Inter_700Bold", color: Colors.light.text }}>{totalAmt.toFixed(2)} €</Text>
+                    </View>
+                  </View>
+                );
+              })()}
+
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+                <Pressable
+                  style={({ pressed }) => [styles.ferryEditBtnSecondary, { flex: 1, opacity: pressed ? 0.85 : 1 }]}
+                  onPress={() => setEditOffsite(null)}
+                >
+                  <Text style={styles.ferryEditToggleText}>{t("common.cancel")}</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.ferryEditBtnPrimary, { flex: 1, opacity: pressed ? 0.85 : 1 }]}
+                  disabled={updateOffsiteMutation.isPending}
+                  onPress={() => updateOffsiteMutation.mutate()}
+                >
+                  {updateOffsiteMutation.isPending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={[styles.ferryEditToggleText, { color: "#fff" }]}>{t("common.save")}</Text>
+                  )}
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={!!editFerry} transparent animationType="fade" onRequestClose={() => setEditFerry(null)}>
         <View style={styles.modalOverlay}>
@@ -1197,28 +2541,27 @@ export default function HistorialScreen() {
                 );
               })()}
 
-              {editFerry && editFerry.interruptions && editFerry.interruptions.length > 0 && (
+              {editFerry && normalizeFerryInterruptions(editFerry.interruptions).length > 0 && (
                 <View style={{ marginBottom: 12, backgroundColor: Colors.light.surface, borderRadius: 8, padding: 10 }}>
-                  {editFerry.interruptions.map((int: any, idx: number) => {
-                    const isNew = "start" in int;
-                    const intStartDate = isNew ? new Date(int.start) : null;
-                    const intEndDate = isNew && int.end ? new Date(int.end) : null;
+                  {normalizeFerryInterruptions(editFerry.interruptions).map((int: FerryInterruption, idx: number) => {
+                    const intStartDate = new Date(int.start);
+                    const intEndDate = int.end ? new Date(int.end) : null;
                     const intStartStr = intStartDate ? `${String(intStartDate.getHours()).padStart(2, "0")}:${String(intStartDate.getMinutes()).padStart(2, "0")}` : "";
                     const intEndStr = intEndDate ? `${String(intEndDate.getHours()).padStart(2, "0")}:${String(intEndDate.getMinutes()).padStart(2, "0")}` : "";
-                    const durMin = isNew && int.start && int.end ? Math.max(0, Math.round((new Date(int.end).getTime() - new Date(int.start).getTime()) / 60000)) : 0;
+                    const durMin = int.start && int.end ? Math.max(0, Math.round((new Date(int.end).getTime() - new Date(int.start).getTime()) / 60000)) : 0;
 
                     const updateIntTime = (field: "start" | "end", value: string) => {
                       const [h, m] = value.split(":").map(Number);
                       if (isNaN(h) || isNaN(m)) return;
                       const baseDate = field === "start" ? new Date(int.start) : new Date(int.end || int.start);
                       baseDate.setHours(h, m, 0, 0);
-                      const newInts = [...editFerry.interruptions];
+                      const newInts = [...normalizeFerryInterruptions(editFerry.interruptions)];
                       newInts[idx] = { ...newInts[idx], [field]: baseDate.toISOString() };
-                      setEditFerry({ ...editFerry, interruptions: newInts });
+                      setEditFerry({ ...editFerry, interruptions: newInts as FerryInterruption[] });
                     };
 
                     return (
-                      <View key={idx} style={{ marginBottom: idx < editFerry.interruptions.length - 1 ? 8 : 0 }}>
+                      <View key={idx} style={{ marginBottom: idx < normalizeFerryInterruptions(editFerry.interruptions).length - 1 ? 8 : 0 }}>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                           <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary }}>
                             #{idx + 1}
@@ -1229,8 +2572,9 @@ export default function HistorialScreen() {
                             )}
                             <Pressable
                               onPress={() => {
-                                const updated = { ...editFerry, interruptions: editFerry.interruptions.filter((_: any, i: number) => i !== idx) };
-                                setEditFerry(updated);
+                                const updatedInts = normalizeFerryInterruptions(editFerry.interruptions).filter((_: any, i: number) => i !== idx);
+                                const updated = { ...editFerry, interruptions: updatedInts as FerryInterruption[] };
+                                setEditFerry(updated as FerryRestRecord);
                               }}
                               hitSlop={8}
                             >
@@ -1368,7 +2712,7 @@ export default function HistorialScreen() {
                       }
                       const newEndISO = endRef.toISOString();
 
-                      const currentInterruptions = editFerry.interruptions || [];
+                      const currentInterruptions = normalizeFerryInterruptions(editFerry.interruptions);
                       const rawIntMs = currentInterruptions.reduce((sum: number, ii: any) => {
                         const iStart = ii.start ? new Date(ii.start).getTime() : 0;
                         const iEnd = ii.end ? new Date(ii.end).getTime() : iStart;
@@ -1531,6 +2875,135 @@ export default function HistorialScreen() {
           </View>
         </View>
       </Modal>
+
+      <PendingNaturalDietsModal
+        visible={pendingDietsVisible}
+        detected={pendingDiets}
+        onClose={handleCancelPendingDiets}
+        onConfirm={handleConfirmPendingDiets}
+        loading={pendingDietsSaving}
+        autoPlusesCfg={{
+          sunday: dayExtrasCfg?.extra_sunday ? Number(dayExtrasCfg.extra_sunday) || 0 : 0,
+          holiday: dayExtrasCfg?.extra_holiday ? Number(dayExtrasCfg.extra_holiday) || 0 : 0,
+        }}
+      />
+
+      {/* Editor NDDE: modal completo en editMode para 1 sola fila */}
+      <PendingNaturalDietsModal
+        visible={nddEditVisible && nddEditItem !== null}
+        detected={[]}
+        editMode={true}
+        initialEditItems={
+          nddEditItem
+            ? [
+                {
+                  date: nddEditItem.date,
+                  type: nddEditItem.type as any,
+                  percentage: nddEditItem.percentage as any,
+                  amount: Number(nddEditItem.amount) || 0,
+                  location: nddEditItem.location ?? null,
+                  previousJourneyId: nddEditItem.previousJourneyId ?? null,
+                  nextJourneyId: nddEditItem.nextJourneyId ?? null,
+                  isBaseArrivalDay: false,
+                  isDomingo: nddEditItem.isDomingo === true,
+                  isFestivo: nddEditItem.isFestivo === true,
+                  motivo: "",
+                  plusItems: Array.isArray(nddEditItem.plusItems)
+                    ? nddEditItem.plusItems.map((p) => ({
+                        id: p.id,
+                        concepto: p.concepto,
+                        amount: Number(p.amount) || 0,
+                        selected: true,
+                      }))
+                    : [],
+                  userPercentage: nddEditItem.percentage as any,
+                  userAmount: Number(nddEditItem.amount) || 0,
+                  removed: false,
+                },
+              ]
+            : []
+        }
+        onClose={() => {
+          setNddEditVisible(false);
+          setNddEditItem(null);
+        }}
+        onConfirm={() => {}}
+        loading={pendingDietsSaving}
+        autoPlusesCfg={{
+          sunday: dayExtrasCfg?.extra_sunday ? Number(dayExtrasCfg.extra_sunday) || 0 : 0,
+          holiday: dayExtrasCfg?.extra_holiday ? Number(dayExtrasCfg.extra_holiday) || 0 : 0,
+        }}
+        onConfirmEditMode={async (finalItems) => {
+          try {
+            if (!nddEditItem) return;
+            const result = finalItems[0];
+            if (!result) {
+              // finalItems.length === 0 → usuario eligió SIN_DIETA; consideramos que NO borramos silenciosamente
+              // (si queréis borrar lo cambiaré — ahora solo cerramos sin cambios)
+              setNddEditVisible(false);
+              setNddEditItem(null);
+              return;
+            }
+            // Construir updated NDDE mergando cambios del modal sobre el original
+            const safePct: 100 | 60 | 30 =
+              result.userPercentage === 60 ? 60 : result.userPercentage === 30 ? 30 : 100;
+            const typeUpper = String(result.type || nddEditItem.type).toUpperCase();
+            const safeType: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" =
+              typeUpper === "NACIONAL" ? "NACIONAL" : typeUpper === "REGIONAL" ? "REGIONAL" : "INTERNACIONAL";
+            const finalAmount = Number.isFinite(result.userAmount) && result.userAmount != null
+              ? +Number(result.userAmount).toFixed(2)
+              : Number(result.amount) || 0;
+            const updated: NaturalDayDietEntry = {
+              ...nddEditItem,
+              percentage: safePct,
+              type: safeType,
+              amount: finalAmount,
+              location: result.location ?? nddEditItem.location ?? null,
+              isDomingo: result.isDomingo === true ? true : false,
+              isFestivo: result.isFestivo === true ? true : false,
+              confirmedByUser: true,
+              updatedAt: new Date().toISOString(),
+              syncStatus: "pending",
+              plusItems: Array.isArray(result.plusItems) && result.plusItems.length > 0
+                ? result.plusItems.map((pl) => ({
+                    concepto: String(pl.concepto || "plus").trim().slice(0, 240),
+                    amount: Math.max(0, Math.min(99999, +(Number(pl.amount) || 0).toFixed(2))),
+                    id: String(pl.id || `manual_${Date.now()}_${Math.floor(Math.random() * 9999)}`),
+                  }))
+                : null,
+            };
+            // Guarda + invalida TODAS las queries para refresco inmediato Inicio / Historial / Dietas:
+            await upsertNaturalDayDiets([updated]);
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: ["jornadas"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["compensaciones"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["all-viajes"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["estado-legal"] }).catch(() => {}),
+              qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] }).catch(() => {}),
+            ]);
+            await refreshNaturalDayDiets();
+            setNddEditVisible(false);
+            setNddEditItem(null);
+          } catch (err) {
+            console.error("[historial.tsx] onConfirmEditMode error:", err);
+            if (Platform.OS === "web") {
+              window.alert(`Error al guardar cambios: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }}
+      />
+
+      <ArrivalDayDietSelectorModal
+        visible={arrivalSelectorVisible}
+        day={arrivalSelectorDay}
+        onClose={handleArrivalChoiceClose}
+        onConfirm={handleArrivalChoiceConfirm}
+        loading={pendingDietsSaving}
+      />
     </View>
   );
 }
@@ -1552,6 +3025,20 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontFamily: "Inter_700Bold",
     color: Colors.light.tint,
+  },
+  reportBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: Colors.light.tint,
+  },
+  reportBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
   periodoNav: {
     flexDirection: "row" as const,
@@ -1803,6 +3290,20 @@ const styles = StyleSheet.create({
     color: Colors.light.warning,
     flex: 1,
   },
+  restGapMeta: {
+    paddingHorizontal: 8,
+    paddingBottom: 6,
+    gap: 2,
+  },
+  restGapMetaText: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  restGapMetaTextSuccess: {
+    color: Colors.light.success,
+    fontFamily: "Inter_500Medium",
+  },
   empty: {
     alignItems: "center" as const,
     justifyContent: "center" as const,
@@ -1980,5 +3481,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: "center" as const,
     justifyContent: "center" as const,
+  },
+  ferryToggleRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    backgroundColor: Colors.light.surface,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  ferryToggleLabel: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+  },
+  ferryToggleText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
   },
 });

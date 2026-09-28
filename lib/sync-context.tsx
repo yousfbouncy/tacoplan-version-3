@@ -1,18 +1,24 @@
 import React, { createContext, useContext, useCallback, useEffect, useRef, useState, useMemo, ReactNode } from "react";
 import { AppState, Platform } from "react-native";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
+import { getApiUrl } from "@/lib/query-client";
+import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
 import {
   debouncedAutoSync,
   syncAll,
   processOfflineQueue,
   queueDeleteForSync,
   deleteFromCloud,
+  queueDeleteDayExtraEntryForSync,
+  deleteDayExtraEntryFromCloud,
   getLastSyncTime,
   hasPendingData,
   isNewDevice,
   hasLocalData,
   restoreFromCloud,
-  checkCloudDataCount,
+  shouldOfferCloudRestorePrompt,
+  setOnlineOverride,
 } from "@/lib/sync-service";
 import type { SyncResult } from "@/lib/sync-service";
 
@@ -43,6 +49,7 @@ interface SyncContextValue {
   syncToast: SyncToast | null;
   triggerSync: () => void;
   triggerDeleteSync: (jornadaId: string) => void;
+  triggerDeleteDayExtraEntrySync: (entryId: string) => void;
   startRestore: () => void;
   dismissRecovery: () => void;
   dismissRestoreComplete: () => void;
@@ -53,7 +60,7 @@ interface SyncContextValue {
 const SyncContext = createContext<SyncContextValue | null>(null);
 
 export function SyncProvider({ children }: { children: ReactNode }) {
-  const { getAccessToken, isGuest, isAuthenticated } = useAuth();
+  const { getAccessToken, isAuthenticated, user } = useAuth();
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [hasPending, setHasPending] = useState(false);
@@ -67,6 +74,12 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkedDevice = useRef(false);
+  const lastDiagAtRef = useRef<number>(0);
+  const lastAutoSyncAtRef = useRef<number>(0);
+
+  useEffect(() => {
+    checkedDevice.current = false;
+  }, [user?.id]);
 
   const showToast = useCallback((message: string, type: "success" | "error" | "info" = "success") => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -86,6 +99,39 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     setLastSyncTime(time);
     const pending = await hasPendingData();
     setHasPending(pending);
+  }, []);
+
+  const logSyncDiagnostics = useCallback(async (source: string, result?: SyncResult) => {
+    const now = Date.now();
+    if (now - lastDiagAtRef.current < 8000) return;
+    lastDiagAtRef.current = now;
+
+    try {
+      const apiUrl = getApiUrl();
+      console.log("SYNC DIAG SOURCE:", source);
+      console.log("SYNC DIAG API URL:", apiUrl);
+      console.log("SYNC DIAG RESULT:", { success: result?.success, message: result?.message, stats: result?.stats });
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const session = sessionData?.session || null;
+      console.log("SESSION DATA:", {
+        session: session
+          ? {
+              userId: session.user?.id || null,
+              expiresAt: (session as any).expires_at ?? null,
+              tokenType: (session as any).token_type ?? null,
+            }
+          : null,
+      });
+      console.log("SESSION ERROR:", sessionError);
+
+      const { data, error } = await supabase.from("profiles").select("*").limit(1);
+      const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      console.log("PROFILES DATA:", row ? { hasRow: true, keys: Object.keys(row) } : { hasRow: false });
+      console.log("PROFILES ERROR:", error);
+    } catch (error) {
+      console.error("SYNC ERROR REAL:", error);
+    }
   }, []);
 
   const updateStatus = useCallback((status: SyncStatus, result?: SyncResult) => {
@@ -109,27 +155,36 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
       statusTimerRef.current = setTimeout(() => setSyncStatus("idle"), 3000);
     } else if (status === "error") {
-      showToast("Error de sincronización", "error");
+      const msg = `Error de sincronización · ${result?.message || "motivo desconocido"}`;
+      showToast(msg, "error");
+      logSyncDiagnostics("sync_error_banner", result);
       statusTimerRef.current = setTimeout(() => setSyncStatus("idle"), 3000);
     }
-  }, [refreshSyncInfo, showToast]);
+  }, [refreshSyncInfo, showToast, logSyncDiagnostics]);
 
   const triggerSync = useCallback(() => {
-    if (isGuest || !isAuthenticated) return;
-    debouncedAutoSync(getAccessToken, (status) => {
-      updateStatus(status);
+    if (!isAuthenticated) return;
+    debouncedAutoSync(getAccessToken, (status, result) => {
+      updateStatus(status as SyncStatus, result);
     });
-  }, [getAccessToken, isGuest, isAuthenticated, updateStatus]);
+  }, [getAccessToken, isAuthenticated, updateStatus]);
 
   const triggerDeleteSync = useCallback(async (jornadaId: string) => {
-    if (isGuest || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     await queueDeleteForSync(jornadaId);
     await deleteFromCloud(jornadaId, getAccessToken);
     triggerSync();
-  }, [getAccessToken, isGuest, isAuthenticated, triggerSync]);
+  }, [getAccessToken, isAuthenticated, triggerSync]);
+
+  const triggerDeleteDayExtraEntrySync = useCallback(async (entryId: string) => {
+    if (!isAuthenticated) return;
+    await queueDeleteDayExtraEntryForSync(entryId);
+    await deleteDayExtraEntryFromCloud(entryId, getAccessToken);
+    triggerSync();
+  }, [getAccessToken, isAuthenticated, triggerSync]);
 
   const startRestore = useCallback(async () => {
-    if (isGuest || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     setShowRecoveryPrompt(false);
     setIsRestoring(true);
     setRestoreProgress({ step: 0, total: 5, label: "Iniciando..." });
@@ -154,7 +209,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       setRestoreComplete(true);
       showToast("Error al restaurar datos", "error");
     }
-  }, [getAccessToken, isGuest, isAuthenticated, refreshSyncInfo, showToast]);
+  }, [getAccessToken, isAuthenticated, refreshSyncInfo, showToast]);
 
   const dismissRecovery = useCallback(() => {
     setShowRecoveryPrompt(false);
@@ -166,67 +221,121 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isGuest || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     refreshSyncInfo();
-  }, [isGuest, isAuthenticated, refreshSyncInfo]);
+  }, [isAuthenticated, refreshSyncInfo]);
 
   useEffect(() => {
-    if (isGuest || !isAuthenticated || checkedDevice.current) return;
+    if (!isAuthenticated || checkedDevice.current) return;
     checkedDevice.current = true;
 
     (async () => {
       const newDev = await isNewDevice();
       const hasData = await hasLocalData();
 
-      setSyncStatus("syncing");
+      if (newDev && !hasData) {
+        const decision = await shouldOfferCloudRestorePrompt(getAccessToken);
+        if (decision.shouldShow) {
+          setShowRecoveryPrompt(true);
+          setSyncStatus("idle");
+          await refreshSyncInfo();
+          return;
+        }
+      }
 
+      setSyncStatus("syncing");
       try {
         const result = await syncAll(getAccessToken);
         updateStatus(result.success ? "synced" : "error", result);
-      } catch {
-        updateStatus("error");
+      } catch (e: any) {
+        updateStatus("error", { success: false, message: e?.message || String(e) });
       }
     })();
-  }, [isGuest, isAuthenticated]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    if (isGuest || !isAuthenticated) return;
-    processOfflineQueue(getAccessToken, (status) => updateStatus(status));
-  }, [getAccessToken, isGuest, isAuthenticated, updateStatus]);
+    if (!isAuthenticated) return;
+    processOfflineQueue(getAccessToken, (status, result) => updateStatus(status as SyncStatus, result));
+  }, [getAccessToken, isAuthenticated, updateStatus]);
 
   useEffect(() => {
-    if (isGuest || !isAuthenticated) return;
+    if (!isAuthenticated) return;
 
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const handler = () => {
         if (navigator.onLine) {
-          processOfflineQueue(getAccessToken, (status) => updateStatus(status));
+          processOfflineQueue(getAccessToken, (status, result) => updateStatus(status as SyncStatus, result));
         }
       };
       window.addEventListener("online", handler);
       return () => window.removeEventListener("online", handler);
     }
-  }, [getAccessToken, isGuest, isAuthenticated, updateStatus]);
+  }, [getAccessToken, isAuthenticated, updateStatus]);
 
   useEffect(() => {
-    if (isGuest || !isAuthenticated) return;
+    if (!isAuthenticated) return;
+    if (Platform.OS === "web") return;
+    const lastOnlineRef = { current: true };
+    const sub = NetInfo.addEventListener((state: NetInfoState) => {
+      const online = !!state.isConnected && (state.isInternetReachable !== false);
+      setOnlineOverride(online);
+      if (!online) {
+        console.log("[NET] Offline detected");
+        lastOnlineRef.current = false;
+        setSyncStatus((s) => (s === "syncing" ? s : "offline"));
+        return;
+      }
+      if (!lastOnlineRef.current) {
+        console.log("[NET] Online detected");
+        lastOnlineRef.current = true;
+        processOfflineQueue(getAccessToken, (status, result) => updateStatus(status as SyncStatus, result));
+      } else {
+        lastOnlineRef.current = true;
+      }
+    });
+    return () => sub();
+  }, [getAccessToken, isAuthenticated, updateStatus]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
 
     const sub = AppState.addEventListener("change", (nextState: string) => {
       if (nextState === "active") {
         (async () => {
           try {
+            const now = Date.now();
+            if (Platform.OS === "web") {
+              await refreshSyncInfo();
+              return;
+            }
+            if (now - lastAutoSyncAtRef.current < 60_000) {
+              await refreshSyncInfo();
+              return;
+            }
+
+            const [pending, last] = await Promise.all([hasPendingData(), getLastSyncTime()]);
+            const lastMs = last ? new Date(last).getTime() : 0;
+            const stale = !lastMs || now - lastMs > 5 * 60_000;
+
+            if (!pending && !stale) {
+              await refreshSyncInfo();
+              return;
+            }
+
+            lastAutoSyncAtRef.current = now;
             setSyncStatus("syncing");
             const result = await syncAll(getAccessToken);
             updateStatus(result.success ? "synced" : "error", result);
-          } catch {
-            await processOfflineQueue(getAccessToken, (status) => updateStatus(status));
+          } catch (e: any) {
+            updateStatus("error", { success: false, message: e?.message || String(e) });
+            await processOfflineQueue(getAccessToken, (status, result) => updateStatus(status as SyncStatus, result));
           }
           refreshSyncInfo();
         })();
       }
     });
     return () => sub.remove();
-  }, [getAccessToken, isGuest, isAuthenticated, updateStatus, refreshSyncInfo]);
+  }, [getAccessToken, isAuthenticated, updateStatus, refreshSyncInfo]);
 
   const value = useMemo(() => ({
     syncStatus,
@@ -241,14 +350,15 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     syncToast,
     triggerSync,
     triggerDeleteSync,
+    triggerDeleteDayExtraEntrySync,
     startRestore,
     dismissRecovery,
     dismissRestoreComplete,
     dismissToast,
     refreshSyncInfo,
-  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, syncToast, triggerSync, triggerDeleteSync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
+  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, syncToast, triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
 
-  return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;
+  return React.createElement(SyncContext.Provider, { value }, children);
 }
 
 export function useSync() {

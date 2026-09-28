@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { userScopedKey } from "@/lib/user-scope";
+import { useSync } from "@/lib/sync-context";
 
 const FERRY_CONFIG_KEY = "tacoplan_ferry_config";
 
@@ -15,6 +17,7 @@ export interface FerryConfig {
   ferryRestEnabled: boolean;
   ferryTransitRate: number;
   ferryCabinRate: number;
+  _updated_at?: string;
 }
 
 const DEFAULT_CONFIG: FerryConfig = {
@@ -47,24 +50,29 @@ const FerryContext = createContext<FerryContextValue>({
 export function FerryProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<FerryConfig>(DEFAULT_CONFIG);
   const [isLoaded, setIsLoaded] = useState(false);
+  const { syncVersion } = useSync();
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(FERRY_CONFIG_KEY);
+        const raw = await AsyncStorage.getItem(await userScopedKey(FERRY_CONFIG_KEY));
         if (raw) {
           const parsed = JSON.parse(raw);
-          setConfig({ ...DEFAULT_CONFIG, ...parsed });
+          if (!cancelled) setConfig({ ...DEFAULT_CONFIG, ...parsed });
         }
       } catch {}
-      setIsLoaded(true);
+      if (!cancelled) setIsLoaded(true);
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [syncVersion]);
 
   const updateConfig = useCallback(async (partial: Partial<FerryConfig>) => {
     setConfig((prev) => {
-      const next = { ...prev, ...partial };
-      AsyncStorage.setItem(FERRY_CONFIG_KEY, JSON.stringify(next)).catch(() => {});
+      const next = { ...prev, ...partial, _updated_at: new Date().toISOString() };
+      userScopedKey(FERRY_CONFIG_KEY).then((k) => AsyncStorage.setItem(k, JSON.stringify(next))).catch(() => {});
       return next;
     });
   }, []);

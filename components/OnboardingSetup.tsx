@@ -16,6 +16,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import { useI18n } from "@/lib/i18n-context";
+import { userScopedKey } from "@/lib/user-scope";
+import { useAuth } from "@/lib/auth-context";
+import { markOnboardingCompleted, saveUserConfig } from "@/lib/config-service";
 
 const SETTINGS_KEY = "tacoplan_user_settings";
 const PERIOD_KEY = "tacoplan_period_config";
@@ -40,18 +43,35 @@ interface DietRates {
   intl_100: string;
   intl_60: string;
   intl_30: string;
+  reg_100: string;
+  reg_60: string;
+  reg_30: string;
 }
 
 interface DayExtras {
   extra_saturday: string;
   extra_sunday: string;
   extra_holiday: string;
+  offsite_weekly_reduced_nacional: string;
+  offsite_weekly_reduced_internacional: string;
+  offsite_weekly_complete_nacional: string;
+  offsite_weekly_complete_internacional: string;
 }
 
 interface PaymentConfig {
   mode: "morocco_trip" | "morocco_pernight" | "morocco_diet";
   tripRate: string;
   pernightRate: string;
+}
+
+interface BaseLocationForm {
+  base_name: string;
+  base_city: string;
+  base_country: string;
+  base_address: string;
+  base_latitude: string;
+  base_longitude: string;
+  base_radius_km: string;
 }
 
 function safeHaptic() {
@@ -74,24 +94,33 @@ interface Props {
 }
 
 const DEFAULT_DIETS: DietRates = {
-  nac_100: "54.30",
-  nac_60: "32.58",
-  nac_30: "16.29",
-  intl_100: "72.77",
-  intl_60: "43.66",
-  intl_30: "21.83",
+  nac_100: "0",
+  nac_60: "0",
+  nac_30: "0",
+  intl_100: "0",
+  intl_60: "0",
+  intl_30: "0",
+  reg_100: "0",
+  reg_60: "0",
+  reg_30: "0",
 };
 
 const DEFAULT_EXTRAS: DayExtras = {
-  extra_saturday: "10",
-  extra_sunday: "15",
-  extra_holiday: "20",
+  extra_saturday: "0",
+  extra_sunday: "0",
+  extra_holiday: "0",
+  offsite_weekly_reduced_nacional: "0",
+  offsite_weekly_reduced_internacional: "0",
+  offsite_weekly_complete_nacional: "0",
+  offsite_weekly_complete_internacional: "0",
 };
 
 export default function OnboardingSetup({ onComplete }: Props) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<DriverProfile | null>(null);
@@ -107,10 +136,26 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [periodMode, setPeriodMode] = useState<PeriodMode | null>(null);
   const [manualFrom, setManualFrom] = useState("1");
   const [manualTo, setManualTo] = useState("30");
+  const [userPaymentMode, setUserPaymentMode] = useState<"dietas" | "viaje" | "km">("dietas");
+  const [pricePerKmNac, setPricePerKmNac] = useState("0");
+  const [pricePerKmIntl, setPricePerKmIntl] = useState("0");
+  const [pricePerKmReg, setPricePerKmReg] = useState("0");
+  const [pricePerTripNac, setPricePerTripNac] = useState("0");
+  const [pricePerTripIntl, setPricePerTripIntl] = useState("0");
+  const [pricePerTripReg, setPricePerTripReg] = useState("0");
   const [payment, setPayment] = useState<PaymentConfig>({
     mode: "morocco_diet",
     tripRate: "0",
     pernightRate: "0",
+  });
+  const [baseLocation, setBaseLocation] = useState<BaseLocationForm>({
+    base_name: "",
+    base_city: "",
+    base_country: "",
+    base_address: "",
+    base_latitude: "",
+    base_longitude: "",
+    base_radius_km: "20",
   });
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -119,9 +164,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
     (async () => {
       try {
         const [settingsRaw, periodRaw, ferryRaw] = await Promise.all([
-          AsyncStorage.getItem(SETTINGS_KEY),
-          AsyncStorage.getItem(PERIOD_KEY),
-          AsyncStorage.getItem(FERRY_KEY),
+          AsyncStorage.getItem(await userScopedKey(SETTINGS_KEY, userId)),
+          AsyncStorage.getItem(await userScopedKey(PERIOD_KEY, userId)),
+          AsyncStorage.getItem(await userScopedKey(FERRY_KEY, userId)),
         ]);
         if (settingsRaw) {
           const s = JSON.parse(settingsRaw);
@@ -132,15 +177,42 @@ export default function OnboardingSetup({ onComplete }: Props) {
             intl_100: s.intl_100 ?? DEFAULT_DIETS.intl_100,
             intl_60: s.intl_60 ?? DEFAULT_DIETS.intl_60,
             intl_30: s.intl_30 ?? DEFAULT_DIETS.intl_30,
+            reg_100: s.reg_100 ?? DEFAULT_DIETS.reg_100,
+            reg_60: s.reg_60 ?? DEFAULT_DIETS.reg_60,
+            reg_30: s.reg_30 ?? DEFAULT_DIETS.reg_30,
           });
           setExtras({
             extra_saturday: s.extra_saturday ?? DEFAULT_EXTRAS.extra_saturday,
             extra_sunday: s.extra_sunday ?? DEFAULT_EXTRAS.extra_sunday,
             extra_holiday: s.extra_holiday ?? DEFAULT_EXTRAS.extra_holiday,
+            offsite_weekly_reduced_nacional: s.offsite_weekly_reduced_nacional ?? DEFAULT_EXTRAS.offsite_weekly_reduced_nacional,
+            offsite_weekly_reduced_internacional: s.offsite_weekly_reduced_internacional ?? DEFAULT_EXTRAS.offsite_weekly_reduced_internacional,
+            offsite_weekly_complete_nacional: s.offsite_weekly_complete_nacional ?? DEFAULT_EXTRAS.offsite_weekly_complete_nacional,
+            offsite_weekly_complete_internacional: s.offsite_weekly_complete_internacional ?? DEFAULT_EXTRAS.offsite_weekly_complete_internacional,
           });
+          if (s.payment_mode === "dietas" || s.payment_mode === "viaje" || s.payment_mode === "km") {
+            setUserPaymentMode(s.payment_mode);
+          }
+          const fallbackKm = s.price_per_km != null ? String(s.price_per_km) : "0";
+          setPricePerKmNac(s.price_per_km_nacional != null ? String(s.price_per_km_nacional) : fallbackKm);
+          setPricePerKmIntl(s.price_per_km_internacional != null ? String(s.price_per_km_internacional) : fallbackKm);
+          setPricePerKmReg(s.price_per_km_regional != null ? String(s.price_per_km_regional) : fallbackKm);
+          const fallbackTrip = s.price_per_trip != null ? String(s.price_per_trip) : "0";
+          setPricePerTripNac(s.price_per_trip_nacional != null ? String(s.price_per_trip_nacional) : fallbackTrip);
+          setPricePerTripIntl(s.price_per_trip_internacional != null ? String(s.price_per_trip_internacional) : fallbackTrip);
+          setPricePerTripReg(s.price_per_trip_regional != null ? String(s.price_per_trip_regional) : fallbackTrip);
           if (s.driver_profile) setProfile(s.driver_profile);
           if (s.operation_zone) setZone(s.operation_zone);
           if (s.trip_types) setTripTypes(s.trip_types);
+          setBaseLocation({
+            base_name: s.base_name ?? "",
+            base_city: s.base_city ?? "",
+            base_country: s.base_country ?? "",
+            base_address: s.base_address ?? "",
+            base_latitude: s.base_latitude != null ? String(s.base_latitude) : "",
+            base_longitude: s.base_longitude != null ? String(s.base_longitude) : "",
+            base_radius_km: s.base_radius_km != null ? String(s.base_radius_km) : "20",
+          });
         }
         if (periodRaw) {
           const p = JSON.parse(periodRaw);
@@ -161,9 +233,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
       } catch {}
       setLoading(false);
     })();
-  }, []);
+  }, [userId]);
 
   const showPaymentSection = profile === "morocco" || profile === "ferry";
+  const showUserPaymentSection = profile === "standard";
 
   function toggleTrip(key: keyof TripTypes) {
     setTripTypes((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -173,6 +246,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
     const errs: string[] = [];
     if (!profile) errs.push(t("onboarding.errorProfile"));
     if (!zone) errs.push(t("onboarding.errorZone"));
+    if (!baseLocation.base_name.trim()) errs.push("Indica el nombre de tu base");
+    if (!baseLocation.base_city.trim()) errs.push("Indica la ciudad de tu base");
+    if (!baseLocation.base_country.trim()) errs.push("Indica el país de tu base");
+    const baseRadius = parseFloat(baseLocation.base_radius_km.replace(",", "."));
+    if (!Number.isFinite(baseRadius) || baseRadius <= 0) errs.push("El radio de base debe ser mayor que 0");
     if (!tripTypes.nacional && !tripTypes.internacional && !tripTypes.morocco && !tripTypes.ferry)
       errs.push(t("onboarding.errorTripType"));
     if (!periodMode) errs.push(t("onboarding.errorPeriod"));
@@ -181,6 +259,20 @@ export default function OnboardingSetup({ onComplete }: Props) {
       const to = parseInt(manualTo, 10);
       if (isNaN(from) || isNaN(to) || from < 1 || from > 31 || to < 1 || to > 31)
         errs.push(t("onboarding.errorManualDays"));
+    }
+    if (showUserPaymentSection) {
+      const kmNac = parseFloat(pricePerKmNac);
+      const kmIntl = parseFloat(pricePerKmIntl);
+      const kmReg = parseFloat(pricePerKmReg);
+      const tripNac = parseFloat(pricePerTripNac);
+      const tripIntl = parseFloat(pricePerTripIntl);
+      const tripReg = parseFloat(pricePerTripReg);
+      if (userPaymentMode === "km" && (
+        isNaN(kmNac) || kmNac < 0 || isNaN(kmIntl) || kmIntl < 0 || isNaN(kmReg) || kmReg < 0
+      )) errs.push(t("usuario.pricePerKm") + " >= 0");
+      if (userPaymentMode === "viaje" && (
+        isNaN(tripNac) || tripNac < 0 || isNaN(tripIntl) || tripIntl < 0 || isNaN(tripReg) || tripReg < 0
+      )) errs.push(t("usuario.pricePerTrip") + " >= 0");
     }
     if (showPaymentSection && payment.mode === "morocco_trip") {
       const rate = parseFloat(payment.tripRate);
@@ -215,26 +307,45 @@ export default function OnboardingSetup({ onComplete }: Props) {
     setErrors([]);
     setSaving(true);
     try {
-      const existingRaw = await AsyncStorage.getItem(SETTINGS_KEY);
+      if (!userId) {
+        Alert.alert(t("common.error"), t("common.notAuthenticated"));
+        return;
+      }
+      const existingRaw = await AsyncStorage.getItem(await userScopedKey(SETTINGS_KEY, userId));
       const existingSettings = existingRaw ? JSON.parse(existingRaw) : {};
       const userSettings = {
         ...existingSettings,
         ...diets,
         ...extras,
+        payment_mode: userPaymentMode,
+        price_per_km: pricePerKmNac,
+        price_per_km_nacional: pricePerKmNac,
+        price_per_km_internacional: pricePerKmIntl,
+        price_per_km_regional: pricePerKmReg,
+        price_per_trip: pricePerTripNac,
+        price_per_trip_nacional: pricePerTripNac,
+        price_per_trip_internacional: pricePerTripIntl,
+        price_per_trip_regional: pricePerTripReg,
         driver_profile: profile,
         operation_zone: zone,
         trip_types: tripTypes,
+        base_name: baseLocation.base_name.trim(),
+        base_city: baseLocation.base_city.trim(),
+        base_country: baseLocation.base_country.trim(),
+        base_address: baseLocation.base_address.trim(),
+        base_latitude: baseLocation.base_latitude.trim(),
+        base_longitude: baseLocation.base_longitude.trim(),
+        base_radius_km: baseLocation.base_radius_km.trim() || "20",
+        period_type: periodMode,
         period_start_day: periodMode === "AUTO_20_20" ? "21" : periodMode === "MANUAL" ? manualFrom : "1",
         period_end_day: periodMode === "AUTO_20_20" ? "20" : periodMode === "MANUAL" ? manualTo : "30",
       };
-      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(userSettings));
 
       const periodConfig = {
         mode: periodMode,
         manualFrom: periodMode === "MANUAL" ? parseInt(manualFrom, 10) : periodMode === "AUTO_20_20" ? 21 : 1,
         manualTo: periodMode === "MANUAL" ? parseInt(manualTo, 10) : periodMode === "AUTO_20_20" ? 20 : 30,
       };
-      await AsyncStorage.setItem(PERIOD_KEY, JSON.stringify(periodConfig));
 
       const isMoroccoOrFerry = profile === "morocco" || profile === "ferry";
       const ferryConfig = {
@@ -245,7 +356,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
         pernightRate: parseFloat(payment.pernightRate) || 0,
         ferryRestEnabled: profile === "ferry",
       };
-      await AsyncStorage.setItem(FERRY_KEY, JSON.stringify(ferryConfig));
+      await saveUserConfig(userId, { settings: userSettings, period: periodConfig, ferry: ferryConfig });
 
       const onboardingData = {
         completed: true,
@@ -254,7 +365,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
         tripTypes,
         completedAt: new Date().toISOString(),
       };
-      await AsyncStorage.setItem(ONBOARDING_KEY, JSON.stringify(onboardingData));
+      await AsyncStorage.setItem(await userScopedKey(ONBOARDING_KEY, userId), JSON.stringify(onboardingData));
+      await markOnboardingCompleted(userId);
 
       safeHaptic();
       onComplete();
@@ -296,12 +408,22 @@ export default function OnboardingSetup({ onComplete }: Props) {
     { key: "intl_100", label: t("onboarding.dietIntl100") },
     { key: "intl_60", label: t("onboarding.dietIntl60") },
     { key: "intl_30", label: t("onboarding.dietIntl30") },
+    { key: "reg_100", label: t("onboarding.dietReg100") },
+    { key: "reg_60", label: t("onboarding.dietReg60") },
+    { key: "reg_30", label: t("onboarding.dietReg30") },
   ];
 
   const extraFields: { key: keyof DayExtras; label: string }[] = [
     { key: "extra_saturday", label: t("onboarding.extraSaturday") },
     { key: "extra_sunday", label: t("onboarding.extraSunday") },
     { key: "extra_holiday", label: t("onboarding.extraHoliday") },
+  ];
+
+  const offsiteFields: { key: keyof DayExtras; label: string }[] = [
+    { key: "offsite_weekly_reduced_nacional", label: t("onboarding.offsiteWeeklyReducedNacional") },
+    { key: "offsite_weekly_reduced_internacional", label: t("onboarding.offsiteWeeklyReducedInternacional") },
+    { key: "offsite_weekly_complete_nacional", label: t("onboarding.offsiteWeeklyCompleteNacional") },
+    { key: "offsite_weekly_complete_internacional", label: t("onboarding.offsiteWeeklyCompleteInternacional") },
   ];
 
   const periodOptions: { key: PeriodMode; label: string }[] = [
@@ -381,6 +503,86 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
+        <SectionHeader title="Lugar de base" icon="business-outline" />
+        <Text style={s.subtitleInline}>
+          Indica tu lugar de base para mejorar el cálculo de descansos semanales, descansos fuera de base y compensaciones.
+        </Text>
+        <View style={s.gridContainer}>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>Nombre de la base</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_name}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_name: val }))}
+              placeholder="Base Abrera"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>Ciudad</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_city}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_city: val }))}
+              placeholder="Abrera"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>País</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_country}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_country: val }))}
+              placeholder="España"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>Radio base</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_radius_km}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_radius_km: val }))}
+              keyboardType="decimal-pad"
+              placeholder="20"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={[s.gridItem, { width: "100%" as any }]}>
+            <Text style={s.inputLabel}>Dirección opcional</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_address}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_address: val }))}
+              placeholder="Calle, polígono o centro operativo"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>Latitud opcional</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_latitude}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_latitude: val }))}
+              keyboardType="decimal-pad"
+              placeholder="41.5167"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+          <View style={s.gridItem}>
+            <Text style={s.inputLabel}>Longitud opcional</Text>
+            <TextInput
+              style={s.input}
+              value={baseLocation.base_longitude}
+              onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_longitude: val }))}
+              keyboardType="decimal-pad"
+              placeholder="1.9020"
+              placeholderTextColor={Colors.light.textSecondary}
+            />
+          </View>
+        </View>
+
         <SectionHeader title={t("onboarding.sectionDiets")} icon="cash-outline" />
         <View style={s.gridContainer}>
           {dietFields.map((f) => (
@@ -414,6 +616,128 @@ export default function OnboardingSetup({ onComplete }: Props) {
             </View>
           ))}
         </View>
+        <View style={s.subsectionDivider} />
+        <Text style={s.subsectionLabel}>{t("usuario.offsiteWeeklyRestRates")}</Text>
+        <View style={s.gridContainer}>
+          {offsiteFields.map((f) => (
+            <View key={f.key} style={s.gridItem}>
+              <Text style={s.inputLabel}>{f.label}</Text>
+              <TextInput
+                style={s.input}
+                value={extras[f.key]}
+                onChangeText={(val) => setExtras((prev) => ({ ...prev, [f.key]: val }))}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={Colors.light.textSecondary}
+              />
+            </View>
+          ))}
+        </View>
+
+        {showUserPaymentSection && (
+          <>
+            <SectionHeader title={t("usuario.paymentMode")} icon="card-outline" />
+            <View style={s.chipRow}>
+              {(["dietas", "viaje", "km"] as const).map((pm) => (
+                <Pressable
+                  key={pm}
+                  style={[s.chip, userPaymentMode === pm && s.chipActive]}
+                  onPress={() => setUserPaymentMode(pm)}
+                >
+                  <Text style={[s.chipText, userPaymentMode === pm && s.chipTextActive]}>
+                    {pm === "dietas"
+                      ? t("usuario.paymentModeDietas")
+                      : pm === "viaje"
+                        ? t("usuario.paymentModeTrip")
+                        : t("usuario.paymentModeKm")}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {userPaymentMode === "km" && (
+              <>
+                <View style={[s.gridContainer, { marginTop: 10 }]}>
+                  <View style={s.gridItem}>
+                    <Text style={s.inputLabel}>{t("usuario.pricePerKmNacional")}</Text>
+                    <TextInput
+                      style={s.input}
+                      value={pricePerKmNac}
+                      onChangeText={setPricePerKmNac}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.light.textSecondary}
+                    />
+                  </View>
+                  <View style={s.gridItem}>
+                    <Text style={s.inputLabel}>{t("usuario.pricePerKmInternacional")}</Text>
+                    <TextInput
+                      style={s.input}
+                      value={pricePerKmIntl}
+                      onChangeText={setPricePerKmIntl}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.light.textSecondary}
+                    />
+                  </View>
+                  <View style={s.gridItem}>
+                    <Text style={s.inputLabel}>{t("usuario.pricePerKmRegional")}</Text>
+                    <TextInput
+                      style={s.input}
+                      value={pricePerKmReg}
+                      onChangeText={setPricePerKmReg}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={Colors.light.textSecondary}
+                    />
+                  </View>
+                </View>
+                <View style={s.warningBox}>
+                  <Text style={s.warningTitle}>{t("usuario.kmWarningTitle")}</Text>
+                  <Text style={s.warningText}>{t("usuario.kmWarningText")}</Text>
+                </View>
+              </>
+            )}
+
+            {userPaymentMode === "viaje" && (
+              <View style={[s.gridContainer, { marginTop: 10 }]}>
+                <View style={s.gridItem}>
+                  <Text style={s.inputLabel}>{t("usuario.pricePerTripNacional")}</Text>
+                  <TextInput
+                    style={s.input}
+                    value={pricePerTripNac}
+                    onChangeText={setPricePerTripNac}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.light.textSecondary}
+                  />
+                </View>
+                <View style={s.gridItem}>
+                  <Text style={s.inputLabel}>{t("usuario.pricePerTripInternacional")}</Text>
+                  <TextInput
+                    style={s.input}
+                    value={pricePerTripIntl}
+                    onChangeText={setPricePerTripIntl}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.light.textSecondary}
+                  />
+                </View>
+                <View style={s.gridItem}>
+                  <Text style={s.inputLabel}>{t("usuario.pricePerTripRegional")}</Text>
+                  <TextInput
+                    style={s.input}
+                    value={pricePerTripReg}
+                    onChangeText={setPricePerTripReg}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={Colors.light.textSecondary}
+                  />
+                </View>
+              </View>
+            )}
+          </>
+        )}
 
         <SectionHeader title={t("onboarding.sectionPeriod")} icon="calendar-outline" />
         <View style={s.chipRow}>
@@ -563,6 +887,13 @@ const s = StyleSheet.create({
     marginTop: 6,
     paddingHorizontal: 20,
   },
+  subtitleInline: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -653,6 +984,18 @@ const s = StyleSheet.create({
   gridItem: {
     width: "47%" as any,
   },
+  subsectionDivider: {
+    height: 1,
+    backgroundColor: Colors.light.border,
+    marginTop: 14,
+    marginBottom: 10,
+  },
+  subsectionLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+    marginBottom: 10,
+  },
   inputLabel: {
     fontSize: 12,
     fontFamily: "Inter_500Medium",
@@ -699,6 +1042,24 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: Colors.light.danger,
+  },
+  warningBox: {
+    backgroundColor: Colors.light.warning + "15",
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  warningTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.warning,
+    marginBottom: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    lineHeight: 16,
   },
   saveButton: {
     backgroundColor: Colors.light.tint,

@@ -52,6 +52,8 @@ export function getPeriodo2020(date?: Date, startDay: number = 20, endDay?: numb
   return { from: fromDate, to: toDate, label };
 }
 
+export const WEB_HIDE_BILLING_UI = (process.env.EXPO_PUBLIC_TACOPLAN_HIDE_BILLING_UI ?? "true") === "true";
+
 export function formatDescanso(minutos: number | null | undefined): string {
   if (minutos == null) return "-";
   const h = Math.floor(minutos / 60);
@@ -112,6 +114,32 @@ export function formatFechaCorta(fecha: string | null | undefined): string {
   if (!fecha) return "-";
   const [, m, d] = fecha.split("-");
   return `${d}/${m}`;
+}
+
+export function formatDateForDisplay(fecha: string | null | undefined): string {
+  if (!fecha) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return formatFecha(fecha);
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(fecha)) return fecha;
+  return fecha;
+}
+
+export function parseDisplayDateToISO(displayDate: string | null | undefined): string | null {
+  const raw = (displayDate || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const m = raw.match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})$/);
+  if (!m) return null;
+  const d = Number(m[1]);
+  const mo = Number(m[2]);
+  const y = Number(m[3]);
+  if (!Number.isFinite(d) || !Number.isFinite(mo) || !Number.isFinite(y)) return null;
+  if (mo < 1 || mo > 12) return null;
+  if (d < 1 || d > 31) return null;
+  const iso = `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const dt = new Date(iso + "T12:00:00");
+  if (Number.isNaN(dt.getTime())) return null;
+  if (dt.getFullYear() !== y || dt.getMonth() + 1 !== mo || dt.getDate() !== d) return null;
+  return iso;
 }
 
 export function dietaTipoLabel(tipo: string): string {
