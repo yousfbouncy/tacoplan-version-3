@@ -2867,14 +2867,29 @@ export async function getResumenDietas(
   }
 
   const naturalDayDiets = await getAllNaturalDayDiets();
+  const { customRates: naturalDayRates } = await loadDietDerivationContext();
   for (const nd of naturalDayDiets) {
     if (nd.date < from || nd.date > to) continue;
     if (!nd.confirmedByUser || nd.dismissedAt) continue;
-    totalGeneral += nd.amount;
+
+    // La dieta base y los pluses son conceptos separados. Algunos registros
+    // antiguos guardaron en nd.amount la suma dieta + pluses; para el resumen
+    // recalculamos siempre la dieta desde la tarifa vigente del tipo/porcentaje.
+    const configuredDietAmount = findRate(naturalDayRates, nd.type, nd.percentage);
+    const dietAmount =
+      Number.isFinite(configuredDietAmount) && configuredDietAmount > 0
+        ? configuredDietAmount
+        : Math.max(
+            0,
+            Number(nd.amount || 0) -
+              (nd.plusItems || []).reduce((sum, pi) => sum + (Number(pi.amount) || 0), 0),
+          );
+
+    totalGeneral = Math.round((totalGeneral + dietAmount) * 100) / 100;
     const key = `${nd.type}_${nd.percentage}`;
     if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
     desglose[key].cantidad++;
-    desglose[key].total = Math.round((desglose[key].total + nd.amount) * 100) / 100;
+    desglose[key].total = Math.round((desglose[key].total + dietAmount) * 100) / 100;
     if (nd.plusItems && nd.plusItems.length > 0) {
       for (const pi of nd.plusItems) {
         const amt = Number.isFinite(Number(pi.amount)) ? Number(pi.amount) : 0;
