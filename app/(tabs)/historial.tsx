@@ -47,6 +47,7 @@ import {
   updateJornadaFerryData,
   splitOffsiteWeeklyRestEntry,
   calcDayExtra,
+  findRate,
   resolveNaturalDayDietFinancials,
   type UserDietRate,
   type UserDayExtras,
@@ -2997,9 +2998,27 @@ export default function HistorialScreen() {
             const typeUpper = String(result.type || nddEditItem.type).toUpperCase();
             const safeType: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" =
               typeUpper === "NACIONAL" ? "NACIONAL" : typeUpper === "REGIONAL" ? "REGIONAL" : "INTERNACIONAL";
-            const finalAmount = Number.isFinite(result.userAmount) && result.userAmount != null
+            const editedPlusItems = Array.isArray(result.plusItems) && result.plusItems.length > 0
+              ? result.plusItems.map((pl) => ({
+                  concepto: String(pl.concepto || "plus").trim().slice(0, 240),
+                  amount: Math.max(0, Math.min(99999, +(Number(pl.amount) || 0).toFixed(2))),
+                  id: String(pl.id || `manual_${Date.now()}_${Math.floor(Math.random() * 9999)}`),
+                }))
+              : null;
+
+            // Al editar una jornada reevaluada guardamos SIEMPRE la dieta base
+            // separada de sus pluses. Así nunca volvemos a mezclar, por ejemplo,
+            // 72,77 € de dieta + 14 € de formación dentro de amount.
+            const configuredDiet = findRate(customRates, safeType, safePct);
+            const rawEditedAmount = Number.isFinite(result.userAmount) && result.userAmount != null
               ? +Number(result.userAmount).toFixed(2)
               : Number(result.amount) || 0;
+            const editedPlusTotal = (editedPlusItems || []).reduce((sum, pl) => sum + pl.amount, 0);
+            const finalAmount =
+              Number.isFinite(configuredDiet) && configuredDiet > 0
+                ? +configuredDiet.toFixed(2)
+                : Math.max(0, +(rawEditedAmount - editedPlusTotal).toFixed(2));
+
             const updated: NaturalDayDietEntry = {
               ...nddEditItem,
               percentage: safePct,
@@ -3011,26 +3030,20 @@ export default function HistorialScreen() {
               confirmedByUser: true,
               updatedAt: new Date().toISOString(),
               syncStatus: "pending",
-              plusItems: Array.isArray(result.plusItems) && result.plusItems.length > 0
-                ? result.plusItems.map((pl) => ({
-                    concepto: String(pl.concepto || "plus").trim().slice(0, 240),
-                    amount: Math.max(0, Math.min(99999, +(Number(pl.amount) || 0).toFixed(2))),
-                    id: String(pl.id || `manual_${Date.now()}_${Math.floor(Math.random() * 9999)}`),
-                  }))
-                : null,
+              plusItems: editedPlusItems,
             };
             // Guarda + invalida TODAS las queries para refresco inmediato Inicio / Historial / Dietas:
             await upsertNaturalDayDiets([updated]);
             await Promise.all([
-              qc.invalidateQueries({ queryKey: ["jornadas"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["jornadas"] }).catch(() => {}),
               qc.invalidateQueries({ queryKey: ["compensaciones"] }).catch(() => {}),
               qc.invalidateQueries({ queryKey: ["all-viajes"] }).catch(() => {}),
-              qc.invalidateQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
-              qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
-              qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
-              qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
               qc.invalidateQueries({ queryKey: ["estado-legal"] }).catch(() => {}),
-              qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["offsite-weekly-rest-dates"] }).catch(() => {}),
             ]);
             await refreshNaturalDayDiets();
             setNddEditVisible(false);
