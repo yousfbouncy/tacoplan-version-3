@@ -561,8 +561,10 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
 
   const [history, setHistory] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const historyLoadingRef = useRef(false);
 
   const [updateLoading, setUpdateLoading] = useState(false);
+  const updateLoadingRef = useRef(false);
   const [updateSaving, setUpdateSaving] = useState(false);
   const [updateConfig, setUpdateConfig] = useState<Record<"ios" | "android" | "web", AppUpdateConfigRow>>({
     ios: { platform: "ios", channel: null, latest_version: null, min_required_version: null, minimum_version: null, force_update: false, apk_url: null, app_store_url: null, enabled: true, message: null },
@@ -837,7 +839,8 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
   }, [autoLoading]);
 
   const loadHistory = useCallback(async () => {
-    if (historyLoading) return;
+    if (historyLoadingRef.current) return;
+    historyLoadingRef.current = true;
     setHistoryLoading(true);
     try {
       const { data, error } = await supabase
@@ -850,12 +853,14 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     } catch {
       setHistory([]);
     } finally {
+      historyLoadingRef.current = false;
       setHistoryLoading(false);
     }
-  }, [historyLoading]);
+  }, []);
 
   const loadUpdateConfig = useCallback(async () => {
-    if (updateLoading) return;
+    if (updateLoadingRef.current) return;
+    updateLoadingRef.current = true;
     setUpdateLoading(true);
     try {
       const { data, error } = await supabase
@@ -864,36 +869,41 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
         .in("platform", ["ios", "android", "web"] as any)
         .limit(20);
       if (error) throw error;
-      const next = {
-        ios: { ...updateConfig.ios },
-        android: { ...updateConfig.android },
-        web: { ...updateConfig.web },
-      };
-      for (const row of (data || []) as any[]) {
-        const p = row.platform === "ios" || row.platform === "android" || row.platform === "web"
-          ? (row.platform as "ios" | "android" | "web")
-          : null;
-        if (!p) continue;
-        next[p] = {
-          platform: p,
-          channel: row.channel ?? null,
-          latest_version: row.latest_version ?? null,
-          min_required_version: row.min_required_version ?? null,
-          minimum_version: row.minimum_version ?? null,
-          force_update: row.force_update === true,
-          apk_url: row.apk_url ?? null,
-          app_store_url: row.app_store_url ?? null,
-          enabled: row.enabled !== false,
-          message: row.message ?? null,
+
+      setUpdateConfig((prev) => {
+        const next = {
+          ios: { ...prev.ios },
+          android: { ...prev.android },
+          web: { ...prev.web },
         };
-      }
-      setUpdateConfig(next);
+        for (const row of (data || []) as any[]) {
+          const p = row.platform === "ios" || row.platform === "android" || row.platform === "web"
+            ? (row.platform as "ios" | "android" | "web")
+            : null;
+          if (!p) continue;
+          next[p] = {
+            platform: p,
+            channel: row.channel ?? null,
+            latest_version: row.latest_version ?? null,
+            min_required_version: row.min_required_version ?? null,
+            minimum_version: row.minimum_version ?? null,
+            force_update: row.force_update === true,
+            apk_url: row.apk_url ?? null,
+            app_store_url: row.app_store_url ?? null,
+            enabled: row.enabled !== false,
+            message: row.message ?? null,
+          };
+        }
+        return next;
+      });
     } catch {
-      setUpdateConfig((prev) => ({ ...prev }));
+      // Mantén el borrador actual si la recarga falla; no sobrescribas lo que
+      // el administrador esté escribiendo.
     } finally {
+      updateLoadingRef.current = false;
       setUpdateLoading(false);
     }
-  }, [updateConfig, updateLoading]);
+  }, []);
 
   const saveUpdateConfig = useCallback(async (platform: "ios" | "android" | "web") => {
     if (updateSaving) return;
