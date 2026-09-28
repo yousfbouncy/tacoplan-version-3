@@ -38,6 +38,7 @@ import {
   findRate,
   listDayExtraEntries,
   getAllNaturalDayDiets,
+  resolveNaturalDayDietFinancials,
   type NaturalDayDietEntry,
 } from "@/lib/local-storage";
 import { useFerry } from "@/lib/ferry-context";
@@ -707,8 +708,19 @@ export default function ExportarScreen() {
 
     const totalConduccion = jornadas.reduce((s, j) => s + (j.conduccionMin || 0), 0);
     const totalDuracion = jornadas.reduce((s, j) => s + (j.duracionJornadaMin || 0), 0);
-    const totalDietaJornadas = jornadas.reduce((s, j) => s + (j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0), 0);
-    const totalDietaNat = validNatDiets.reduce((s, n) => s + (n.amount || 0), 0);
+    const naturalFinancials = new Map(
+      validNatDiets.map((n) => [n.id, resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg)]),
+    );
+    const totalDietaJornadas = jornadas.reduce((s, j) => {
+      const full = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
+      const extra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+      const base = (Number.isFinite(full) ? full : 0) - (Number.isFinite(extra) ? extra : 0);
+      return s + Math.max(0, base);
+    }, 0);
+    const totalDietaNat = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancials.get(n.id)?.dietAmount || 0),
+      0,
+    );
     const totalDieta = Math.round((totalDietaJornadas + totalDietaNat) * 100) / 100;
     const totalKm = jornadas.reduce((s, j) => {
       const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
@@ -738,12 +750,19 @@ export default function ExportarScreen() {
       }
     }
     const totalExtrasHistorial = Math.round((totalExtrasHistorialJornadas + totalExtrasExtraDays) * 100) / 100;
-    const totalPlus = jornadas.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusJornadas = jornadas.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusNaturales = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancials.get(n.id)?.plusTotal || 0),
+      0,
+    );
+    const totalPlus = Math.round((totalPlusJornadas + totalPlusNaturales) * 100) / 100;
     const totalDietCountJornadas = jornadas.reduce((s, j) => s + (j.dietaImporteEur && parseFloat(j.dietaImporteEur) > 0 ? 1 : 0), 0);
     const totalDietCount = totalDietCountJornadas + validNatDiets.length;
     const totalExtraCountJornadas = jornadas.reduce((s, j) => s + (j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0 ? 1 : 0), 0);
     const totalExtraCount = totalExtraCountJornadas + totalExtraDaysCount;
-    const totalPlusCount = jornadas.reduce((s, j) => s + ((j.plusItems || []).length > 0 ? 1 : 0), 0);
+    const totalPlusCount =
+      jornadas.reduce((s, j) => s + ((j.plusItems || []).length > 0 ? 1 : 0), 0) +
+      validNatDiets.reduce((s, n) => s + ((naturalFinancials.get(n.id)?.plusItems.length || 0) > 0 ? 1 : 0), 0);
     const totalViajeCount = jornadas.reduce((s, j) => {
       const imp = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
       return s + (Number.isFinite(imp) && imp > 0 ? 1 : 0);
@@ -806,13 +825,17 @@ export default function ExportarScreen() {
           if (billingMode === "viaje") {
             return opts.showAmounts ? (Number.isFinite(viajeImporte) && viajeImporte > 0 ? `${viajeImporte.toFixed(2)} \u20AC` : "-") : (Number.isFinite(viajeImporte) && viajeImporte > 0 ? "1" : "-");
           }
-          return opts.showAmounts ? (j.dietaImporteEur ? `${j.dietaImporteEur} \u20AC` : "-") : buildDietLabel(j);
+          if (!opts.showAmounts) return buildDietLabel(j);
+          const full = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
+          const extraInDiet = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
+          const baseDiet = Math.max(
+            0,
+            (Number.isFinite(full) ? full : 0) - (Number.isFinite(extraInDiet) ? extraInDiet : 0),
+          );
+          return baseDiet > 0 ? `${baseDiet.toFixed(2)} \u20AC` : "-";
         })();
 
         const extraParts: string[] = [];
-        if (isDouble) {
-          extraParts.push(`<span style="color:${Colors.light.accent};font-weight:600;">DOBLE CONDUCCI\u00d3N</span>`);
-        }
         if (j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0) {
           extraParts.push(opts.showAmounts ? `${dayFlagLabelI18n(j.dayFlag)} +${j.dayExtraEur}\u20AC` : `${dayFlagLabelI18n(j.dayFlag)}`);
         }
@@ -827,11 +850,11 @@ export default function ExportarScreen() {
         const extra = extraParts.join(" \u00b7 ");
         const plusSum = (j.plusItems || []).reduce((s, p) => s + p.importe, 0);
         const plusCell = !opts.showPluses ? "-" : buildPlusCellHTML(j.plusItems, opts);
-        let obsText = j.observaciones ? j.observaciones.substring(0, 30) : "-";
-        if (isDouble && secondDriver) {
-          const seg = `Segundo: ${secondDriver}`;
-          obsText = obsText === "-" ? seg : `${seg} \u00b7 ${obsText}`;
-        }
+        const obsParts: string[] = [];
+        if (isDouble) obsParts.push("Doble conducción");
+        if (isDouble && secondDriver) obsParts.push(`Segundo: ${secondDriver}`);
+        if (j.observaciones) obsParts.push(j.observaciones.substring(0, 30));
+        const obsText = obsParts.length > 0 ? obsParts.join(" · ") : "-";
         const lugarInicioSafe = escapeHtml(j.lugarInicio || "-");
         const lugarFinSafe = escapeHtml(j.lugarFin || "-");
         const rutaSafe = escapeHtml(ruta);
@@ -859,19 +882,29 @@ export default function ExportarScreen() {
         const n = item.data;
         const ts = new Date(n.date + "T12:00:00").getTime();
         const fechaCell = formatFecha(n.date);
+        const resolved = naturalFinancials.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg);
         const detalleParts: string[] = [];
-        detalleParts.push(`<strong>DIETA FUERA DE BASE</strong>`);
+        detalleParts.push(`<strong>JORNADA FUERA DE BASE</strong>`);
         if (n.location) detalleParts.push(escapeHtml(n.location));
         const detalleCell = detalleParts.join(" | ");
         const tipoRutaCell = escapeHtml(`${n.type} ${n.percentage}%`);
         const infCell = "";
-        const obsCell = "D\u00eda natural sin jornada propia";
+        const linkedJourney = jornadas.find((j) =>
+          (n.previousJourneyId && j.id === n.previousJourneyId) ||
+          (n.nextJourneyId && j.id === n.nextJourneyId)
+        );
+        const obsParts: string[] = ["Jornada fuera de base"];
+        if (linkedJourney?.isDoubleDriving === true) {
+          obsParts.push("Doble conducción");
+          if (linkedJourney.secondDriverName) obsParts.push(`Segundo: ${linkedJourney.secondDriverName}`);
+        }
+        const obsCell = escapeHtml(obsParts.join(" · "));
         const billingCell = billingMode === "dietas"
-          ? (opts.showAmounts ? `${n.amount.toFixed(2)} \u20AC` : `${n.type} ${n.percentage}%`)
+          ? (opts.showAmounts ? `${resolved.dietAmount.toFixed(2)} \u20AC` : `${n.type} ${n.percentage}%`)
           : billingMode === "km"
-            ? (opts.showAmounts ? `${n.amount.toFixed(2)} \u20AC` : "-")
-            : (opts.showAmounts ? `${n.amount.toFixed(2)} \u20AC` : "-");
-        const plusCellNat = !opts.showPluses ? "" : buildPlusCellHTML(n.plusItems, opts);
+            ? (opts.showAmounts ? `${resolved.dietAmount.toFixed(2)} \u20AC` : "-")
+            : (opts.showAmounts ? `${resolved.dietAmount.toFixed(2)} \u20AC` : "-");
+        const plusCellNat = !opts.showPluses ? "" : buildPlusCellHTML(resolved.plusItems, opts);
         combinedRows.push({ ts, html: `<tr style="background: #fef3c7;">
         <td>${fechaCell}</td>
         <td>-</td>
@@ -1018,7 +1051,7 @@ export default function ExportarScreen() {
 
   function buildDietasHTML(
     jornadas: Jornada[],
-    resumen: { total: number; desglose: Array<{ tipo: string; cantidad: number; total: number }>; extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> } },
+    resumen: { total: number; desglose: Array<{ tipo: string; cantidad: number; total: number }>; extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> }; plus: { totalPlus: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> } },
     desde: string,
     hasta: string,
     ferryExtrasSummary?: { totalTransitDiet: number; totalCabinOvernight: number; totalCountryChange: number; totalAmount: number; transitRate: number; cabinRate: number; count: number },
@@ -1026,11 +1059,12 @@ export default function ExportarScreen() {
     naturalDayDiets: NaturalDayDietEntry[] = [],
   ): string {
     const validNatDiets = (naturalDayDiets || []).filter((n) => n.confirmedByUser && !n.dismissedAt);
-    const totalDietasJornadas = jornadas.reduce((s, j) => s + (j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0), 0);
-    const totalDietasNat = validNatDiets.reduce((s, n) => s + (n.amount || 0), 0);
-    const totalDietas = Math.round((totalDietasJornadas + totalDietasNat) * 100) / 100;
-    const totalExtras = resumen.extras.totalExtras;
-    const totalPlus = jornadas.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const naturalFinancials = new Map(
+      validNatDiets.map((n) => [n.id, resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtras)]),
+    );
+    const totalDietas = Math.round(Number(resumen.total || 0) * 100) / 100;
+    const totalExtras = Math.round(Number(resumen.extras.totalExtras || 0) * 100) / 100;
+    const totalPlus = Math.round(Number(resumen.plus?.totalPlus || 0) * 100) / 100;
     const ferryExtrasTotal = ferryExtrasSummary?.totalAmount || 0;
     const granTotal = Math.round((totalDietas + totalExtras + totalPlus + ferryExtrasTotal) * 100) / 100;
     const showAmounts = opts?.showAmounts !== false;
@@ -1070,7 +1104,8 @@ export default function ExportarScreen() {
       .map((j) => {
         const extra = j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0
           ? parseFloat(j.dayExtraEur) : 0;
-        const dietaBase = parseFloat(j.dietaImporteEur || "0");
+        const dietaFull = parseFloat(j.dietaImporteEur || "0");
+        const dietaBase = Math.max(0, (Number.isFinite(dietaFull) ? dietaFull : 0) - extra);
         const plusSum = (j.plusItems || []).reduce((s, p) => s + p.importe, 0);
         const plusCellContent = showPluses ? buildPlusCellHTML(j.plusItems, reportOpts) : "";
         return `<tr>
@@ -1085,19 +1120,19 @@ export default function ExportarScreen() {
       }).join("");
 
     const natDietRows = validNatDiets.map((n) => {
-      const detalleParts: string[] = ["DIETA FUERA DE BASE"];
+      const detalleParts: string[] = ["JORNADA FUERA DE BASE"];
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
-      const natAmount = Number(n.amount) || 0;
-      const plusCellNatDiet = showPluses ? buildPlusCellHTML(n.plusItems, reportOpts) : "";
+      const resolved = naturalFinancials.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtras);
+      const plusCellNatDiet = showPluses ? buildPlusCellHTML(resolved.plusItems, reportOpts) : "";
       return `<tr style="background: #fef3c7;">
         <td>${formatFecha(n.date)}</td>
         <td class="num">-</td>
         <td>${detalleCell}</td>
         <td class="num">${n.percentage}%</td>
-        ${showAmounts ? `<td class="num">-</td>` : ""}
+        ${showAmounts ? `<td class="num">${resolved.dietAmount.toFixed(2)} \u20AC</td>` : ""}
         ${showPluses ? `<td class="num">${plusCellNatDiet}</td>` : ""}
-        ${showAmounts ? `<td class="num">${natAmount.toFixed(2)} \u20AC</td>` : ""}
+        ${showAmounts ? `<td class="num">${(resolved.dietAmount + resolved.plusTotal).toFixed(2)} \u20AC</td>` : ""}
       </tr>`;
     }).join("");
 
@@ -1118,7 +1153,7 @@ export default function ExportarScreen() {
           </div>
           ${showPluses ? `<div class="summary-box">
             <span class="summary-label">${t("export.pdfPlus")}</span>
-            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${jornadas.reduce((s, j) => s + ((j.plusItems || []).length), 0)}`}</span>
+            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${resumen.plus?.desglose.reduce((s, p) => s + (p.cantidad || 0), 0) || 0}`}</span>
           </div>` : ""}
           ${ferryExtrasTotal > 0 ? `<div class="summary-box" style="border-color:#0284c7;">
             <span class="summary-label" style="color:#0284c7;">Extras Ferry</span>
