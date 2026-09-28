@@ -1593,14 +1593,28 @@ export default function HistorialScreen() {
     if (dismissDates.length > 0) {
       await dismissNaturalDayDiets(Array.from(new Set(dismissDates)));
     }
+    // Refresca primero el estado local que pinta Historial y, en la misma
+    // operación, fuerza el recálculo de todos los resúmenes económicos.
+    // Así no aparecen primero las filas y varios instantes después los totales.
+    const freshNaturalDayDiets = await getAllNaturalDayDiets();
+    setNaturalDayDiets(freshNaturalDayDiets);
+
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+      qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+      qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+      qc.invalidateQueries({ queryKey: ["jornadas"] }).catch(() => {}),
+      qc.invalidateQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
+    ]);
+
     setPendingDietsVisible(false);
     setArrivalSelectorVisible(false);
     setArrivalSelectorDay(null);
     setArrivalSelectorQueue([]);
     setPendingConfirmedDiets([]);
-    qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {});
-    qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {});
-    qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {});
+
+    // Recalcula pendientes solo después de que historial + importes ya estén
+    // sincronizados visualmente.
     await refreshNaturalDayDiets();
   }, [qc, refreshNaturalDayDiets]);
 
