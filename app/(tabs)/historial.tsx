@@ -2203,7 +2203,7 @@ export default function HistorialScreen() {
                         <View style={{ marginTop: 6 }}>
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
                             <Text style={{ fontSize: 11.5, fontWeight: "700", color: Colors.light.text, opacity: 0.75 }}>
-                              Pluses ({ndd.plusItems.length})
+                              Pluses ({displayPluses.length})
                             </Text>
                             <Text style={{ fontSize: 11.5, color: Colors.light.tint, marginLeft: 8, fontWeight: "700" }}>
                               +{plusTotal.toFixed(2)} €
