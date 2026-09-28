@@ -47,6 +47,9 @@ import {
   updateJornadaFerryData,
   splitOffsiteWeeklyRestEntry,
   calcDayExtra,
+  getResumenDietas,
+  resolveNaturalDayDietFinancials,
+  type UserDietRate,
   type UserDayExtras,
   type DayExtraEntry,
   type Jornada,
@@ -1104,6 +1107,7 @@ export default function HistorialScreen() {
   const { user } = useAuth();
   const [periodoIdx, setPeriodoIdx] = useState(0);
   const [billingMode, setBillingMode] = useState<"dietas" | "km" | "viaje">("dietas");
+  const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
   const [dayExtrasCfg, setDayExtrasCfg] = useState<UserDayExtras>({
     extra_saturday: 0,
     extra_sunday: 0,
@@ -1146,6 +1150,17 @@ export default function HistorialScreen() {
               const n = parseFloat(String(v ?? "").replace(",", "."));
               return Number.isFinite(n) ? n : fb;
             };
+            setCustomRates([
+              { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 54.30) },
+              { trip_type: "NACIONAL", percent: 60, amount: pf(s.nac_60, 32.58) },
+              { trip_type: "NACIONAL", percent: 30, amount: pf(s.nac_30, 16.29) },
+              { trip_type: "INTERNACIONAL", percent: 100, amount: pf(s.intl_100, 72.77) },
+              { trip_type: "INTERNACIONAL", percent: 60, amount: pf(s.intl_60, 43.66) },
+              { trip_type: "INTERNACIONAL", percent: 30, amount: pf(s.intl_30, 21.83) },
+              { trip_type: "REGIONAL", percent: 100, amount: pf(s.reg_100, 0) },
+              { trip_type: "REGIONAL", percent: 60, amount: pf(s.reg_60, 0) },
+              { trip_type: "REGIONAL", percent: 30, amount: pf(s.reg_30, 0) },
+            ]);
             setDayExtrasCfg((prev) => ({
               extra_saturday: pf(s.extra_saturday, prev.extra_saturday),
               extra_sunday: pf(s.extra_sunday, prev.extra_sunday),
@@ -1167,6 +1182,12 @@ export default function HistorialScreen() {
   const jornadasQuery = useQuery<Jornada[]>({
     queryKey: ["jornadas", periodo.from, periodo.to, syncVersion],
     queryFn: () => listarJornadas(periodo.from, periodo.to),
+  });
+
+  const dietSummaryQuery = useQuery({
+    queryKey: ["dietas-resumen", periodo.from, periodo.to, syncVersion],
+    queryFn: () => getResumenDietas(periodo.from, periodo.to),
+    enabled: billingMode === "dietas",
   });
 
   const compsQuery = useQuery<Compensacion[]>({
@@ -1756,15 +1777,26 @@ export default function HistorialScreen() {
     const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
     return acc + (Number.isFinite(km) ? km : 0);
   }, 0) : 0;
-  const naturalDayDietsTotal = useMemo(() => {
-    return naturalDayDiets.reduce((acc, ndd) => {
-      if (!ndd.confirmedByUser || ndd.dismissedAt) return acc;
-      if (ndd.date < periodo.from || ndd.date > periodo.to) return acc;
-      return acc + (Number.isFinite(ndd.amount) ? ndd.amount : 0);
-    }, 0);
-  }, [naturalDayDiets, periodo.from, periodo.to]);
+  const naturalDayFinancials = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof resolveNaturalDayDietFinancials>>();
+    for (const ndd of naturalDayDiets) {
+      if (!ndd.confirmedByUser || ndd.dismissedAt) continue;
+      if (ndd.date < periodo.from || ndd.date > periodo.to) continue;
+      map.set(ndd.id, resolveNaturalDayDietFinancials(ndd, jornadasData, customRates, dayExtrasCfg));
+    }
+    return map;
+  }, [naturalDayDiets, jornadasData, customRates, dayExtrasCfg, periodo.from, periodo.to]);
 
-  const totalBaseBilling = jornadasData.reduce((acc, j) => {
+  const naturalDayDietsTotal = useMemo(
+    () => Array.from(naturalDayFinancials.values()).reduce((acc, f) => acc + f.dietAmount, 0),
+    [naturalDayFinancials],
+  );
+  const naturalDayPlusesTotal = useMemo(
+    () => Array.from(naturalDayFinancials.values()).reduce((acc, f) => acc + f.plusTotal, 0),
+    [naturalDayFinancials],
+  );
+
+  const fallbackBaseBilling = jornadasData.reduce((acc, j) => {
     if (billingMode === "km") {
       const kmTotal = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : null);
       const importeKm = j.importeKm != null ? j.importeKm : (kmTotal != null && j.pricePerKm != null ? kmTotal * j.pricePerKm : 0);
@@ -1780,11 +1812,22 @@ export default function HistorialScreen() {
     const base = dietaFull - dayExtra;
     return acc + (Number.isFinite(base) ? base : 0);
   }, 0) + (extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal;
-  const totalExtras = jornadasData.reduce((acc, j) => {
+
+  const totalBaseBilling =
+    billingMode === "dietas" && dietSummaryQuery.data
+      ? Number(dietSummaryQuery.data.total || 0)
+      : fallbackBaseBilling;
+
+  const fallbackExtras = jornadasData.reduce((acc, j) => {
     const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
     const plus = j.plusItems ? j.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
     return acc + dayExtra + plus;
-  }, 0) + (extraDaysSplit.totalExtras || 0);
+  }, 0) + (extraDaysSplit.totalExtras || 0) + naturalDayPlusesTotal;
+
+  const totalExtras =
+    billingMode === "dietas" && dietSummaryQuery.data
+      ? Number(dietSummaryQuery.data.extras?.totalExtras || 0) + Number(dietSummaryQuery.data.plus?.totalPlus || 0)
+      : fallbackExtras;
   const totalFerryExtras = useMemo(() => {
     let total = 0;
     const linkedJornadaIds = new Set<string>();
@@ -2092,6 +2135,8 @@ export default function HistorialScreen() {
             }
             if (listItem.type === "natural_day_diet") {
               const ndd = listItem.naturalDayDiet;
+              const resolvedNdd = resolveNaturalDayDietFinancials(ndd, jornadasData, customRates, dayExtrasCfg);
+              const displayPluses = resolvedNdd.plusItems;
               const pillBg = ndd.type === "INTERNACIONAL" ? "#FEF3C7" : "#EEF2FF";
               const formatDateDDMM = (iso: string) => {
                 const d = new Date(iso);
@@ -2118,7 +2163,7 @@ export default function HistorialScreen() {
                 >
                   <View style={{ flex: 1, flexDirection: "column", gap: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>Dieta fuera de base</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>Jornada fuera de base</Text>
                       <View
                         style={{
                           backgroundColor: pillBg,
@@ -2162,10 +2207,10 @@ export default function HistorialScreen() {
                       <Text style={{ fontSize: 12, color: Colors.light.text, opacity: 0.6 }}>📍 {ndd.location}</Text>
                     ) : null}
                     <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.5 }}>
-                      Día natural sin jornada propia · {ndd.percentage}%
+                      Jornada fuera de base · {ndd.percentage}%
                     </Text>
-                    {ndd.plusItems && ndd.plusItems.length > 0 && (() => {
-                      const plusTotal = ndd.plusItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+                    {displayPluses.length > 0 && (() => {
+                      const plusTotal = resolvedNdd.plusTotal;
                       return (
                         <View style={{ marginTop: 6 }}>
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
@@ -2176,8 +2221,8 @@ export default function HistorialScreen() {
                               +{plusTotal.toFixed(2)} €
                             </Text>
                           </View>
-                          {ndd.plusItems.map((pi, idx) => (
-                            <View key={pi.id || idx} style={[styles.plusRow, { marginLeft: 0, marginRight: 0, borderBottomWidth: idx < ndd.plusItems!.length - 1 ? 1 : 0 }]}>
+                          {displayPluses.map((pi, idx) => (
+                            <View key={pi.id || idx} style={[styles.plusRow, { marginLeft: 0, marginRight: 0, borderBottomWidth: idx < displayPluses.length - 1 ? 1 : 0 }]}>
                               <Text style={styles.plusConcepto} numberOfLines={1}>{pi.concepto}</Text>
                               <Text style={styles.plusImporte}>{(Number(pi.amount) || 0).toFixed(2)} €</Text>
                             </View>
@@ -2188,7 +2233,7 @@ export default function HistorialScreen() {
                   </View>
                   <View style={{ alignItems: "flex-end", flexDirection: "column", gap: 8 }}>
                     <Text style={{ fontSize: 17, fontWeight: "bold", color: Colors.light.tint }}>
-                      {ndd.amount.toFixed(2)} €
+                      {resolvedNdd.dietAmount.toFixed(2)} €
                     </Text>
                     <View style={{ flexDirection: "row", gap: 12 }}>
                       <Pressable
