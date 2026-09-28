@@ -4157,7 +4157,11 @@ export async function dismissNaturalDayDiets(dates: string[]): Promise<void> {
   const all = await getAllNaturalDayDiets();
   let changed = false;
   for (const e of all) {
-    if (validDates.includes(e.date) && !e.dismissedAt) {
+    // Una dieta ya confirmada por el usuario no debe quedar marcada como
+    // descartada. El set de fechas descartadas sirve para que el detector no
+    // vuelva a ofrecer ese día, pero no debe ocultar una dieta recién guardada
+    // ni excluirla de los totales.
+    if (validDates.includes(e.date) && !e.confirmedByUser && !e.dismissedAt) {
       e.dismissedAt = now;
       e.updatedAt = now;
       e.syncStatus = e.syncStatus === "synced" ? "pending" : e.syncStatus;
