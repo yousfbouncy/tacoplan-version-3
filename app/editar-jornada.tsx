@@ -597,11 +597,27 @@ export default function EditarJornadaScreen() {
       const result = await editarJornada(id, body);
       return result;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       if (lugarInicio.trim()) addRecentPlace(lugarInicio.trim());
       if (lugarFin.trim()) addRecentPlace(lugarFin.trim());
-      qc.invalidateQueries();
+
+      // Al editar una jornada, refresca explícitamente todos los cálculos
+      // económicos y de historial antes de volver atrás. Esto evita que
+      // Historial, Dietas e Informe muestren valores antiguos durante unos segundos.
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["jornadas"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
+        qc.invalidateQueries({ queryKey: ["estado-legal"] }).catch(() => {}),
+        qc.invalidateQueries({ queryKey: ["compensaciones"] }).catch(() => {}),
+        qc.invalidateQueries({ queryKey: ["all-viajes"] }).catch(() => {}),
+        qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] }).catch(() => {}),
+        qc.invalidateQueries({ queryKey: ["jornada-edit", id] }).catch(() => {}),
+      ]);
+
       triggerSync();
       router.back();
     },
