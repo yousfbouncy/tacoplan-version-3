@@ -379,12 +379,15 @@ export default function ExportarScreen() {
         const s = JSON.parse(local);
         const pf = (v: any, fb: number) => { const n = parseFloat(v); return isNaN(n) ? fb : n; };
         setCustomRates([
-          { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 0) },
-          { trip_type: "NACIONAL", percent: 60, amount: pf(s.nac_60, 0) },
-          { trip_type: "NACIONAL", percent: 30, amount: pf(s.nac_30, 0) },
-          { trip_type: "INTERNACIONAL", percent: 100, amount: pf(s.intl_100, 0) },
-          { trip_type: "INTERNACIONAL", percent: 60, amount: pf(s.intl_60, 0) },
-          { trip_type: "INTERNACIONAL", percent: 30, amount: pf(s.intl_30, 0) },
+          { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 54.30) },
+          { trip_type: "NACIONAL", percent: 60, amount: pf(s.nac_60, 32.58) },
+          { trip_type: "NACIONAL", percent: 30, amount: pf(s.nac_30, 16.29) },
+          { trip_type: "INTERNACIONAL", percent: 100, amount: pf(s.intl_100, 72.77) },
+          { trip_type: "INTERNACIONAL", percent: 60, amount: pf(s.intl_60, 43.66) },
+          { trip_type: "INTERNACIONAL", percent: 30, amount: pf(s.intl_30, 21.83) },
+          { trip_type: "REGIONAL", percent: 100, amount: pf(s.reg_100, 0) },
+          { trip_type: "REGIONAL", percent: 60, amount: pf(s.reg_60, 0) },
+          { trip_type: "REGIONAL", percent: 30, amount: pf(s.reg_30, 0) },
         ]);
         setDayExtras({
           extra_saturday: pf(s.extra_saturday, 0),
@@ -670,7 +673,7 @@ export default function ExportarScreen() {
       if (opts.showAmounts) {
         const imp = p.importe != null ? p.importe : p.amount != null ? p.amount : 0;
         const safeImp = Number.isFinite(imp) ? imp : 0;
-        return `${concepto}<br/>${concepto} ${safeImp.toFixed(2)} \u20AC`;
+        return `${concepto}<br/>${safeImp.toFixed(2)} \u20AC`;
       }
       return `${concepto}<br/>${concepto}`;
     });
@@ -1127,11 +1130,11 @@ export default function ExportarScreen() {
       const plusCellNatDiet = showPluses ? buildPlusCellHTML(resolved.plusItems, reportOpts) : "";
       return `<tr style="background: #fef3c7;">
         <td>${formatFecha(n.date)}</td>
-        <td class="num">-</td>
         <td>${detalleCell}</td>
         <td class="num">${n.percentage}%</td>
         ${showAmounts ? `<td class="num">${resolved.dietAmount.toFixed(2)} \u20AC</td>` : ""}
-        ${showPluses ? `<td class="num">${plusCellNatDiet}</td>` : ""}
+        ${showAmounts ? `<td class="num">-</td>` : ""}
+        ${showPluses ? `<td class="num">${plusCellNatDiet || "-"}</td>` : ""}
         ${showAmounts ? `<td class="num">${(resolved.dietAmount + resolved.plusTotal).toFixed(2)} \u20AC</td>` : ""}
       </tr>`;
     }).join("");
@@ -1228,12 +1231,23 @@ export default function ExportarScreen() {
     const showPluses = opts?.showPluses !== false;
     const ferryExtrasTotal = ferryExtrasSummary?.totalAmount || 0;
     const validNatDiets = (naturalDayDiets || []).filter((n) => n.confirmedByUser && !n.dismissedAt);
-    const totalDietasNat = validNatDiets.reduce((s, n) => s + (n.amount || 0), 0);
+    const naturalFinancialsKm = new Map(
+      validNatDiets.map((n) => [n.id, resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtras)]),
+    );
+    const totalDietasNat = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancialsKm.get(n.id)?.dietAmount || 0),
+      0,
+    );
 
     const jornadasKm = jornadas.filter((j) =>
       j.kmTotal != null || (j.kmInicio != null && j.kmFin != null)
     );
-    const totalPlus = jornadasKm.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusJornadasKm = jornadasKm.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusNaturalesKm = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancialsKm.get(n.id)?.plusTotal || 0),
+      0,
+    );
+    const totalPlus = Math.round((totalPlusJornadasKm + totalPlusNaturalesKm) * 100) / 100;
     const granTotal = Math.round((resumen.totalImporte + resumen.extras.totalExtras + totalPlus + ferryExtrasTotal + totalDietasNat) * 100) / 100;
 
     const tipoLabel = (tipo: string) => {
@@ -1296,17 +1310,17 @@ export default function ExportarScreen() {
       const detalleParts: string[] = ["JORNADA FUERA DE BASE"];
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
-      const natAmount = Number(n.amount) || 0;
+      const resolved = naturalFinancialsKm.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtras);
+      const plusCell = showPluses ? buildPlusCellHTML(resolved.plusItems, { showAmounts, showPluses }) : "";
       return `<tr style="background: #fef3c7;">
         <td>${formatFecha(n.date)}</td>
-        <td class="num">-</td>
         <td>${detalleCell}</td>
-        <td class="num">${n.percentage}%</td>
+        <td class="num">-</td>
         ${showAmounts ? `<td class="num">-</td>` : ""}
+        ${showAmounts ? `<td class="num">${resolved.dietAmount.toFixed(2)} \u20AC</td>` : ""}
         ${showAmounts ? `<td class="num">-</td>` : ""}
-        ${showAmounts ? `<td class="num">-</td>` : ""}
-        ${showPluses ? (showAmounts ? `<td class="num">-</td>` : `<td class="num">0</td>`) : ""}
-        ${showAmounts ? `<td class="num">${natAmount.toFixed(2)} \u20AC</td>` : ""}
+        ${showPluses ? (showAmounts ? `<td class="num">${plusCell || "-"}</td>` : `<td class="num">${resolved.plusItems.length}</td>`) : ""}
+        ${showAmounts ? `<td class="num">${(resolved.dietAmount + resolved.plusTotal).toFixed(2)} \u20AC</td>` : ""}
       </tr>`;
     }).join("");
 
@@ -1406,7 +1420,13 @@ export default function ExportarScreen() {
     const showPluses = opts?.showPluses !== false;
     const ferryExtrasTotal = ferryExtrasSummary?.totalAmount || 0;
     const validNatDiets = (naturalDayDiets || []).filter((n) => n.confirmedByUser && !n.dismissedAt);
-    const totalDietasNat = validNatDiets.reduce((s, n) => s + (n.amount || 0), 0);
+    const naturalFinancialsViaje = new Map(
+      validNatDiets.map((n) => [n.id, resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg)]),
+    );
+    const totalDietasNat = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancialsViaje.get(n.id)?.dietAmount || 0),
+      0,
+    );
 
     const jornadasViaje = jornadas.filter((j) =>
       j.importeViaje != null || j.pricePerTrip != null
@@ -1429,7 +1449,12 @@ export default function ExportarScreen() {
     }
     totalExtras = Math.round(totalExtras * 100) / 100;
 
-    const totalPlus = jornadasViaje.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusJornadasViaje = jornadasViaje.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const totalPlusNaturalesViaje = validNatDiets.reduce(
+      (s, n) => s + (naturalFinancialsViaje.get(n.id)?.plusTotal || 0),
+      0,
+    );
+    const totalPlus = Math.round((totalPlusJornadasViaje + totalPlusNaturalesViaje) * 100) / 100;
     const granTotal = Math.round((totalViajes + totalExtras + totalPlus + ferryExtrasTotal + totalDietasNat) * 100) / 100;
 
     const jornadaRows = jornadasViaje.map((j) => {
@@ -1458,17 +1483,16 @@ export default function ExportarScreen() {
       const detalleParts: string[] = ["JORNADA FUERA DE BASE"];
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
-      const natAmount = Number(n.amount) || 0;
+      const resolved = naturalFinancialsViaje.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg);
+      const plusCell = showPluses ? buildPlusCellHTML(resolved.plusItems, { showAmounts, showPluses }) : "";
       return `<tr style="background: #fef3c7;">
         <td>${formatFecha(n.date)}</td>
-        <td class="num">-</td>
         <td>${detalleCell}</td>
-        <td class="num">${n.percentage}%</td>
         ${showAmounts ? `<td class="num">-</td>` : ""}
+        ${showAmounts ? `<td class="num">${resolved.dietAmount.toFixed(2)} \u20AC</td>` : ""}
         ${showAmounts ? `<td class="num">-</td>` : ""}
-        ${showAmounts ? `<td class="num">-</td>` : ""}
-        ${showPluses ? (showAmounts ? `<td class="num">-</td>` : `<td class="num">0</td>`) : ""}
-        ${showAmounts ? `<td class="num">${natAmount.toFixed(2)} \u20AC</td>` : ""}
+        ${showPluses ? (showAmounts ? `<td class="num">${plusCell || "-"}</td>` : `<td class="num">${resolved.plusItems.length}</td>`) : ""}
+        ${showAmounts ? `<td class="num">${(resolved.dietAmount + resolved.plusTotal).toFixed(2)} \u20AC</td>` : ""}
       </tr>`;
     }).join("");
 
