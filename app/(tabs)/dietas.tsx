@@ -383,10 +383,16 @@ export default function DietasScreen() {
     }
     const dates = selectedItems.map((d) => (typeof d === "string" ? d : d.date)).filter(Boolean);
     await dismissNaturalDayDiets(dates);
+    // Espera al recálculo antes de cerrar el flujo para que cantidades,
+    // desglose y total cambien juntos en pantalla.
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+      qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+      qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+      qc.refetchQueries({ queryKey: ["offsite-weekly-rest-dates"] }).catch(() => {}),
+    ]);
+
     setPendingDietsVisible(false);
-    qc.invalidateQueries({ queryKey: ["dietas-resumen"] }).catch(() => {});
-    qc.invalidateQueries({ queryKey: ["km-resumen"] }).catch(() => {});
-    qc.invalidateQueries({ queryKey: ["viaje-resumen"] }).catch(() => {});
     setPendingConfirmRichItems(null);
   }, [pendingDiets, qc]);
 
