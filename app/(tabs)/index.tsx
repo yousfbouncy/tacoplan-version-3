@@ -454,6 +454,42 @@ export default function DashboardScreen() {
     }, [refreshNotifications]),
   );
 
+  // Comprueba al entrar en Inicio si existen jornadas/días fuera de base
+  // pendientes de re-evaluación. El botón solo se muestra cuando hay algo real
+  // que revisar; no borra descartados ni modifica datos durante esta comprobación.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        try {
+          const hoy = todayStr();
+          const todasJ = await listarJornadas();
+          const ultimaCerrada = Array.isArray(todasJ)
+            ? todasJ
+                .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
+                .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
+            : null;
+          const ultFinStr = ultimaCerrada
+            ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || hoy))
+            : null;
+          const gapFrom = ultFinStr ? addDays(ultFinStr, -1) : null;
+          const hoyMinus45 = addDays(hoy, -45);
+          const rFrom = gapFrom && gapFrom > hoyMinus45 ? gapFrom : hoyMinus45;
+          const fresh = await detectMissingOutOfBaseDietDays({ fromDate: rFrom, toDate: hoy });
+          if (!active) return;
+          const safeFresh = Array.isArray(fresh) ? fresh : [];
+          setPendingDiets(safeFresh);
+          setHasReEvalPending(safeFresh.length > 0);
+        } catch {
+          if (active) setHasReEvalPending(false);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [syncVersion]),
+  );
+
   const [legalResult, setLegalResult] = useState<LegalSummaryStored | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const { config: ferryConfig, isFerryRestMode, isMoroccoMode } = useFerry();
@@ -480,6 +516,7 @@ export default function DashboardScreen() {
   const [pendingDiets, setPendingDiets] = useState<DetectedMissingNaturalDay[]>([]);
   const [pendingDietsSaving, setPendingDietsSaving] = useState(false);
   const [reEvalInicioLoading, setReEvalInicioLoading] = useState(false);
+  const [hasReEvalPending, setHasReEvalPending] = useState(false);
   const [deferredStartJourney, setDeferredStartJourney] = useState<{
     lugarInicio: string; fechaInicio: string; horaInicio: string; kmInicio?: number|null; observaciones?: string|null; baseKm?: any;
   } | null>(null);
@@ -2049,6 +2086,7 @@ export default function DashboardScreen() {
                 <Ionicons name="cloud-done-outline" size={22} color={Colors.light.tint} />
               )}
             </Pressable>
+            {hasReEvalPending && (
             <Pressable
               onPress={async () => {
                 if (reEvalInicioLoading) return;
@@ -2077,6 +2115,7 @@ export default function DashboardScreen() {
                   });
                   const count = Array.isArray(fresh) ? fresh.length : 0;
                   setPendingDiets(Array.isArray(fresh) ? fresh : []);
+                  setHasReEvalPending(count > 0);
                   console.log(`[RE-EVAL_INICIO] pendingCount=${count} from=${rFrom} to=${rTo}`);
                   if (count > 0) {
                     setPendingDietsVisible(true);
@@ -2111,10 +2150,11 @@ export default function DashboardScreen() {
                   alignItems: "center",
                   justifyContent: "center",
                   gap: 6,
-                  paddingHorizontal: 12,
+                  paddingHorizontal: Platform.OS === "web" ? 12 : 0,
                   paddingVertical: 8,
-                  height: 36,
-                  minWidth: 96,
+                  height: Platform.OS === "web" ? 36 : 40,
+                  width: Platform.OS === "web" ? undefined : 40,
+                  minWidth: Platform.OS === "web" ? 96 : 40,
                   borderRadius: 8,
                   opacity: pressed ? 0.85 : 1,
                   zIndex: 10,
@@ -2127,10 +2167,13 @@ export default function DashboardScreen() {
               ) : (
                 <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
               )}
-              <Text style={{ color: Colors.light.tint, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
-                Re-evaluar
-              </Text>
+              {Platform.OS === "web" ? (
+                <Text style={{ color: Colors.light.tint, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                  Re-evaluar
+                </Text>
+              ) : null}
             </Pressable>
+            )}
             <Pressable
               onPress={() => {
                 setShowNotifications(true);
