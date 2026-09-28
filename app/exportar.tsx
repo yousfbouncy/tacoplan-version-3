@@ -675,7 +675,7 @@ export default function ExportarScreen() {
         const safeImp = Number.isFinite(imp) ? imp : 0;
         return `${concepto}<br/>${safeImp.toFixed(2)} \u20AC`;
       }
-      return `${concepto}<br/>${concepto}`;
+      return concepto;
     });
     return parts.join("<br/>");
   }
@@ -1348,7 +1348,7 @@ export default function ExportarScreen() {
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
             <span class="summary-label">${t("export.pdfPlus")}</span>
-            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${jornadasKm.reduce((s, j) => s + ((j.plusItems || []).length), 0)}`}</span>
+            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${jornadasKm.reduce((s, j) => s + ((j.plusItems || []).length), 0) + validNatDiets.reduce((s, n) => s + (naturalFinancialsKm.get(n.id)?.plusItems.length || 0), 0)}`}</span>
           </div>` : ""}
           ${ferryExtrasTotal > 0 ? `<div class="summary-box" style="border-color:#0284c7;">
             <span class="summary-label" style="color:#0284c7;">Extras Ferry</span>
@@ -1516,7 +1516,7 @@ export default function ExportarScreen() {
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
             <span class="summary-label">${t("export.pdfPlus")}</span>
-            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${jornadasViaje.reduce((s, j) => s + ((j.plusItems || []).length), 0)}`}</span>
+            <span class="summary-value">${showAmounts ? `${totalPlus.toFixed(2)} \u20AC` : `${jornadasViaje.reduce((s, j) => s + ((j.plusItems || []).length), 0) + validNatDiets.reduce((s, n) => s + (naturalFinancialsViaje.get(n.id)?.plusItems.length || 0), 0)}`}</span>
           </div>` : ""}
           ${ferryExtrasTotal > 0 ? `<div class="summary-box" style="border-color:#0284c7;">
             <span class="summary-label" style="color:#0284c7;">Extras Ferry</span>
