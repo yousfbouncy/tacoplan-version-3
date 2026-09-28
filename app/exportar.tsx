@@ -1026,7 +1026,7 @@ export default function ExportarScreen() {
     return `
       <div class="section">
         <h2>${t("export.pdfHistorialTitle")}</h2>
-        <p class="subtitle">${jornadas.length} ${t("export.pdfJornadasCount")}${validNatDiets.length > 0 ? ` + ${validNatDiets.length} dieta natural` : ""}${ferryRestsInRange.length > 0 ? ` + ${ferryRestsInRange.length} ferry` : ""}${extraDaysInRange.length > 0 ? ` + ${extraDaysInRange.length} ${t("export.pdfExtra").toLowerCase()}` : ""} | ${t("export.pdfTotalDriving")}: ${formatMinutosHoras(totalConduccion)} | ${t("export.pdfTotalDuration")}: ${formatMinutosHoras(totalDuracion)}</p>
+        <p class="subtitle">${jornadas.length} ${t("export.pdfJornadasCount")}${validNatDiets.length > 0 ? ` + ${validNatDiets.length} jornada fuera de base` : ""}${ferryRestsInRange.length > 0 ? ` + ${ferryRestsInRange.length} ferry` : ""}${extraDaysInRange.length > 0 ? ` + ${extraDaysInRange.length} ${t("export.pdfExtra").toLowerCase()}` : ""} | ${t("export.pdfTotalDriving")}: ${formatMinutosHoras(totalConduccion)} | ${t("export.pdfTotalDuration")}: ${formatMinutosHoras(totalDuracion)}</p>
         <table>
           <thead>
             <tr>
@@ -1293,7 +1293,7 @@ export default function ExportarScreen() {
     }).join("");
 
     const natDietRowsKm = validNatDiets.map((n) => {
-      const detalleParts: string[] = ["DIETA FUERA DE BASE"];
+      const detalleParts: string[] = ["JORNADA FUERA DE BASE"];
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
       const natAmount = Number(n.amount) || 0;
@@ -1329,7 +1329,7 @@ export default function ExportarScreen() {
             <span class="summary-value">${showAmounts ? `${resumen.extras.totalExtras.toFixed(2)} \u20AC` : `${resumen.extras.desglose.reduce((s, e) => s + (e.cantidad || 0), 0)}`}</span>
           </div>
           ${validNatDiets.length > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
-            <span class="summary-label" style="color:#b45309;">Dietas naturales</span>
+            <span class="summary-label" style="color:#b45309;">Jornadas fuera de base</span>
             <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalDietasNat.toFixed(2)} \u20AC` : `${validNatDiets.length}`}</span>
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
@@ -1455,7 +1455,7 @@ export default function ExportarScreen() {
     }).join("");
 
     const natDietRowsViaje = validNatDiets.map((n) => {
-      const detalleParts: string[] = ["DIETA FUERA DE BASE"];
+      const detalleParts: string[] = ["JORNADA FUERA DE BASE"];
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
       const natAmount = Number(n.amount) || 0;
@@ -1487,7 +1487,7 @@ export default function ExportarScreen() {
             <span class="summary-value">${showAmounts ? `${totalExtras.toFixed(2)} \u20AC` : "-"}</span>
           </div>
           ${validNatDiets.length > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
-            <span class="summary-label" style="color:#b45309;">Dietas naturales</span>
+            <span class="summary-label" style="color:#b45309;">Jornadas fuera de base</span>
             <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalDietasNat.toFixed(2)} \u20AC` : `${validNatDiets.length}`}</span>
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
