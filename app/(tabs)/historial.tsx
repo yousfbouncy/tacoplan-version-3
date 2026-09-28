@@ -1841,8 +1841,9 @@ export default function HistorialScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{t("historial.title")}</Text>
+        <Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1}>{t("historial.title")}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          {pendingDiets.length > 0 && (
           <Pressable
             onPress={async () => {
               try {
@@ -1864,6 +1865,12 @@ export default function HistorialScreen() {
             hitSlop={8}
             style={({ pressed }) => [
               styles.reportBtn,
+              Platform.OS !== "web" && {
+                width: 44,
+                height: 44,
+                paddingHorizontal: 0,
+                paddingVertical: 0,
+              },
               {
                 backgroundColor: "#fff",
                 borderWidth: 1,
@@ -1873,17 +1880,31 @@ export default function HistorialScreen() {
             ]}
           >
             <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
-            <Text style={{ color: Colors.light.tint, fontSize: 13, fontWeight: "600", marginLeft: 4 }}>
-              Re-evaluar dietas
-            </Text>
+            {Platform.OS === "web" ? (
+              <Text style={{ color: Colors.light.tint, fontSize: 13, fontWeight: "600", marginLeft: 4 }}>
+                Re-evaluar dietas
+              </Text>
+            ) : null}
           </Pressable>
+          )}
           <Pressable
             onPress={() => router.push("/exportar")}
-            style={({ pressed }) => [styles.reportBtn, { opacity: pressed ? 0.9 : 1 }]}
+            style={({ pressed }) => [
+              styles.reportBtn,
+              Platform.OS !== "web" && {
+                width: 44,
+                height: 44,
+                paddingHorizontal: 0,
+                paddingVertical: 0,
+              },
+              { opacity: pressed ? 0.9 : 1 },
+            ]}
             hitSlop={8}
           >
             <Ionicons name="document-text-outline" size={16} color="#fff" />
-            <Text style={styles.reportBtnText}>{t("Generar informe")}</Text>
+            {Platform.OS === "web" ? (
+              <Text style={styles.reportBtnText}>{t("Generar informe")}</Text>
+            ) : null}
           </Pressable>
           <Pressable
             onPress={() => router.push("/usuario")}
