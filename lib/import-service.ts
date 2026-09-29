@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getAllDayExtraEntries,
+  getAllNaturalDayDiets,
   getAllFerryRests,
   getAllTachoActivities,
   getAllViajes,
@@ -9,6 +10,7 @@ import {
   replaceImportedDayExtraEntries,
   replaceImportedFerryRests,
   replaceImportedJornadas,
+  replaceImportedNaturalDayDiets,
   replaceImportedTachoActivities,
   replaceImportedViajes,
   type DayExtraEntry,
@@ -16,6 +18,7 @@ import {
   type FerryInterruption,
   type FerryRestRecord,
   type Jornada,
+  type NaturalDayDietEntry,
   type LegalSummaryStored,
   type PlusItem,
   type TachoActivity,
@@ -105,6 +108,7 @@ export type ParsedImportBundle = {
   range: { from: string | null; to: string | null };
   jornadas: Jornada[];
   dayExtraEntries: DayExtraEntry[];
+  naturalDayDiets: NaturalDayDietEntry[];
   ferryRests: FerryRestRecord[];
   viajes: Viaje[];
   tachoActivities: TachoActivity[];
@@ -142,6 +146,7 @@ type ParseImportParams = {
 type Snapshot = {
   jornadas: Jornada[];
   dayExtraEntries: DayExtraEntry[];
+  naturalDayDiets: NaturalDayDietEntry[];
   ferryRests: FerryRestRecord[];
   viajes: Viaje[];
   tachoActivities: TachoActivity[];
@@ -298,6 +303,7 @@ function buildVisiblePdfBundle(
     range: visible.range,
     jornadas: visible.jornadas,
     dayExtraEntries: visible.dayExtraEntries,
+    naturalDayDiets: [],
     ferryRests: [],
     viajes: [],
     tachoActivities: [],
@@ -334,6 +340,7 @@ function buildDiagnosticPreviewBundle(fileName: string, text: string, extraMessa
     range: { from: null, to: null },
     jornadas: [],
     dayExtraEntries: [],
+    naturalDayDiets: [],
     ferryRests: [],
     viajes: [],
     tachoActivities: [],
@@ -668,6 +675,47 @@ function buildDayExtraCompositeKey(entry: Pick<DayExtraEntry, "date" | "entryTyp
   ].join("|");
 }
 
+function normalizeNaturalDayDiet(input: any): NaturalDayDietEntry {
+  const now = new Date().toISOString();
+  const date = toIsoDate(pick(input, "date")) || "1970-01-01";
+  const rawType = String(pick(input, "type") || "NACIONAL").toUpperCase();
+  const type: NaturalDayDietEntry["type"] =
+    rawType === "INTERNACIONAL" || rawType === "REGIONAL" ? rawType : "NACIONAL";
+  const rawPct = Number(pick(input, "percentage"));
+  const percentage: 100 | 60 | 30 = rawPct === 60 || rawPct === 30 ? rawPct : 100;
+  const rawPluses = pick<any[]>(input, "plusItems", "pluses_json");
+  const plusItems = Array.isArray(rawPluses)
+    ? rawPluses
+        .map((plus: any, index: number) => ({
+          id: String(plus?.id || `import_plus_${date}_${index}`),
+          concepto: String(plus?.concepto || plus?.concept || "Plus").trim() || "Plus",
+          amount: Math.max(0, Number(plus?.amount ?? plus?.importe ?? 0) || 0),
+        }))
+        .filter((plus) => plus.amount > 0)
+    : null;
+
+  return {
+    id: String(pick(input, "id") || randomId("natural_day")),
+    date,
+    type,
+    percentage,
+    // En formato actual amount es SOLO la dieta base; plusItems va separado.
+    amount: Math.max(0, Number(pick(input, "amount")) || 0),
+    location: parseString(pick(input, "location"), null),
+    source: "NATURAL_DAY_OUT_OF_BASE",
+    previousJourneyId: parseString(pick(input, "previousJourneyId", "previous_journey_id"), null),
+    nextJourneyId: parseString(pick(input, "nextJourneyId", "next_journey_id"), null),
+    confirmedByUser: parseBoolean(pick(input, "confirmedByUser", "confirmed_by_user"), true),
+    dismissedAt: parseString(pick(input, "dismissedAt", "dismissed_at"), null),
+    createdAt: parseString(pick(input, "createdAt", "created_at"), now) || now,
+    updatedAt: parseString(pick(input, "updatedAt", "updated_at"), now) || now,
+    syncStatus: "pending",
+    plusItems: plusItems && plusItems.length > 0 ? plusItems : null,
+    isDomingo: parseBoolean(pick(input, "isDomingo", "is_domingo"), false),
+    isFestivo: parseBoolean(pick(input, "isFestivo", "is_festivo"), false),
+  };
+}
+
 function parsePayloadObject(payload: any, source: "json" | "pdf", fileName: string, extraWarnings: ImportWarning[] = []): ParsedImportBundle {
   if (!payload || typeof payload !== "object") {
     throw new ImportError("json_invalid", "Los datos del PDF están incompletos");
@@ -677,37 +725,53 @@ function parsePayloadObject(payload: any, source: "json" | "pdf", fileName: stri
   const root = payload?.data && typeof payload.data === "object" ? payload.data : payload;
   const jornadasRaw: any[] = Array.isArray(root) ? root : Array.isArray(root?.jornadas) ? root.jornadas : [];
   const dayExtraEntriesRaw: any[] = Array.isArray(root?.dayExtraEntries) ? root.dayExtraEntries : Array.isArray(root?.extraDays) ? root.extraDays : [];
+  const naturalDayDietsRaw: any[] = Array.isArray(root?.naturalDayDiets) ? root.naturalDayDiets : [];
   const ferryRestsRaw: any[] = Array.isArray(root?.ferryRests) ? root.ferryRests : [];
   const viajesRaw: any[] = Array.isArray(root?.viajes) ? root.viajes : [];
   const tachoActivitiesRaw: any[] = Array.isArray(root?.tachoActivities) ? root.tachoActivities : [];
 
   const jornadas: Jornada[] = jornadasRaw.map((item: any) => normalizeJornada(item)).filter((j: Jornada) => !!j.fechaInicio && !!j.horaInicio);
   const dayExtraEntries: DayExtraEntry[] = dayExtraEntriesRaw.map((item: any) => normalizeDayExtraEntry(item));
+  const naturalDayDiets: NaturalDayDietEntry[] = naturalDayDietsRaw.map((item: any) => normalizeNaturalDayDiet(item));
   const ferryRests: FerryRestRecord[] = ferryRestsRaw.map((item: any) => normalizeFerryRest(item));
   const viajes: Viaje[] = viajesRaw.map((item: any) => normalizeViaje(item));
   const tachoActivities: TachoActivity[] = tachoActivitiesRaw.map((item: any) => normalizeTachoActivity(item));
 
-  if (jornadas.length === 0 && dayExtraEntries.length === 0 && ferryRests.length === 0 && viajes.length === 0 && tachoActivities.length === 0) {
+  if (jornadas.length === 0 && dayExtraEntries.length === 0 && naturalDayDiets.length === 0 && ferryRests.length === 0 && viajes.length === 0 && tachoActivities.length === 0) {
     throw new ImportError("pdf_incomplete", "Los datos del PDF están incompletos");
   }
 
-  const rangeFrom = toIsoDate(root?.range?.from) || toIsoDate(payload?.range?.from) || (jornadas.length > 0 ? jornadas.map((j: Jornada) => j.fechaInicio).sort()[0] : null);
-  const rangeTo = toIsoDate(root?.range?.to) || toIsoDate(payload?.range?.to) || (jornadas.length > 0 ? jornadas.map((j: Jornada) => j.fechaInicio).sort().slice(-1)[0] : null);
+  const fallbackDates = [
+    ...jornadas.map((j: Jornada) => j.fechaInicio),
+    ...naturalDayDiets.map((n) => n.date),
+    ...dayExtraEntries.map((e) => e.date),
+  ].filter(Boolean).sort();
+  const rangeFrom = toIsoDate(root?.range?.from) || toIsoDate(payload?.range?.from) || fallbackDates[0] || null;
+  const rangeTo = toIsoDate(root?.range?.to) || toIsoDate(payload?.range?.to) || fallbackDates.slice(-1)[0] || null;
   const ownerHint = parseString(root?.driverName, null) || parseString(root?.userName, null) || parseString(root?.displayName, null) || parseString(payload?.driverName, null) || parseString(payload?.userName, null) || parseString(payload?.displayName, null);
   const totalDrivingMin = jornadas.reduce((sum: number, j: Jornada) => sum + (j.conduccionMin || 0), 0);
   const totalDurationMin = jornadas.reduce((sum: number, j: Jornada) => sum + (j.duracionJornadaMin || 0), 0);
-  const totalDietas = jornadas.reduce((sum: number, j: Jornada) => sum + Number(j.dietaImporteEur || 0), 0);
+  const totalDietas =
+    jornadas.reduce((sum: number, j: Jornada) => {
+      const full = Number(j.dietaImporteEur || 0);
+      const extra = Number(j.dayExtraEur || 0);
+      return sum + Math.max(0, full - extra);
+    }, 0) +
+    naturalDayDiets.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const totalExtras = jornadas.reduce((sum: number, j: Jornada) => sum + Number(j.dayExtraEur || 0), 0);
+  const totalPlus =
+    jornadas.reduce((sum, j) => sum + (j.plusItems || []).reduce((s, p) => s + (Number(p.importe) || 0), 0), 0) +
+    naturalDayDiets.reduce((sum, item) => sum + (item.plusItems || []).reduce((s, p) => s + (Number(p.amount) || 0), 0), 0);
   const preview: ImportPreview = {
     periodLabel: rangeFrom && rangeTo ? `${formatDateLabel(rangeFrom)} - ${formatDateLabel(rangeTo)}` : "Periodo no detectado",
     jornadasCount: jornadas.length,
-    specialRecordsCount: dayExtraEntries.length + ferryRests.length + tachoActivities.length,
+    specialRecordsCount: dayExtraEntries.length + naturalDayDiets.length + ferryRests.length + tachoActivities.length,
     totalDrivingMin,
     totalDurationMin,
     totalDietas: Math.round(totalDietas * 100) / 100,
     totalExtras: Math.round(totalExtras * 100) / 100,
-    totalPlus: 0,
-    totalOverall: Math.round((totalDietas + totalExtras) * 100) / 100,
+    totalPlus: Math.round(totalPlus * 100) / 100,
+    totalOverall: Math.round((totalDietas + totalExtras + totalPlus) * 100) / 100,
     from: rangeFrom,
     to: rangeTo,
     duplicateCount: 0,
@@ -721,6 +785,7 @@ function parsePayloadObject(payload: any, source: "json" | "pdf", fileName: stri
     range: { from: rangeFrom, to: rangeTo },
     jornadas,
     dayExtraEntries,
+    naturalDayDiets,
     ferryRests,
     viajes,
     tachoActivities,
@@ -732,9 +797,10 @@ function parsePayloadObject(payload: any, source: "json" | "pdf", fileName: stri
 }
 
 async function analyzeDuplicates(bundle: ParsedImportBundle): Promise<ParsedImportBundle> {
-  const [existingJornadas, existingDayExtraEntries] = await Promise.all([
+  const [existingJornadas, existingDayExtraEntries, existingNaturalDayDiets] = await Promise.all([
     listarJornadas(),
     getAllDayExtraEntries(),
+    getAllNaturalDayDiets(),
   ]);
   const existingById = new Map(existingJornadas.map((j) => [j.id, j]));
   const existingByComposite = new Map(existingJornadas.map((j) => [buildJornadaCompositeKey(j), j]));
@@ -784,6 +850,18 @@ async function analyzeDuplicates(bundle: ParsedImportBundle): Promise<ParsedImpo
         importedLabel: `${formatDateLabel(entry.date)} ${entry.entryType}`,
       });
     }
+  }
+
+  const existingNaturalByDate = new Map(existingNaturalDayDiets.map((entry) => [entry.date, entry] as const));
+  for (const entry of bundle.naturalDayDiets) {
+    const existing = existingNaturalByDate.get(entry.date);
+    if (!existing) continue;
+    duplicates.push({
+      importedId: entry.id,
+      existingId: existing.id,
+      by: existing.id === entry.id ? "id" : "content",
+      importedLabel: `${formatDateLabel(entry.date)} Jornada fuera de base`,
+    });
   }
 
   const warnings = [...bundle.warnings];
@@ -945,14 +1023,15 @@ export async function parseImportDocument(params: ParseImportParams): Promise<Pa
 }
 
 async function buildSnapshot(): Promise<Snapshot> {
-  const [jornadas, dayExtraEntries, ferryRests, viajes, tachoActivities] = await Promise.all([
+  const [jornadas, dayExtraEntries, naturalDayDiets, ferryRests, viajes, tachoActivities] = await Promise.all([
     listarJornadas(),
     getAllDayExtraEntries(),
+    getAllNaturalDayDiets(),
     getAllFerryRests(),
     getAllViajes(),
     getAllTachoActivities(),
   ]);
-  return { jornadas, dayExtraEntries, ferryRests, viajes, tachoActivities };
+  return { jornadas, dayExtraEntries, naturalDayDiets, ferryRests, viajes, tachoActivities };
 }
 
 async function saveBackup(snapshot: Snapshot, bundle: ParsedImportBundle): Promise<void> {
@@ -969,6 +1048,7 @@ async function saveBackup(snapshot: Snapshot, bundle: ParsedImportBundle): Promi
 async function restoreSnapshot(snapshot: Snapshot): Promise<void> {
   await replaceImportedJornadas(snapshot.jornadas);
   await replaceImportedDayExtraEntries(snapshot.dayExtraEntries);
+  await replaceImportedNaturalDayDiets(snapshot.naturalDayDiets);
   await replaceImportedFerryRests(snapshot.ferryRests);
   await replaceImportedViajes(snapshot.viajes);
   await replaceImportedTachoActivities(snapshot.tachoActivities);
@@ -1062,6 +1142,34 @@ function mergeDayExtraEntries(existing: DayExtraEntry[], imported: DayExtraEntry
     }
 
     next.push(cloneForPendingSync(entry));
+    added++;
+  }
+
+  next.sort((a, b) => b.date.localeCompare(a.date));
+  return { next, added, overwritten, skipped };
+}
+
+function mergeNaturalDayDiets(existing: NaturalDayDietEntry[], imported: NaturalDayDietEntry[], mode: ImportMode) {
+  const next = [...existing];
+  const byDate = new Map(next.map((entry, index) => [entry.date, index]));
+  let added = 0;
+  let overwritten = 0;
+  let skipped = 0;
+
+  for (const importedEntry of imported) {
+    const idx = byDate.get(importedEntry.date);
+    if (idx != null) {
+      if (mode === "new_only") {
+        skipped++;
+        continue;
+      }
+      const existingId = next[idx].id;
+      next[idx] = cloneForPendingSync({ ...importedEntry, id: existingId });
+      overwritten++;
+      continue;
+    }
+    next.push(cloneForPendingSync(importedEntry));
+    byDate.set(importedEntry.date, next.length - 1);
     added++;
   }
 
@@ -1276,6 +1384,7 @@ export async function applyImportBundle(
 
   const mergedJornadas = mergeJornadas(snapshot.jornadas, preparedImportedJornadas, mode);
   const mergedDayExtraEntries = mergeDayExtraEntries(snapshot.dayExtraEntries, bundle.dayExtraEntries, mode);
+  const mergedNaturalDayDiets = mergeNaturalDayDiets(snapshot.naturalDayDiets, bundle.naturalDayDiets, mode);
   const mergedFerryRests = mergeById(snapshot.ferryRests, bundle.ferryRests, mode);
   const mergedViajes = mergeById(snapshot.viajes, bundle.viajes, mode);
   const mergedActivities = mergeById(snapshot.tachoActivities, bundle.tachoActivities, mode);
@@ -1283,6 +1392,7 @@ export async function applyImportBundle(
   try {
     await replaceImportedJornadas(mergedJornadas.next);
     await replaceImportedDayExtraEntries(mergedDayExtraEntries.next);
+    await replaceImportedNaturalDayDiets(mergedNaturalDayDiets.next);
     await replaceImportedFerryRests(mergedFerryRests.next);
     await replaceImportedViajes(mergedViajes.next);
     await replaceImportedTachoActivities(mergedActivities.next);
