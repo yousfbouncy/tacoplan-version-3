@@ -367,11 +367,11 @@ export function evaluateJornada(
       });
     }
   } else {
-    // Doble conducción — ventana legal 30h.
-    // - ≤ 19h : descanso regular 11h válido y reducido 9h disponible.
-    // - > 19h y ≤ 21h : botón 11h permitido (para elección del usuario),
-    //                   pero tacógrafo lo considera 9h efectivo al superar 30h.
-    // - > 21h : no cabe descanso mínimo 9h dentro de la ventana → infracción.
+    // Doble conducción — ventana de 30h.
+    // Regla de producto acordada:
+    // - ≤ 19h : se ofrecen 11h y 9h (si el reducido está disponible).
+    // - > 19h y ≤ 21h : solo puede seleccionarse 9h.
+    // - > 21h : no cabe el descanso mínimo de 9h dentro de la ventana.
     if (durMin > 21 * 60) {
       infractions.push({
         code: "DOBLE_VENTANA_30H_EXCEDIDA",
@@ -381,7 +381,7 @@ export function evaluateJornada(
     } else if (durMin > 19 * 60) {
       warnings.push({
         code: "DOBLE_SIN_DESCANSO_11H",
-        description: `Doble conduccion ${formatHM(durMin)} superior a 19h: aunque selecciones descanso de 11h, el tacografo lo interpretara como 9h al superarse la ventana legal de 30h entre inicio de jornada y fin del descanso.`,
+        description: `Doble conduccion ${formatHM(durMin)} superior a 19h: solo se permite seleccionar descanso diario de 9h dentro de la ventana de 30h.`,
       });
     }
   }
@@ -889,10 +889,11 @@ export function computeLegalPlan(
         currentDurMin = currentJornada.duracionJornadaMin;
       }
 
-      // FASE 5 — Descanso 11h: SIEMPRE DISPONIBLE, incluso cuando doble > 19h.
-      // Aviso legal solo via warnings[] (SOLO en la ventana Advertencia, no como botón deshabilitado).
-      // Motivo: el usuario debe decidir y el tacógrafo lo interpretará como 9h si supera 30h.
-      const rest11Enabled: boolean = true;
+      // En doble conducción, una jornada superior a 19h deja únicamente
+      // la opción de 9h; así la UI no permite elegir 11h en contra de la regla
+      // configurada para Tacoplan.
+      const rest11Enabled: boolean =
+        !(isCurrentDouble && typeof currentDurMin === "number" && currentDurMin > 19 * 60);
       const rest11 = new Date(endDate.getTime() + 11 * 60 * 60000);
       restOptions.push({
         minutes: 660,
@@ -971,7 +972,7 @@ export function computeLegalPlan(
   }
   if (isCurrentDouble && typeof currentDurMin === "number" && currentDurMin > 19 * 60 && currentDurMin <= 21 * 60) {
     warnings.push(
-      "Doble conduccion: has superado la jornada maxima de 19h para validar un descanso diario regular de 11h. Aunque selecciones o realices 11h de descanso, el tacografo lo interpretara como descanso diario reducido de 9h al superarse la ventana legal de 30h entre el inicio de la jornada y el fin del descanso. Dispones de 9h como descanso valido dentro de la ventana de 30h.",
+      "Doble conduccion: has superado 19h de jornada. Tacoplan desactiva la opción de 11h y deja únicamente el descanso diario de 9h dentro de la ventana de 30h.",
     );
   }
 
