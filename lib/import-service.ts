@@ -1201,7 +1201,11 @@ function mergeById<T extends { id: string }>(existing: T[], imported: T[], mode:
       overwritten++;
       continue;
     }
+    const index = next.length;
     next.push(item);
+    // Actualizar el índice durante el mismo lote: un archivo con el mismo id
+    // repetido no debe crear dos viajes/ferrys/actividades.
+    byId.set(item.id, index);
     added++;
   }
 
