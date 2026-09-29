@@ -175,14 +175,22 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const triggerDeleteSync = useCallback(async (jornadaId: string) => {
     if (!isAuthenticated) return;
     await queueDeleteForSync(jornadaId);
-    await deleteFromCloud(jornadaId, getAccessToken);
+    try {
+      await deleteFromCloud(jornadaId, getAccessToken);
+    } catch {
+      // Queda en cola para reintento cuando haya conexión.
+    }
     triggerSync();
   }, [getAccessToken, isAuthenticated, triggerSync]);
 
   const triggerDeleteDayExtraEntrySync = useCallback(async (entryId: string) => {
     if (!isAuthenticated) return;
     await queueDeleteDayExtraEntryForSync(entryId);
-    await deleteDayExtraEntryFromCloud(entryId, getAccessToken);
+    try {
+      await deleteDayExtraEntryFromCloud(entryId, getAccessToken);
+    } catch {
+      // Queda en cola para reintento cuando haya conexión.
+    }
     triggerSync();
   }, [getAccessToken, isAuthenticated, triggerSync]);
 
