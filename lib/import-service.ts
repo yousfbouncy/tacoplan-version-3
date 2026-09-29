@@ -652,11 +652,14 @@ function normalizeDayExtraEntry(input: any): DayExtraEntry {
   };
 }
 
-function buildDayExtraCompositeKey(entry: Pick<DayExtraEntry, "date" | "entryType" | "note">): string {
+function buildDayExtraCompositeKey(entry: Pick<DayExtraEntry, "date" | "entryType" | "dayFlag">): string {
+  if (entry.entryType === "offsite_weekly_rest") {
+    return [entry.date || "", "offsite_weekly_rest"].join("|");
+  }
   return [
     entry.date || "",
-    entry.entryType || "",
-    normalizeCompositeText(entry.note),
+    "day_extra",
+    entry.dayFlag || "NONE",
   ].join("|");
 }
 
@@ -1059,8 +1062,8 @@ function mergeJornadas(existing: Jornada[], imported: Jornada[], mode: ImportMod
   let skipped = 0;
 
   for (const jornada of imported) {
-    const byIdIndex = byId.get(jornada.id);
     const compositeKey = buildJornadaCompositeKey(jornada);
+    const byIdIndex = byId.get(jornada.id);
     const byContentIndex = byComposite.get(compositeKey);
 
     if (byIdIndex != null) {
@@ -1069,6 +1072,7 @@ function mergeJornadas(existing: Jornada[], imported: Jornada[], mode: ImportMod
         continue;
       }
       next[byIdIndex] = cloneForPendingSync(jornada);
+      byComposite.set(compositeKey, byIdIndex);
       overwritten++;
       continue;
     }
@@ -1081,12 +1085,19 @@ function mergeJornadas(existing: Jornada[], imported: Jornada[], mode: ImportMod
       if (mode === "overwrite_matching") {
         const existingId = next[byContentIndex].id;
         next[byContentIndex] = cloneForPendingSync({ ...jornada, id: existingId });
+        byId.set(existingId, byContentIndex);
+        byComposite.set(compositeKey, byContentIndex);
         overwritten++;
         continue;
       }
     }
 
+    const index = next.length;
     next.push(cloneForPendingSync(jornada));
+    // Mantener los índices durante el mismo lote impide que dos filas repetidas
+    // dentro del archivo entren sin verse entre sí.
+    byId.set(jornada.id, index);
+    byComposite.set(compositeKey, index);
     added++;
   }
 
@@ -1103,8 +1114,9 @@ function mergeDayExtraEntries(existing: DayExtraEntry[], imported: DayExtraEntry
   let skipped = 0;
 
   for (const entry of imported) {
+    const compositeKey = buildDayExtraCompositeKey(entry);
     const byIdIndex = byId.get(entry.id);
-    const byContentIndex = byComposite.get(buildDayExtraCompositeKey(entry));
+    const byContentIndex = byComposite.get(compositeKey);
 
     if (byIdIndex != null) {
       if (mode === "new_only") {
@@ -1112,6 +1124,7 @@ function mergeDayExtraEntries(existing: DayExtraEntry[], imported: DayExtraEntry
         continue;
       }
       next[byIdIndex] = cloneForPendingSync(entry);
+      byComposite.set(compositeKey, byIdIndex);
       overwritten++;
       continue;
     }
@@ -1124,12 +1137,17 @@ function mergeDayExtraEntries(existing: DayExtraEntry[], imported: DayExtraEntry
       if (mode === "overwrite_matching") {
         const existingId = next[byContentIndex].id;
         next[byContentIndex] = cloneForPendingSync({ ...entry, id: existingId });
+        byId.set(existingId, byContentIndex);
+        byComposite.set(compositeKey, byContentIndex);
         overwritten++;
         continue;
       }
     }
 
+    const index = next.length;
     next.push(cloneForPendingSync(entry));
+    byId.set(entry.id, index);
+    byComposite.set(compositeKey, index);
     added++;
   }
 
