@@ -2880,7 +2880,7 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
   const natural = (await getAllNaturalDayDiets()).filter(
     (n) => n.date >= from && n.date <= to && n.confirmedByUser && !n.dismissedAt,
   );
-  const { customRates, dayExtras } = await loadDietDerivationContext();
+  const { customRates, dayExtras, holidays } = await loadDietDerivationContext();
   const issues: PeriodAuditIssue[] = [];
 
   const push = (issue: PeriodAuditIssue) => {
@@ -2972,10 +2972,12 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
         pernocta: !!j.pernocta,
         dietaModo: j.dietaModo || "spain_diet",
         dietaPercent: j.dietaPercent ?? undefined,
-        dayFlag: j.dayFlag || undefined,
+        // El recálculo automático debe derivar de nuevo sábado/domingo/festivo
+        // a partir de la fecha, no conservar una marca potencialmente obsoleta.
+        dayFlag: undefined,
         customRates: customRates || undefined,
         dayExtras,
-        holidays: (await loadDietDerivationContext()).holidays,
+        holidays,
         conduccionMin: j.conduccionMin,
         conduccionDomingoMin: j.conduccionDomingoMin,
         conduccionLunesMin: j.conduccionLunesMin,
@@ -3046,7 +3048,7 @@ export async function recalculatePeriodSafely(from: string, to: string): Promise
         pernocta: !!j.pernocta,
         dietaModo: j.dietaModo || "spain_diet",
         dietaPercent: j.dietaPercent ?? undefined,
-        dayFlag: j.dayFlag || undefined,
+        dayFlag: undefined,
         customRates: customRates || undefined,
         dayExtras,
         holidays,
@@ -3389,14 +3391,27 @@ export async function getResumenKm(
   }
 
   const naturalDayDietsKm = await getAllNaturalDayDiets();
+  const { customRates: naturalRatesKm } = await loadDietDerivationContext();
   for (const nd of naturalDayDietsKm) {
     if (nd.date < from || nd.date > to) continue;
     if (!nd.confirmedByUser || nd.dismissedAt) continue;
-    totalDietas = Math.round((totalDietas + nd.amount) * 100) / 100;
+
+    const resolved = resolveNaturalDayDietFinancials(nd, all, naturalRatesKm, extrasCfg);
+    totalDietas = Math.round((totalDietas + resolved.dietAmount) * 100) / 100;
     const key = `${nd.type}_${nd.percentage}`;
     if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
     dietasDesglose[key].cantidad++;
-    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + nd.amount) * 100) / 100;
+    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + resolved.dietAmount) * 100) / 100;
+
+    for (const plus of resolved.plusItems) {
+      const amount = Number(plus.amount) || 0;
+      if (amount <= 0) continue;
+      const concepto = String(plus.concepto || "Plus").trim() || "Plus";
+      totalPlus = Math.round((totalPlus + amount) * 100) / 100;
+      if (!plusDesglose[concepto]) plusDesglose[concepto] = { cantidad: 0, total: 0 };
+      plusDesglose[concepto].cantidad++;
+      plusDesglose[concepto].total = Math.round((plusDesglose[concepto].total + amount) * 100) / 100;
+    }
   }
 
   const extraDays = await listDayExtraEntries(from, to);
@@ -3556,14 +3571,27 @@ export async function getResumenViaje(
   }
 
   const naturalDayDietsViaje = await getAllNaturalDayDiets();
+  const { customRates: naturalRatesViaje } = await loadDietDerivationContext();
   for (const nd of naturalDayDietsViaje) {
     if (nd.date < from || nd.date > to) continue;
     if (!nd.confirmedByUser || nd.dismissedAt) continue;
-    totalDietas = Math.round((totalDietas + nd.amount) * 100) / 100;
+
+    const resolved = resolveNaturalDayDietFinancials(nd, all, naturalRatesViaje, extrasCfg);
+    totalDietas = Math.round((totalDietas + resolved.dietAmount) * 100) / 100;
     const key = `${nd.type}_${nd.percentage}`;
     if (!dietasDesglose[key]) dietasDesglose[key] = { cantidad: 0, total: 0 };
     dietasDesglose[key].cantidad++;
-    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + nd.amount) * 100) / 100;
+    dietasDesglose[key].total = Math.round((dietasDesglose[key].total + resolved.dietAmount) * 100) / 100;
+
+    for (const plus of resolved.plusItems) {
+      const amount = Number(plus.amount) || 0;
+      if (amount <= 0) continue;
+      const concepto = String(plus.concepto || "Plus").trim() || "Plus";
+      totalPlus = Math.round((totalPlus + amount) * 100) / 100;
+      if (!plusDesglose[concepto]) plusDesglose[concepto] = { cantidad: 0, total: 0 };
+      plusDesglose[concepto].cantidad++;
+      plusDesglose[concepto].total = Math.round((plusDesglose[concepto].total + amount) * 100) / 100;
+    }
   }
 
   const extraDays = await listDayExtraEntries(from, to);
@@ -3882,6 +3910,8 @@ export async function markAllSynced(): Promise<void> {
     if (e.syncStatus !== "synced") e.syncStatus = "synced";
   }
   await saveAllDayExtraEntries(extraDays);
+
+  await markNaturalDayDietsSynced();
 }
 
 export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensaciones: Compensacion[], cloudDayExtraEntries: DayExtraEntry[] = []): Promise<void> {
@@ -4432,35 +4462,94 @@ export async function getAllNaturalDayDiets(): Promise<NaturalDayDietEntry[]> {
   }
 }
 
+function dedupeNaturalDayDietsByDate(list: NaturalDayDietEntry[]): NaturalDayDietEntry[] {
+  const byDate = new Map<string, NaturalDayDietEntry>();
+
+  const rank = (entry: NaturalDayDietEntry): number => {
+    if (entry.confirmedByUser && !entry.dismissedAt) return 4;
+    if (entry.confirmedByUser) return 3;
+    if (!entry.dismissedAt) return 2;
+    return 1;
+  };
+
+  for (const entry of list || []) {
+    if (!entry?.date) continue;
+    const current = byDate.get(entry.date);
+    if (!current) {
+      byDate.set(entry.date, entry);
+      continue;
+    }
+    const currentRank = rank(current);
+    const incomingRank = rank(entry);
+    const currentUpdated = String(current.updatedAt || current.createdAt || "");
+    const incomingUpdated = String(entry.updatedAt || entry.createdAt || "");
+    if (incomingRank > currentRank || (incomingRank === currentRank && incomingUpdated >= currentUpdated)) {
+      byDate.set(entry.date, entry);
+    }
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 async function saveAllNaturalDayDiets(list: NaturalDayDietEntry[]): Promise<void> {
-  await setItemScoped(NATURAL_DAY_DIETS_KEY, JSON.stringify(list));
+  // La base de datos tiene UNIQUE(user_id,date). Repetimos esa misma regla
+  // localmente para que nunca existan dos "Jornadas fuera de base" del mismo día.
+  await setItemScoped(NATURAL_DAY_DIETS_KEY, JSON.stringify(dedupeNaturalDayDietsByDate(list)));
 }
 
 export async function replaceImportedNaturalDayDiets(list: NaturalDayDietEntry[]): Promise<void> {
   await saveAllNaturalDayDiets(list);
 }
 
+export async function markNaturalDayDietsSynced(ids?: string[]): Promise<void> {
+  const all = await getAllNaturalDayDiets();
+  const idSet = ids && ids.length > 0 ? new Set(ids) : null;
+  let changed = false;
+  for (const entry of all) {
+    if (idSet && !idSet.has(entry.id)) continue;
+    if (entry.syncStatus !== "synced") {
+      entry.syncStatus = "synced";
+      changed = true;
+    }
+  }
+  if (changed) await saveAllNaturalDayDiets(all);
+}
+
 export async function upsertNaturalDayDiets(entries: NaturalDayDietEntry[]): Promise<NaturalDayDietEntry[]> {
   if (!entries || entries.length === 0) return [];
-  const all = await getAllNaturalDayDiets();
-  const map = new Map<string, NaturalDayDietEntry>();
-  for (const e of all) map.set(e.id, e);
-  const now = new Date().toISOString();
+
+  const all = dedupeNaturalDayDietsByDate(await getAllNaturalDayDiets());
+  const byId = new Map<string, NaturalDayDietEntry>();
+  const byDate = new Map<string, NaturalDayDietEntry>();
+  for (const entry of all) {
+    byId.set(entry.id, entry);
+    byDate.set(entry.date, entry);
+  }
+
   const results: NaturalDayDietEntry[] = [];
   for (const raw of entries) {
-    const existing = raw.id ? map.get(raw.id) : undefined;
-    const now2 = new Date().toISOString();
+    if (!raw?.date) continue;
+
+    // Si llega un ID nuevo para una fecha que ya existe, reutilizamos el registro
+    // existente. Esto evita duplicados locales y conflictos UNIQUE(user_id,date).
+    const existing = (raw.id ? byId.get(raw.id) : undefined) || byDate.get(raw.date);
+    const now = new Date().toISOString();
     const entry: NaturalDayDietEntry = {
+      ...existing,
       ...raw,
-      id: raw.id || generateId(),
-      createdAt: existing?.createdAt || raw.createdAt || now2,
-      updatedAt: now2,
-      syncStatus: existing?.syncStatus === "synced" ? "pending" : (raw.syncStatus || "pending"),
+      id: existing?.id || raw.id || generateId(),
+      createdAt: existing?.createdAt || raw.createdAt || now,
+      updatedAt: now,
+      syncStatus: existing?.syncStatus === "synced" ? "pending" : (raw.syncStatus || existing?.syncStatus || "pending"),
     };
-    map.set(entry.id, entry);
+
+    if (existing && existing.id !== entry.id) byId.delete(existing.id);
+    byId.set(entry.id, entry);
+    byDate.set(entry.date, entry);
     results.push(entry);
   }
-  await saveAllNaturalDayDiets(Array.from(map.values()));
+
+  await saveAllNaturalDayDiets(Array.from(byId.values()));
   return results;
 }
 
