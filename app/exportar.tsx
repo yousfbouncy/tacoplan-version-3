@@ -1049,9 +1049,9 @@ export default function ExportarScreen() {
         : t("export.pdfDiet");
 
     const totalBilling = billingMode === "km"
-      ? totalKmImporte
+      ? (totalKmImporte + totalDietaNat + totalOffsiteRestDiet)
       : billingMode === "viaje"
-        ? totalViajeImporte
+        ? (totalViajeImporte + totalDietaNat + totalOffsiteRestDiet)
         : (totalDieta + totalOffsiteRestDiet);
     const totalBillingNoAmount = billingMode === "km" ? `${Math.round(totalKm)} km` : billingMode === "viaje" ? `${totalViajeCount}` : `${totalDietCount}`;
 
