@@ -39,6 +39,7 @@ import {
   listDayExtraEntries,
   getAllNaturalDayDiets,
   resolveNaturalDayDietFinancials,
+  splitOffsiteWeeklyRestEntry,
   type NaturalDayDietEntry,
 } from "@/lib/local-storage";
 import { useFerry } from "@/lib/ferry-context";
@@ -1437,6 +1438,7 @@ export default function ExportarScreen() {
     }, 0);
 
     let totalExtras = 0;
+    let totalOffsiteRestDiet = 0;
     for (const j of jornadasViaje) {
       const extraImporte = j.dayFlag
         ? (j.dayExtraEur ? parseFloat(j.dayExtraEur) : calcDayExtra(j.dayFlag, dayExtrasCfg))
@@ -1444,10 +1446,17 @@ export default function ExportarScreen() {
       if (Number.isFinite(extraImporte) && extraImporte > 0) totalExtras += extraImporte;
     }
     for (const e of extraDays) {
+      if (e.entryType === "offsite_weekly_rest") {
+        const split = splitOffsiteWeeklyRestEntry(e, dayExtrasCfg);
+        totalOffsiteRestDiet += Number(split.restAmount) || 0;
+        totalExtras += Number(split.plusAmount) || 0;
+        continue;
+      }
       const extraImporte = e.amount != null ? Number(e.amount) : (e.dayFlag ? calcDayExtra(e.dayFlag, dayExtrasCfg) : 0);
       if (Number.isFinite(extraImporte) && extraImporte > 0) totalExtras += extraImporte;
     }
     totalExtras = Math.round(totalExtras * 100) / 100;
+    totalOffsiteRestDiet = Math.round(totalOffsiteRestDiet * 100) / 100;
 
     const totalPlusJornadasViaje = jornadasViaje.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
     const totalPlusNaturalesViaje = validNatDiets.reduce(
@@ -1455,7 +1464,7 @@ export default function ExportarScreen() {
       0,
     );
     const totalPlus = Math.round((totalPlusJornadasViaje + totalPlusNaturalesViaje) * 100) / 100;
-    const granTotal = Math.round((totalViajes + totalExtras + totalPlus + ferryExtrasTotal + totalDietasNat) * 100) / 100;
+    const granTotal = Math.round((totalViajes + totalExtras + totalPlus + ferryExtrasTotal + totalDietasNat + totalOffsiteRestDiet) * 100) / 100;
 
     const jornadaRows = jornadasViaje.map((j) => {
       const base = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
@@ -1513,6 +1522,10 @@ export default function ExportarScreen() {
           ${validNatDiets.length > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
             <span class="summary-label" style="color:#b45309;">Jornadas fuera de base</span>
             <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalDietasNat.toFixed(2)} \u20AC` : `${validNatDiets.length}`}</span>
+          </div>` : ""}
+          ${totalOffsiteRestDiet > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
+            <span class="summary-label" style="color:#b45309;">Descanso semanal fuera de base</span>
+            <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalOffsiteRestDiet.toFixed(2)} \u20AC` : "-"}</span>
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
             <span class="summary-label">${t("export.pdfPlus")}</span>
