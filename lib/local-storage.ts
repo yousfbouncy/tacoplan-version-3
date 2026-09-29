@@ -5033,10 +5033,22 @@ export async function detectMissingOutOfBaseDietDays(options?: {
       for (const p of list) {
         const concepto = (p.concepto || p.concept || "").trim();
         if (!concepto) continue;
+
+        // Solo heredamos automáticamente el plus diario de formación/segundo
+        // conductor. Copiar cualquier plus de la jornada vecina (parking, bono,
+        // incidencia, etc.) a un día sin jornada propia generaba duplicados.
+        const normalizedConcept = concepto
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+        const isSecondDriverTraining =
+          normalizedConcept.includes("formacion") &&
+          (normalizedConcept.includes("seg") || normalizedConcept.includes("conductor"));
+        if (!isSecondDriverTraining) continue;
+
         const globalKey = `${params.candidateDate}||${concepto}||${id}`;
         if (usedPlusKeysGlobal.has(globalKey)) continue;
         out.push(p);
-        // marcar usada para este candidate (porque ahora vamos a añadirla a NDDE); no tocar jornadas originales.
       }
     }
     return out;
