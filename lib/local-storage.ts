@@ -1252,6 +1252,7 @@ export function resolveNaturalDayDietFinancials(
     const legacyExcess = Math.round((rawAmount - dietAmount) * 100) / 100;
     if (legacyExcess > 0.009) {
       const candidates: Array<{ concepto: string; amount: number; id: string }> = [];
+      const legacyCandidateConcepts = new Set<string>();
       const linkedIds = new Set(
         [nd.previousJourneyId, nd.nextJourneyId].filter((id): id is string => Boolean(id)),
       );
@@ -1269,7 +1270,8 @@ export function resolveNaturalDayDietFinancials(
           if (!isSecondDriverTraining) continue;
 
           const amount = Math.round((Number(p.importe) || 0) * 100) / 100;
-          if (amount <= 0) continue;
+          if (amount <= 0 || legacyCandidateConcepts.has(normalizedConcept)) continue;
+          legacyCandidateConcepts.add(normalizedConcept);
           candidates.push({
             concepto,
             amount,
