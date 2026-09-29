@@ -4991,6 +4991,97 @@ export async function detectMissingOutOfBaseDietDays(options?: {
   return candidates;
 }
 
+export async function autoConfirmOutOfBaseDietDays(
+  items: DetectedMissingNaturalDay[],
+): Promise<NaturalDayDietEntry[]> {
+  const safeItems = Array.isArray(items)
+    ? items.filter((item) => item && item.date && item.isBaseArrivalDay !== true)
+    : [];
+  if (safeItems.length === 0) return [];
+
+  const existing = await getAllNaturalDayDiets();
+  const existingByDate = new Map(
+    existing
+      .filter((entry) => entry && entry.confirmedByUser && !entry.dismissedAt)
+      .map((entry) => [entry.date, entry] as const),
+  );
+  const { dayExtras } = await loadDietDerivationContext();
+  const now = new Date().toISOString();
+  const created: NaturalDayDietEntry[] = [];
+
+  const normalizeConcept = (value: string) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+  for (const item of safeItems) {
+    if (existingByDate.has(item.date)) continue;
+
+    const plusItems: Array<{ concepto: string; amount: number; id: string }> = [];
+    const seenConcepts = new Set<string>();
+
+    for (const raw of Array.isArray(item.plusItems) ? item.plusItems : []) {
+      if (raw?.selected === false) continue;
+      const concepto = String(raw?.concepto || "Plus").trim() || "Plus";
+      const amount = Math.round((Number(raw?.amount) || 0) * 100) / 100;
+      if (amount <= 0) continue;
+      const key = normalizeConcept(concepto);
+      if (seenConcepts.has(key)) continue;
+      seenConcepts.add(key);
+      plusItems.push({
+        concepto,
+        amount,
+        id: String(raw?.id || `auto_${item.date}_${key || "plus"}`),
+      });
+    }
+
+    const addConfiguredPlus = (concepto: string, amountRaw: number) => {
+      const amount = Math.round((Number(amountRaw) || 0) * 100) / 100;
+      const key = normalizeConcept(concepto);
+      if (amount <= 0 || seenConcepts.has(key)) return;
+      seenConcepts.add(key);
+      plusItems.push({
+        concepto,
+        amount,
+        id: `auto_${item.date}_${key}`,
+      });
+    };
+
+    if (item.isDomingo === true) addConfiguredPlus("Domingo", dayExtras.extra_sunday);
+    if (item.isFestivo === true) addConfiguredPlus("Festivo", dayExtras.extra_holiday);
+
+    const entry: NaturalDayDietEntry = {
+      id: `auto_oob_${item.date}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+      date: item.date,
+      type: item.type,
+      percentage: item.percentage,
+      // amount contiene SOLO la dieta base. Los pluses permanecen separados.
+      amount: Math.round((Number(item.amount) || 0) * 100) / 100,
+      location: item.location ?? null,
+      source: "NATURAL_DAY_OUT_OF_BASE",
+      previousJourneyId: item.previousJourneyId ?? null,
+      nextJourneyId: item.nextJourneyId ?? null,
+      confirmedByUser: true,
+      dismissedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      syncStatus: "pending",
+      plusItems: plusItems.length > 0 ? plusItems : null,
+      isDomingo: item.isDomingo === true,
+      isFestivo: item.isFestivo === true,
+    };
+    created.push(entry);
+    existingByDate.set(entry.date, entry);
+  }
+
+  if (created.length > 0) {
+    await upsertNaturalDayDiets(created);
+  }
+  return created;
+}
+
 export async function importFromServer(serverJornadas: any[], serverCompensaciones: any[]): Promise<void> {
   const existingJornadas = await getAllJornadas();
   const existingComps = await getAllCompensaciones();
