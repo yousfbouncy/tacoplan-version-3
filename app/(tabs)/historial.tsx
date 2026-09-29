@@ -1756,9 +1756,16 @@ export default function HistorialScreen() {
 
   const totalExtras =
     jornadasData.reduce((acc, j) => {
+      const rowMode = j.paymentMode || "dietas";
+      // El resumen de Historial debe usar exactamente el mismo universo que
+      // Dietas/KM/Por viaje. Mezclar pluses de otro modo de cobro hacía que
+      // Historial mostrase un total distinto al informe y a la pestaña Dietas.
+      if (rowMode !== billingMode) return acc;
       const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
       const plus = j.plusItems ? j.plusItems.reduce((s, i) => s + i.importe, 0) : 0;
-      return acc + dayExtra + plus;
+      return acc +
+        (Number.isFinite(dayExtra) ? dayExtra : 0) +
+        (Number.isFinite(plus) ? plus : 0);
     }, 0) +
     (extraDaysSplit.totalExtras || 0) +
     naturalDayPlusesTotal;
