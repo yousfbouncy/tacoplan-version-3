@@ -164,14 +164,31 @@ export async function setActiveSession(session: TachographSession | null, userId
 // =====================================================================
 // EVENTS
 // =====================================================================
+function dedupeTachographEvents(events: TachographEvent[]): TachographEvent[] {
+  const byUid = new Map<string, TachographEvent>();
+  for (const event of events || []) {
+    if (!event?.eventUid) continue;
+    const current = byUid.get(event.eventUid);
+    // Si por algún motivo llegan dos copias, conservamos la más completa/reciente.
+    if (!current || String(event.timestamp || "") >= String(current.timestamp || "")) {
+      byUid.set(event.eventUid, event);
+    }
+  }
+  return Array.from(byUid.values());
+}
+
 export async function pushEvents(events: TachographEvent[], userId?: string | null): Promise<void> {
   if (events.length === 0) return;
-  const queued = await readList<TachographEvent>(KEY_EVENTS_QUEUE);
+  const queued = dedupeTachographEvents(await readList<TachographEvent>(KEY_EVENTS_QUEUE));
   const seen = new Set(queued.map((e) => e.eventUid));
-  for (const e of events) {
-    if (!seen.has(e.eventUid)) queued.push(e);
+  for (const e of dedupeTachographEvents(events)) {
+    if (seen.has(e.eventUid)) continue;
+    queued.push(e);
+    // Importante: actualizar el Set dentro del mismo lote; de otro modo dos
+    // eventos repetidos recibidos juntos podían entrar dos veces.
+    seen.add(e.eventUid);
   }
-  await writeList(KEY_EVENTS_QUEUE, queued);
+  await writeList(KEY_EVENTS_QUEUE, dedupeTachographEvents(queued));
 
   if (userId) {
     const rows = events.map((e) => ({
@@ -205,14 +222,14 @@ export async function pushEvents(events: TachographEvent[], userId?: string | nu
 }
 
 export async function listEventsForJornada(jornadaId: string): Promise<TachographEvent[]> {
-  const queued = await readList<TachographEvent>(KEY_EVENTS_QUEUE);
+  const queued = dedupeTachographEvents(await readList<TachographEvent>(KEY_EVENTS_QUEUE));
   const res = queued.filter((e) => e.jornadaId === jornadaId);
   res.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   return res;
 }
 
 export async function listEventsForDate(dateIso: string): Promise<TachographEvent[]> {
-  const queued = await readList<TachographEvent>(KEY_EVENTS_QUEUE);
+  const queued = dedupeTachographEvents(await readList<TachographEvent>(KEY_EVENTS_QUEUE));
   const res = queued.filter((e) => e.timestamp.slice(0, 10) === dateIso);
   res.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   return res;
@@ -241,7 +258,8 @@ export interface BuildSummaryOptions {
 
 export function buildDailySummary(options: BuildSummaryOptions): TachographDailySummary {
   const { events, jornadaId = null, source = "tachograph_ble", disconnectionsCount = 0 } = options;
-  const sorted = [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  // El resumen nunca debe sumar dos veces el mismo evento de tacógrafo.
+  const sorted = dedupeTachographEvents(events).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const dates = sorted.map((e) => e.timestamp.slice(0, 10));
   const summaryDate = dates[0] || new Date().toISOString().slice(0, 10);
 
