@@ -64,87 +64,15 @@ import {
   getFerryInterruptionsTotalMin,
 } from "@/lib/local-storage";
 
-const PDF_DIETS_DEBUG_URL = "http://127.0.0.1:7777/event";
-const PDF_DIETS_DEBUG_SESSION = "pdf-diets-not-saved";
-const PDF_DIETS_DEBUG_RUN = "pre-fix";
-const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
-const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
-const JORNADA_DATE_DEBUG_RUN = "pre-fix";
-const historialDietDebugSeen = new Set<string>();
-const historialDateDebugSeen = new Set<string>();
-
 function reportHistorialDietDebug(kind: "manual" | "imported", item: Jornada, totalCalculado: number, paymentMode: string): void {
-  const key = `${kind}:${item.id}`;
-  if (historialDietDebugSeen.has(key) || typeof fetch !== "function") return;
-  historialDietDebugSeen.add(key);
-  fetch(PDF_DIETS_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: PDF_DIETS_DEBUG_SESSION,
-      runId: PDF_DIETS_DEBUG_RUN,
-      hypothesisId: "B",
-      location: "historial:JornadaItem:render",
-      msg: `[DEBUG] ${kind.toUpperCase()} DIETA DEBUG`,
-      data: {
-        kind,
-        id: item.id,
-        paymentMode,
-        dietaImporteEur: item.dietaImporteEur,
-        dietBaseEur: item.dietBaseEur,
-        dietaPercent: item.dietaPercent,
-        dietaModo: item.dietaModo,
-        dietaManualTipo: item.dietaManualTipo,
-        dietaManualPct: item.dietaManualPct,
-        dietasItems: item.dietasItems,
-        dayFlag: item.dayFlag,
-        dayExtraEur: item.dayExtraEur,
-        plusItems: item.plusItems,
-        pernocta: item.pernocta,
-        totalCalculado,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {
-    historialDietDebugSeen.delete(key);
-  });
+  void kind;
+  void item;
+  void totalCalculado;
+  void paymentMode;
 }
-
 function reportJornadaDateDebug(item: Jornada, renderedDate: string): void {
-  const key = `${item.id}:${item.updatedAt || ""}:${renderedDate}`;
-  if (historialDateDebugSeen.has(key) || typeof fetch !== "function") return;
-  historialDateDebugSeen.add(key);
-  let timezone: string | null = null;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {}
-  fetch(JORNADA_DATE_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: JORNADA_DATE_DEBUG_SESSION,
-      runId: JORNADA_DATE_DEBUG_RUN,
-      hypothesisId: "E",
-      location: "historial:JornadaItem:renderDate",
-      msg: "[JORNADA_DATE_DEBUG] jornada rendered in Historial",
-      data: {
-        timezone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        platform: Platform.OS,
-        jornadaId: item.id,
-        fechaInicio: item.fechaInicio,
-        horaInicio: item.horaInicio,
-        fechaFin: item.fechaFin,
-        horaFin: item.horaFin,
-        startAt: item.startAt,
-        endAt: item.endAt,
-        fechaMostradaHistorial: renderedDate,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {
-    historialDateDebugSeen.delete(key);
-  });
+  void item;
+  void renderedDate;
 }
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
