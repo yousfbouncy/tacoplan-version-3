@@ -834,20 +834,26 @@ export async function loadDietDerivationContext(): Promise<{
       : [];
   } catch {}
 
-  const customRates = [
-      { trip_type: "NACIONAL", percent: 100, amount: parseNumberSafe(settings.nac_100) },
-      { trip_type: "NACIONAL", percent: 60, amount: parseNumberSafe(settings.nac_60) },
-      { trip_type: "NACIONAL", percent: 30, amount: parseNumberSafe(settings.nac_30) },
-      { trip_type: "INTERNACIONAL", percent: 100, amount: parseNumberSafe(settings.intl_100) },
-      { trip_type: "INTERNACIONAL", percent: 60, amount: parseNumberSafe(settings.intl_60) },
-      { trip_type: "INTERNACIONAL", percent: 30, amount: parseNumberSafe(settings.intl_30) },
-      { trip_type: "REGIONAL", percent: 100, amount: parseNumberSafe(settings.reg_100) },
-      { trip_type: "REGIONAL", percent: 60, amount: parseNumberSafe(settings.reg_60) },
-      { trip_type: "REGIONAL", percent: 30, amount: parseNumberSafe(settings.reg_30) },
+  const parseRate = (value: unknown, fallback: number): number => {
+    if (value === null || value === undefined || String(value).trim() === "") return fallback;
+    const parsed = parseFloat(String(value).replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const customRates: UserDietRate[] = [
+    { trip_type: "NACIONAL", percent: 100, amount: parseRate(settings.nac_100, 54.30) },
+    { trip_type: "NACIONAL", percent: 60, amount: parseRate(settings.nac_60, 32.58) },
+    { trip_type: "NACIONAL", percent: 30, amount: parseRate(settings.nac_30, 16.29) },
+    { trip_type: "INTERNACIONAL", percent: 100, amount: parseRate(settings.intl_100, 72.77) },
+    { trip_type: "INTERNACIONAL", percent: 60, amount: parseRate(settings.intl_60, 43.66) },
+    { trip_type: "INTERNACIONAL", percent: 30, amount: parseRate(settings.intl_30, 21.83) },
+    { trip_type: "REGIONAL", percent: 100, amount: parseRate(settings.reg_100, 0) },
+    { trip_type: "REGIONAL", percent: 60, amount: parseRate(settings.reg_60, 0) },
+    { trip_type: "REGIONAL", percent: 30, amount: parseRate(settings.reg_30, 0) },
   ];
 
   return {
-    customRates: customRates.some((rate) => rate.amount > 0) ? customRates : null,
+    customRates,
     dayExtras: {
       ...defaults,
       extra_saturday: parseNumberSafe(settings.extra_saturday),
