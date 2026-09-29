@@ -2938,10 +2938,40 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
     }
   }
 
+  // Una Jornada fuera de base representa un día natural sin jornada propia.
+  const journeyStartsInPeriod = new Map(
+    periodJourneys.map((journey) => [journey.fechaInicio, journey] as const),
+  );
+  for (const n of natural) {
+    const sameDateJourney = journeyStartsInPeriod.get(n.date);
+    if (sameDateJourney) {
+      push({
+        id: `natural-overlap-${n.date}`,
+        severity: "error",
+        date: n.date,
+        title: "Jornada fuera de base solapada",
+        detail: "Existe también una jornada iniciada este mismo día. Revisa cuál de los dos registros corresponde.",
+      });
+    }
+  }
+
   // 3) Importes de jornadas naturales: dieta base separada de pluses.
   for (const n of natural) {
     const configured = findRate(customRates, n.type, n.percentage);
     const resolved = resolveNaturalDayDietFinancials(n, all, customRates, dayExtras);
+    const rawAmount = Number(n.amount) || 0;
+    if (configured > 0 && Math.abs(rawAmount - configured) > 0.011) {
+      const excess = Math.round((rawAmount - configured) * 100) / 100;
+      push({
+        id: `natural-raw-mix-${n.id}`,
+        severity: "warning",
+        date: n.date,
+        title: "Posible mezcla de dieta y plus",
+        detail: excess > 0
+          ? `El registro guarda ${rawAmount.toFixed(2)} € en dieta; la tarifa base es ${configured.toFixed(2)} € (diferencia ${excess.toFixed(2)} €).`
+          : `El registro guarda ${rawAmount.toFixed(2)} € y la tarifa configurada es ${configured.toFixed(2)} €.`,
+      });
+    }
     if (configured > 0 && Math.abs(resolved.dietAmount - configured) > 0.011) {
       push({
         id: `natural-rate-${n.id}`,
@@ -2959,6 +2989,76 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
         title: "Ubicación no registrada",
         detail: "La jornada fuera de base no tiene ubicación fiable.",
       });
+    }
+  }
+
+  // Pluses repetidos dentro del mismo registro suelen ser un doble alta accidental.
+  const normalizedPlusConcept = (value: unknown) =>
+    String(value || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  for (const n of natural) {
+    const seen = new Set<string>();
+    for (const plus of n.plusItems || []) {
+      const key = normalizedPlusConcept(plus.concepto);
+      if (!key) continue;
+      if (seen.has(key)) {
+        push({
+          id: `dup-natural-plus-${n.id}-${key}`,
+          severity: "warning",
+          date: n.date,
+          title: "Plus duplicado",
+          detail: `El concepto "${plus.concepto}" aparece más de una vez en la Jornada fuera de base.`,
+        });
+      }
+      seen.add(key);
+    }
+  }
+
+  for (const j of periodJourneys) {
+    const seen = new Set<string>();
+    for (const plus of j.plusItems || []) {
+      const key = normalizedPlusConcept(plus.concepto);
+      if (!key) continue;
+      if (seen.has(key)) {
+        push({
+          id: `dup-journey-plus-${j.id}-${key}`,
+          severity: "warning",
+          date: j.fechaInicio,
+          title: "Plus duplicado",
+          detail: `El concepto "${plus.concepto}" aparece más de una vez en la jornada.`,
+        });
+      }
+      seen.add(key);
+    }
+
+    const full = Number(j.dietaImporteEur);
+    const dayExtra = Number(j.dayExtraEur || 0);
+    const storedBase = Number(j.dietBaseEur);
+    if (Number.isFinite(full) && Number.isFinite(storedBase) && Math.abs((full - dayExtra) - storedBase) > 0.011) {
+      push({
+        id: `journey-diet-structure-${j.id}`,
+        severity: "error",
+        date: j.fechaInicio,
+        title: "Importe de dieta mezclado",
+        detail: `Dieta total ${full.toFixed(2)} € · extra de día ${dayExtra.toFixed(2)} € · base guardada ${storedBase.toFixed(2)} €.`,
+      });
+    }
+
+    if (j.dayFlag) {
+      const flagKey = normalizedPlusConcept(j.dayFlag);
+      const duplicateDayPlus = (j.plusItems || []).some((plus) => {
+        const concept = normalizedPlusConcept(plus.concepto);
+        return concept.includes(flagKey);
+      });
+      if (duplicateDayPlus) {
+        push({
+          id: `dayflag-plus-overlap-${j.id}`,
+          severity: "warning",
+          date: j.fechaInicio,
+          title: "Domingo/festivo duplicado",
+          detail: "La jornada tiene un extra de día y además un plus con el mismo concepto.",
+        });
+      }
     }
   }
 
@@ -3034,6 +3134,7 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
 
 export async function recalculatePeriodSafely(from: string, to: string): Promise<{
   recalculatedJourneys: number;
+  normalizedNaturalDays: number;
   autoAddedOutOfBaseDays: number;
   manualArrivalDays: DetectedMissingNaturalDay[];
 }> {
@@ -3101,6 +3202,41 @@ export async function recalculatePeriodSafely(from: string, to: string): Promise
     all = nextAll;
   }
 
+  // Normaliza registros antiguos que guardaron dieta + plus dentro de amount.
+  // Solo se corrigen automáticamente cuando la diferencia puede explicarse
+  // exactamente por pluses reconocidos; los casos ambiguos quedan para Revisar.
+  let normalizedNaturalDays = 0;
+  const naturalAll = await getAllNaturalDayDiets();
+  const naturalUpdated: NaturalDayDietEntry[] = [];
+  for (const entry of naturalAll) {
+    if (entry.date < from || entry.date > to || !entry.confirmedByUser || entry.dismissedAt) {
+      naturalUpdated.push(entry);
+      continue;
+    }
+
+    const configured = findRate(customRates, entry.type, entry.percentage);
+    const raw = Number(entry.amount) || 0;
+    const resolved = resolveNaturalDayDietFinancials(entry, all, customRates, dayExtras);
+    const excess = Math.round((raw - configured) * 100) / 100;
+    const explained = excess > 0.009 && Math.abs(excess - resolved.plusTotal) < 0.011;
+
+    if (configured > 0 && Math.abs(raw - configured) > 0.011 && explained) {
+      naturalUpdated.push({
+        ...entry,
+        amount: Math.round(configured * 100) / 100,
+        plusItems: resolved.plusItems.length > 0 ? resolved.plusItems : entry.plusItems,
+        updatedAt: new Date().toISOString(),
+        syncStatus: "pending",
+      });
+      normalizedNaturalDays++;
+    } else {
+      naturalUpdated.push(entry);
+    }
+  }
+  if (normalizedNaturalDays > 0) {
+    await replaceImportedNaturalDayDiets(naturalUpdated);
+  }
+
   // Detecta días completos intermedios y los crea automáticamente. Los días de
   // llegada a base siguen siendo manuales porque requieren elegir porcentaje.
   const missing = await detectMissingOutOfBaseDietDays({ fromDate: from, toDate: to });
@@ -3110,6 +3246,7 @@ export async function recalculatePeriodSafely(from: string, to: string): Promise
 
   return {
     recalculatedJourneys,
+    normalizedNaturalDays,
     autoAddedOutOfBaseDays: created.length,
     manualArrivalDays,
   };
