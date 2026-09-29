@@ -508,6 +508,11 @@ export async function getDeviceId(): Promise<string> {
 }
 
 export async function hasLocalData(): Promise<boolean> {
+  try {
+    const naturals = await LS.getAllNaturalDayDiets();
+    if (Array.isArray(naturals) && naturals.length > 0) return true;
+  } catch {}
+
   const jRaw = await AsyncStorage.getItem(await userScopedKey("tacoplan_jornadas"));
   if (jRaw) {
     const parsed = JSON.parse(jRaw);
@@ -584,7 +589,7 @@ export async function checkCloudHasAnyUserData(getAccessToken: () => Promise<str
     const auth = await getAuthenticatedUserOrThrow();
     const userId = auth.user.id;
 
-    const [profileRes, jornadaRes, compRes, ratesRes, extrasRes, holidaysRes, dayExtraRes] = await Promise.all([
+    const [profileRes, jornadaRes, compRes, ratesRes, extrasRes, holidaysRes, dayExtraRes, naturalDayRes] = await Promise.all([
       supabase
         .from("profiles")
         .select("*")
@@ -596,10 +601,15 @@ export async function checkCloudHasAnyUserData(getAccessToken: () => Promise<str
       supabase.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
       supabase.from("user_holidays").select("id").eq("user_id", userId).limit(1),
       supabase.from("user_day_extra_entries").select("id").eq("user_id", userId).limit(1),
+      supabase.from("user_natural_day_diets").select("id").eq("user_id", userId).limit(1),
     ]);
 
     const profile = profileRes.error ? null : profileRes.data;
-    const hasHistory = (jornadaRes.data?.length ?? 0) > 0 || (compRes.data?.length ?? 0) > 0 || (dayExtraRes.data?.length ?? 0) > 0;
+    const hasHistory =
+      (jornadaRes.data?.length ?? 0) > 0 ||
+      (compRes.data?.length ?? 0) > 0 ||
+      (dayExtraRes.data?.length ?? 0) > 0 ||
+      (naturalDayRes.data?.length ?? 0) > 0;
     const hasRates = (ratesRes.data?.length ?? 0) > 0;
     const hasHolidays = (holidaysRes.data?.length ?? 0) > 0;
 
