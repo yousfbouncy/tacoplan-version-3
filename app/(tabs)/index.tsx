@@ -62,6 +62,7 @@ import {
   type FerryInterruption,
   addFerryRest,
   detectMissingOutOfBaseDietDays,
+  autoConfirmOutOfBaseDietDays,
   upsertNaturalDayDiets,
   dismissNaturalDayDiets,
   getAllNaturalDayDiets,
@@ -1036,8 +1037,8 @@ export default function DashboardScreen() {
         const resolvedFechaMinus45 = addDays(resolvedFecha, -45);
         const triggerAFrom = gapFrom && gapFrom > resolvedFechaMinus45 ? gapFrom : resolvedFechaMinus45;
         const triggerATo = addDays(resolvedFecha, -1);
-        await clearDismissedNaturalDayDietsInRange(triggerAFrom, triggerATo);
-        console.log(`[DISMISSED_CLEARED_RANGE from=${triggerAFrom} to=${triggerATo}]`);
+        // En el inicio normal NO olvidamos días descartados manualmente.
+        // El botón Re-evaluar es el único que recupera esos descartados.
         const detectados = await detectMissingOutOfBaseDietDays({
           extraPendingJourney: {
             startAt: `${resolvedFecha}T${hhmm}:00`,
@@ -1048,9 +1049,31 @@ export default function DashboardScreen() {
           fromDate: triggerAFrom,
           toDate: triggerATo,
         });
-        console.log(`[TRIGGER_A pendingCount=${detectados?.length || 0} from=${triggerAFrom} to=${triggerATo}]`);
-        if (detectados && detectados.length > 0) {
-          setPendingDiets(detectados);
+
+        const detectedSafe = Array.isArray(detectados) ? detectados : [];
+        const autoDays = detectedSafe.filter((item) => item.isBaseArrivalDay !== true);
+        const manualDays = detectedSafe.filter((item) => item.isBaseArrivalDay === true);
+
+        console.log(
+          `[TRIGGER_A pendingCount=${detectedSafe.length} auto=${autoDays.length} manual=${manualDays.length} from=${triggerAFrom} to=${triggerATo}]`,
+        );
+
+        // Los días completos intermedios fuera de base son inequívocos:
+        // se registran automáticamente como Jornada fuera de base al 100%.
+        // Los días de llegada a base siguen requiriendo elección 100/60/30/sin dieta.
+        if (autoDays.length > 0) {
+          const created = await autoConfirmOutOfBaseDietDays(autoDays);
+          if (created.length > 0) {
+            await Promise.all([
+              qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+              qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+            ]);
+          }
+        }
+
+        if (manualDays.length > 0) {
+          setPendingDiets(manualDays);
           setDeferredStartJourney({
             lugarInicio: lugar,
             fechaInicio: resolvedFecha,
@@ -1067,7 +1090,7 @@ export default function DashboardScreen() {
 
     inicioMutation.mutate(overrideParams ?? undefined);
     setShowInicioForm(false);
-  }, [inicioFechaInput, inicioLugar, inicioHora, kmInicio, t, inicioMutation, tipoRuta]);
+  }, [inicioFechaInput, inicioLugar, inicioHora, kmInicio, t, inicioMutation, tipoRuta, qc]);
 
   const upsertAllPendingSelections = useCallback(async (
     selectedDatesOrItems: string[] | DetectedDiet[],
