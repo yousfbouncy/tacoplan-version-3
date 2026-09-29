@@ -493,7 +493,9 @@ export default function ExportarScreen() {
       const allFerryRests = await getAllFerryRests();
       const ferryRestsInRange = allFerryRests.filter((fr) => fr.fecha >= fechaDesde && fr.fecha <= fechaHasta);
       ferryRestsInRange.sort((a, b) => a.startTime.localeCompare(b.startTime));
-      const extraDaysInRange = (includeHistorial || includeDietas) ? await listDayExtraEntries(fechaDesde, fechaHasta) : [];
+      // El payload oculto del PDF también actúa como copia recuperable: incluimos
+      // siempre los registros especiales del periodo aunque no se muestren en la vista.
+      const extraDaysInRange = await listDayExtraEntries(fechaDesde, fechaHasta);
       const natDiets = await getAllNaturalDayDiets();
       const natInRange = natDiets.filter((n) => n.confirmedByUser && !n.dismissedAt && n.date >= fechaDesde && n.date <= fechaHasta);
 
@@ -529,6 +531,8 @@ export default function ExportarScreen() {
         generatedAt: new Date().toISOString(),
         reportOptions: opts,
         jornadas: cerradas,
+        dayExtraEntries: extraDaysInRange,
+        naturalDayDiets: natInRange,
         ferryRests: ferryRestsInRange,
         viajes: exportedViajes,
       };
