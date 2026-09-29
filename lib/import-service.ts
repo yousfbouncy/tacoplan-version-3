@@ -42,27 +42,12 @@ const PDF_STOP_TOKENS = [
   "Resumen por viaje",
   "Viajes",
 ];
-const PDF_DIETS_DEBUG_URL = "http://127.0.0.1:7777/event";
-const PDF_DIETS_DEBUG_SESSION = "pdf-diets-not-saved";
-const PDF_DIETS_DEBUG_RUN = "pre-fix";
-
 function reportPdfDietDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  fetch(PDF_DIETS_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: PDF_DIETS_DEBUG_SESSION,
-      runId: PDF_DIETS_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[DEBUG] ${msg}`,
-      data,
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 export type ImportMode = "new_only" | "overwrite_matching" | "import_all";
 
 export type ImportDuplicate = {
@@ -913,14 +898,8 @@ export async function parseImportDocument(params: ParseImportParams): Promise<Pa
   if (params.extractedPdfText) {
     try {
       const visible = parseTacoplanReport(params.extractedPdfText);
-      // #region debug-point A:import-visible-result
-      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"pdf-incomplete-import",runId:"pre",hypothesisId:"A",location:"lib/import-service.ts:669",msg:"[DEBUG] Resultado parser visible en parseImportDocument",data:{fileName:params.fileName,jornadas:visible.jornadas.length,specials:visible.dayExtraEntries.length,errors:visible.errors,totalDietas:visible.totalDietas,totalExtras:visible.totalExtras},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       const recognisable = visible.diagnostics.sections.historial || visible.diagnostics.sections.resumen || visible.diagnostics.sections.detalle;
       if (visible.jornadas.length > 0 || visible.dayExtraEntries.length > 0 || recognisable) {
-        // #region debug-point C:import-visible-accepted
-        fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"pdf-incomplete-import",runId:"pre",hypothesisId:"C",location:"lib/import-service.ts:672",msg:"[DEBUG] Se acepta la ruta visible del informe",data:{fileName:params.fileName,jornadas:visible.jornadas.length,specials:visible.dayExtraEntries.length,warningCount:visible.errors.length},ts:Date.now()})}).catch(()=>{});
-        // #endregion
         return analyzeDuplicates(buildVisiblePdfBundle(
           params.fileName,
           visible,
@@ -935,9 +914,6 @@ export async function parseImportDocument(params: ParseImportParams): Promise<Pa
         ));
       }
     } catch {
-      // #region debug-point D:import-visible-exception
-      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"pdf-incomplete-import",runId:"pre",hypothesisId:"D",location:"lib/import-service.ts:704",msg:"[DEBUG] Excepcion en parseImportDocument al usar parser visible",data:{fileName:params.fileName},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       if (hasRecognizableTacoplanSections(params.extractedPdfText)) {
         return buildDiagnosticPreviewBundle(params.fileName, params.extractedPdfText, "Se ha detectado texto del informe Tacoplan, pero el parser visible lanzó una excepción. Se muestra una vista previa de diagnóstico.");
       }
@@ -1026,9 +1002,6 @@ export async function parseImportDocument(params: ParseImportParams): Promise<Pa
     if (params.extractedPdfText && hasRecognizableTacoplanSections(params.extractedPdfText)) {
       return buildDiagnosticPreviewBundle(params.fileName, params.extractedPdfText, "El backup embebido del PDF está incompleto, pero se ha detectado un informe Tacoplan legible y se muestra una vista previa de diagnóstico.");
     }
-    // #region debug-point C:last-marker-error
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"pdf-incomplete-import",runId:"pre",hypothesisId:"C",location:"lib/import-service.ts:786",msg:"[DEBUG] Se retorna ultimo error del backup embebido",data:{fileName:params.fileName,code:lastMarkerError.code,message:lastMarkerError.message,sawMarker,shouldUseLegacyFallbackForTruncatedBackup},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     throw lastMarkerError;
   }
   if (sawMarker) {
