@@ -105,7 +105,27 @@ async function getColumnSet(table: string): Promise<Set<string>> {
     if (row && typeof row === "object") {
       for (const k of Object.keys(row)) cols.add(k);
     } else {
-      cols.add(table === "profiles" ? "id" : "id");
+      cols.add("id");
+      // select("*").limit(1) no permite descubrir columnas cuando la tabla
+      // todavía está vacía. Para tablas cuyo esquema forma parte de nuestras
+      // migraciones, conocemos esas columnas y no debemos perder datos en el
+      // primer sync (especialmente pluses de jornadas fuera de base).
+      if (table === "user_natural_day_diets") {
+        [
+          "user_id", "date", "type", "percentage", "amount", "location", "source",
+          "previous_journey_id", "next_journey_id", "confirmed_by_user",
+          "dismissed_at", "created_at", "updated_at", "pluses_json",
+          "is_domingo", "is_festivo",
+        ].forEach((name) => cols.add(name));
+      }
+      if (table === "user_day_extras") {
+        [
+          "user_id", "extra_saturday", "extra_sunday", "extra_holiday",
+          "offsite_weekly_reduced_nacional", "offsite_weekly_reduced_internacional",
+          "offsite_weekly_complete_nacional", "offsite_weekly_complete_internacional",
+          "updated_at",
+        ].forEach((name) => cols.add(name));
+      }
     }
     columnsCache.set(table, cols);
     return cols;
