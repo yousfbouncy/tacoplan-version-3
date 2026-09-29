@@ -6284,29 +6284,62 @@ export async function getMoroccoJornadaSummary(
   };
 }
 
+function dedupeFerryRests(list: FerryRestRecord[]): FerryRestRecord[] {
+  const byKey = new Map<string, FerryRestRecord>();
+  for (const rest of list || []) {
+    if (!rest?.id) continue;
+    // Un descanso vinculado a una jornada es único para esa jornada. Los
+    // descansos antiguos sin vínculo siguen usando su id como identidad.
+    const key = rest.linkedJornadaId ? `jornada:${rest.linkedJornadaId}` : `id:${rest.id}`;
+    const current = byKey.get(key);
+    if (!current || String(rest.createdAt || "") >= String(current.createdAt || "")) {
+      byKey.set(key, rest);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 export async function getAllFerryRests(): Promise<FerryRestRecord[]> {
   try {
     const raw = await getItemScoped(FERRY_RESTS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? dedupeFerryRests(parsed) : [];
   } catch {
     return [];
   }
 }
 
 export async function replaceImportedFerryRests(list: FerryRestRecord[]): Promise<void> {
-  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(list));
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(dedupeFerryRests(list)));
 }
 
 export async function addFerryRest(rest: Omit<FerryRestRecord, "id" | "createdAt">): Promise<FerryRestRecord> {
   const all = await getAllFerryRests();
+  const existingIndex = rest.linkedJornadaId
+    ? all.findIndex((item) => item.linkedJornadaId === rest.linkedJornadaId)
+    : -1;
+
+  if (existingIndex >= 0) {
+    const existing = all[existingIndex];
+    const updated: FerryRestRecord = {
+      ...existing,
+      ...rest,
+      id: existing.id,
+      createdAt: existing.createdAt,
+    };
+    all[existingIndex] = updated;
+    await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(dedupeFerryRests(all)));
+    return updated;
+  }
+
   const newRest: FerryRestRecord = {
     ...rest,
     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
     createdAt: new Date().toISOString(),
   };
   all.push(newRest);
-  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(all));
+  await setItemScoped(FERRY_RESTS_KEY, JSON.stringify(dedupeFerryRests(all)));
   return newRest;
 }
 
