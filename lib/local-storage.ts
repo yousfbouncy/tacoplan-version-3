@@ -5204,6 +5204,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
     currId: string | null;
   }): PlusItemLike[] {
     const out: PlusItemLike[] = [];
+    const seenConcepts = new Set<string>();
     const ids = [params.prevId, params.currId].filter((s): s is string => Boolean(s));
     for (const id of ids) {
       const list = plusesByJourney.get(id);
@@ -5223,9 +5224,11 @@ export async function detectMissingOutOfBaseDietDays(options?: {
           normalizedConcept.includes("formacion") &&
           (normalizedConcept.includes("seg") || normalizedConcept.includes("conductor"));
         if (!isSecondDriverTraining) continue;
+        if (seenConcepts.has(normalizedConcept)) continue;
 
         const globalKey = `${params.candidateDate}||${concepto}||${id}`;
         if (usedPlusKeysGlobal.has(globalKey)) continue;
+        seenConcepts.add(normalizedConcept);
         out.push(p);
       }
     }
