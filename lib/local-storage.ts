@@ -2857,6 +2857,245 @@ export async function eliminarJornada(id: string): Promise<void> {
   await saveAllCompensaciones(comps);
 }
 
+
+export type PeriodAuditIssue = {
+  id: string;
+  severity: "warning" | "error";
+  date?: string | null;
+  title: string;
+  detail: string;
+};
+
+export type PeriodAuditResult = {
+  from: string;
+  to: string;
+  checkedJourneys: number;
+  checkedNaturalDays: number;
+  issues: PeriodAuditIssue[];
+};
+
+export async function auditPeriodConsistency(from: string, to: string): Promise<PeriodAuditResult> {
+  const all = await getAllJornadas();
+  const periodJourneys = all.filter((j) => j.fechaInicio >= from && j.fechaInicio <= to);
+  const natural = (await getAllNaturalDayDiets()).filter(
+    (n) => n.date >= from && n.date <= to && n.confirmedByUser && !n.dismissedAt,
+  );
+  const { customRates, dayExtras } = await loadDietDerivationContext();
+  const issues: PeriodAuditIssue[] = [];
+
+  const push = (issue: PeriodAuditIssue) => {
+    if (!issues.some((x) => x.id === issue.id)) issues.push(issue);
+  };
+
+  // 1) Días fuera de base que todavía faltan.
+  try {
+    const missing = await detectMissingOutOfBaseDietDays({ fromDate: from, toDate: to });
+    for (const item of missing) {
+      push({
+        id: `missing-oob-${item.date}`,
+        severity: "warning",
+        date: item.date,
+        title: "Jornada fuera de base pendiente",
+        detail: item.isBaseArrivalDay
+          ? "Día de llegada a base pendiente de elegir 100%, 60%, 30% o sin dieta."
+          : "Día completo fuera de base sin registrar.",
+      });
+    }
+  } catch {}
+
+  // 2) Duplicados por fecha en jornadas naturales.
+  const byNaturalDate = new Map<string, NaturalDayDietEntry[]>();
+  for (const n of natural) {
+    const arr = byNaturalDate.get(n.date) || [];
+    arr.push(n);
+    byNaturalDate.set(n.date, arr);
+  }
+  for (const [date, entries] of byNaturalDate.entries()) {
+    if (entries.length > 1) {
+      push({
+        id: `dup-natural-${date}`,
+        severity: "error",
+        date,
+        title: "Jornada fuera de base duplicada",
+        detail: `Hay ${entries.length} registros confirmados para el mismo día.`,
+      });
+    }
+  }
+
+  // 3) Importes de jornadas naturales: dieta base separada de pluses.
+  for (const n of natural) {
+    const configured = findRate(customRates, n.type, n.percentage);
+    const resolved = resolveNaturalDayDietFinancials(n, all, customRates, dayExtras);
+    if (configured > 0 && Math.abs(resolved.dietAmount - configured) > 0.011) {
+      push({
+        id: `natural-rate-${n.id}`,
+        severity: "warning",
+        date: n.date,
+        title: "Importe de dieta fuera de tarifa",
+        detail: `Guardado ${resolved.dietAmount.toFixed(2)} € · tarifa ${configured.toFixed(2)} €.`,
+      });
+    }
+    if (!n.location || !String(n.location).trim()) {
+      push({
+        id: `natural-location-${n.id}`,
+        severity: "warning",
+        date: n.date,
+        title: "Ubicación no registrada",
+        detail: "La jornada fuera de base no tiene ubicación fiable.",
+      });
+    }
+  }
+
+  // 4) Jornadas normales: revisar solo cálculos automáticos; respetamos manuales.
+  for (const j of periodJourneys) {
+    if (!j.fechaFin) {
+      push({
+        id: `open-${j.id}`,
+        severity: "warning",
+        date: j.fechaInicio,
+        title: "Jornada sin cerrar",
+        detail: "La jornada está abierta y no entra en un cálculo definitivo.",
+      });
+      continue;
+    }
+    if ((j.paymentMode || "dietas") !== "dietas") continue;
+    if (j.dietaModo === "MANUAL") continue;
+
+    const expected = computeDerivedFields(
+      j,
+      all.filter((o) => o.id !== j.id),
+      {
+        fechaFin: j.fechaFin,
+        horaFin: j.horaFin || "00:00",
+        lugarFin: j.lugarFin || "",
+        tipoRuta: j.tipoRuta || "NINGUNO",
+        pernocta: !!j.pernocta,
+        dietaModo: j.dietaModo || "spain_diet",
+        dietaPercent: j.dietaPercent ?? undefined,
+        dayFlag: j.dayFlag || undefined,
+        customRates: customRates || undefined,
+        dayExtras,
+        holidays: (await loadDietDerivationContext()).holidays,
+        conduccionMin: j.conduccionMin,
+        conduccionDomingoMin: j.conduccionDomingoMin,
+        conduccionLunesMin: j.conduccionLunesMin,
+        paymentMode: j.paymentMode || "dietas",
+        kmInicio: j.kmInicio,
+        kmFin: j.kmFin,
+        kmTotal: j.kmTotal,
+        pricePerKm: j.pricePerKm,
+        importeKm: j.importeKm,
+        pricePerTrip: j.pricePerTrip,
+        importeViaje: j.importeViaje,
+        observaciones: j.observaciones,
+      },
+    );
+    const actual = Number(j.dietaImporteEur || 0);
+    const expectedAmount = Number(expected.dietaImporteEur || 0);
+    if (Math.abs(actual - expectedAmount) > 0.011) {
+      push({
+        id: `journey-rate-${j.id}`,
+        severity: "warning",
+        date: j.fechaInicio,
+        title: "Dieta automática desactualizada",
+        detail: `Guardado ${actual.toFixed(2)} € · recalculado ${expectedAmount.toFixed(2)} €.`,
+      });
+    }
+  }
+
+  issues.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  return {
+    from,
+    to,
+    checkedJourneys: periodJourneys.length,
+    checkedNaturalDays: natural.length,
+    issues,
+  };
+}
+
+export async function recalculatePeriodSafely(from: string, to: string): Promise<{
+  recalculatedJourneys: number;
+  autoAddedOutOfBaseDays: number;
+  manualArrivalDays: DetectedMissingNaturalDay[];
+}> {
+  let all = await getAllJornadas();
+  const { customRates, dayExtras, holidays } = await loadDietDerivationContext();
+  let recalculatedJourneys = 0;
+
+  // Recalcula solo jornadas cerradas con cálculo automático. Las dietas MANUAL
+  // y los pluses/observaciones del usuario se preservan.
+  const nextAll = all.map((j) => {
+    if (
+      !j.fechaFin ||
+      j.fechaInicio < from ||
+      j.fechaInicio > to ||
+      (j.paymentMode || "dietas") !== "dietas" ||
+      j.dietaModo === "MANUAL"
+    ) {
+      return j;
+    }
+
+    const derived = computeDerivedFields(
+      j,
+      all.filter((o) => o.id !== j.id),
+      {
+        fechaFin: j.fechaFin,
+        horaFin: j.horaFin || "00:00",
+        lugarFin: j.lugarFin || "",
+        tipoRuta: j.tipoRuta || "NINGUNO",
+        pernocta: !!j.pernocta,
+        dietaModo: j.dietaModo || "spain_diet",
+        dietaPercent: j.dietaPercent ?? undefined,
+        dayFlag: j.dayFlag || undefined,
+        customRates: customRates || undefined,
+        dayExtras,
+        holidays,
+        conduccionMin: j.conduccionMin,
+        conduccionDomingoMin: j.conduccionDomingoMin,
+        conduccionLunesMin: j.conduccionLunesMin,
+        paymentMode: j.paymentMode || "dietas",
+        kmInicio: j.kmInicio,
+        kmFin: j.kmFin,
+        kmTotal: j.kmTotal,
+        pricePerKm: j.pricePerKm,
+        importeKm: j.importeKm,
+        pricePerTrip: j.pricePerTrip,
+        importeViaje: j.importeViaje,
+        observaciones: j.observaciones,
+      },
+    );
+
+    recalculatedJourneys++;
+    return {
+      ...j,
+      ...derived,
+      plusItems: j.plusItems,
+      observaciones: j.observaciones,
+      isDoubleDriving: j.isDoubleDriving,
+      secondDriverName: j.secondDriverName,
+      syncStatus: "pending" as const,
+    };
+  });
+
+  if (recalculatedJourneys > 0) {
+    await saveAllJornadas(nextAll);
+    all = nextAll;
+  }
+
+  // Detecta días completos intermedios y los crea automáticamente. Los días de
+  // llegada a base siguen siendo manuales porque requieren elegir porcentaje.
+  const missing = await detectMissingOutOfBaseDietDays({ fromDate: from, toDate: to });
+  const autoDays = missing.filter((item) => item.isBaseArrivalDay !== true);
+  const manualArrivalDays = missing.filter((item) => item.isBaseArrivalDay === true);
+  const created = await autoConfirmOutOfBaseDietDays(autoDays);
+
+  return {
+    recalculatedJourneys,
+    autoAddedOutOfBaseDays: created.length,
+    manualArrivalDays,
+  };
+}
+
 export async function getResumenDietas(
   from: string,
   to: string,
