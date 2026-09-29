@@ -1236,10 +1236,20 @@ export function resolveNaturalDayDietFinancials(
       for (const j of jornadas) {
         if (!linkedIds.has(j.id)) continue;
         for (const p of j.plusItems || []) {
+          const concepto = String(p.concepto || "Plus").trim() || "Plus";
+          const normalizedConcept = concepto
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+          const isSecondDriverTraining =
+            normalizedConcept.includes("formacion") &&
+            (normalizedConcept.includes("seg") || normalizedConcept.includes("conductor"));
+          if (!isSecondDriverTraining) continue;
+
           const amount = Math.round((Number(p.importe) || 0) * 100) / 100;
           if (amount <= 0) continue;
           candidates.push({
-            concepto: String(p.concepto || "Plus").trim() || "Plus",
+            concepto,
             amount,
             id: `legacy_${nd.date}_${j.id}_${String(p.concepto || "plus")}`,
           });
