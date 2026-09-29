@@ -1750,8 +1750,7 @@ export default function HistorialScreen() {
     const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
     const base = dietaFull - dayExtra;
     return acc + (Number.isFinite(base) ? base : 0);
-  }, 0) +
-    (billingMode === "dietas" ? ((extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal) : 0);
+  }, 0) + (extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal;
 
   const totalBaseBilling = fallbackBaseBilling;
 
