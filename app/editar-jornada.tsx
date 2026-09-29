@@ -44,36 +44,12 @@ import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates, fetchHolidays } from "@/lib/user-cloud";
 
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
-const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
-const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
-const JORNADA_DATE_DEBUG_RUN = "pre-fix";
-
 function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  let timezone: string | null = null;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {}
-  fetch(JORNADA_DATE_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: JORNADA_DATE_DEBUG_SESSION,
-      runId: JORNADA_DATE_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
-      data: {
-        timezone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        platform: Platform.OS,
-        ...data,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 function parseConduccion(text: string): number | undefined {
   if (!text.trim()) return undefined;
   if (text.includes(":")) {
