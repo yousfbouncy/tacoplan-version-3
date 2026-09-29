@@ -4501,6 +4501,32 @@ export async function replaceImportedNaturalDayDiets(list: NaturalDayDietEntry[]
   await saveAllNaturalDayDiets(list);
 }
 
+export async function mergeNaturalDayDietsFromCloud(cloudEntries: NaturalDayDietEntry[]): Promise<void> {
+  const local = dedupeNaturalDayDietsByDate(await getAllNaturalDayDiets());
+  const byDate = new Map(local.map((entry) => [entry.date, entry] as const));
+
+  for (const incomingRaw of cloudEntries || []) {
+    if (!incomingRaw?.date) continue;
+    const incoming: NaturalDayDietEntry = { ...incomingRaw, syncStatus: "synced" };
+    const existing = byDate.get(incoming.date);
+
+    if (!existing) {
+      byDate.set(incoming.date, incoming);
+      continue;
+    }
+
+    const localIsPending = existing.syncStatus === "pending" || existing.syncStatus === "local";
+    const localUpdated = String(existing.updatedAt || existing.createdAt || "");
+    const cloudUpdated = String(incoming.updatedAt || incoming.createdAt || "");
+
+    // Nunca pisamos una edición local pendiente con una copia antigua de nube.
+    if (localIsPending && localUpdated >= cloudUpdated) continue;
+    byDate.set(incoming.date, incoming);
+  }
+
+  await saveAllNaturalDayDiets(Array.from(byDate.values()));
+}
+
 export async function markNaturalDayDietsSynced(ids?: string[]): Promise<void> {
   const all = await getAllNaturalDayDiets();
   const idSet = ids && ids.length > 0 ? new Set(ids) : null;
