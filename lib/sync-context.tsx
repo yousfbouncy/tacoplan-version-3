@@ -12,6 +12,8 @@ import {
   deleteFromCloud,
   queueDeleteDayExtraEntryForSync,
   deleteDayExtraEntryFromCloud,
+  queueDeleteNaturalDayDietForSync,
+  deleteNaturalDayDietFromCloud,
   getLastSyncTime,
   hasPendingData,
   isNewDevice,
@@ -50,6 +52,7 @@ interface SyncContextValue {
   triggerSync: () => void;
   triggerDeleteSync: (jornadaId: string) => void;
   triggerDeleteDayExtraEntrySync: (entryId: string) => void;
+  triggerDeleteNaturalDayDietSync: (entryId: string) => void;
   startRestore: () => void;
   dismissRecovery: () => void;
   dismissRestoreComplete: () => void;
@@ -180,6 +183,17 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated) return;
     await queueDeleteDayExtraEntryForSync(entryId);
     await deleteDayExtraEntryFromCloud(entryId, getAccessToken);
+    triggerSync();
+  }, [getAccessToken, isAuthenticated, triggerSync]);
+
+  const triggerDeleteNaturalDayDietSync = useCallback(async (entryId: string) => {
+    if (!isAuthenticated) return;
+    await queueDeleteNaturalDayDietForSync(entryId);
+    try {
+      await deleteNaturalDayDietFromCloud(entryId, getAccessToken);
+    } catch {
+      // La cola conserva el borrado y lo reintentará cuando haya conexión.
+    }
     triggerSync();
   }, [getAccessToken, isAuthenticated, triggerSync]);
 
@@ -351,12 +365,13 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     triggerSync,
     triggerDeleteSync,
     triggerDeleteDayExtraEntrySync,
+    triggerDeleteNaturalDayDietSync,
     startRestore,
     dismissRecovery,
     dismissRestoreComplete,
     dismissToast,
     refreshSyncInfo,
-  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, syncToast, triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
+  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, syncToast, triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, triggerDeleteNaturalDayDietSync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
 
   return React.createElement(SyncContext.Provider, { value }, children);
 }
