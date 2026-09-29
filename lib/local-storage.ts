@@ -4171,28 +4171,12 @@ export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensacion
       if (existing.ferryPending) {
         console.log("[mergeFromCloud] OVERWRITING ferry jornada id=", cj.id, "cloud.ferryPending=", cj.ferryPending, "cloud.ferryRestCompleted=", cj.ferryRestCompleted, "cloud.updatedAt=", cj.updatedAt, "local.updatedAt=", existing.updatedAt);
       }
+      // El registro más reciente de nube es autoritativo, incluido null/false.
+      // Usar "?? valorLocal" aquí resucitaba datos que el usuario ya había
+      // borrado en otro dispositivo (pluses, observaciones, ferry, descanso...).
       const merged: Jornada = {
         ...cj,
         syncStatus: "synced",
-        conduccionDomingoMin: cj.conduccionDomingoMin ?? existing.conduccionDomingoMin,
-        conduccionLunesMin: cj.conduccionLunesMin ?? existing.conduccionLunesMin,
-        // Si la nube es más reciente, null significa "el usuario lo borró".
-        // No debemos resucitar pluses eliminados desde otro dispositivo.
-        plusItems: cj.plusItems,
-        plannedRestMin: cj.plannedRestMin ?? existing.plannedRestMin,
-        plannedRestType: cj.plannedRestType ?? existing.plannedRestType,
-        legalSummary: cj.legalSummary ?? existing.legalSummary,
-        dietBaseEur: cj.dietBaseEur ?? existing.dietBaseEur,
-        dietRule: cj.dietRule ?? existing.dietRule,
-        dietCalculatedAt: cj.dietCalculatedAt ?? existing.dietCalculatedAt,
-        // Igual para observaciones: una limpieza remota debe propagarse.
-        observaciones: cj.observaciones,
-        ferryPending: cj.ferryPending != null ? cj.ferryPending : existing.ferryPending,
-        ferryRestType: cj.ferryRestType ?? existing.ferryRestType,
-        ferryDestination: cj.ferryDestination ?? existing.ferryDestination,
-        ferryExtras: cj.ferryExtras ?? existing.ferryExtras,
-        ferryInterruptions: cj.ferryInterruptions ?? existing.ferryInterruptions,
-        ferryRestCompleted: cj.ferryRestCompleted != null ? cj.ferryRestCompleted : existing.ferryRestCompleted,
       };
       jMap.set(cj.id, merged);
     }
