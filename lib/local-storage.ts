@@ -4503,11 +4503,22 @@ export async function replaceImportedNaturalDayDiets(list: NaturalDayDietEntry[]
 
 export async function mergeNaturalDayDietsFromCloud(cloudEntries: NaturalDayDietEntry[]): Promise<void> {
   const local = dedupeNaturalDayDietsByDate(await getAllNaturalDayDiets());
-  const byDate = new Map(local.map((entry) => [entry.date, entry] as const));
+  const cloudSafe = dedupeNaturalDayDietsByDate((cloudEntries || []).map((entry) => ({
+    ...entry,
+    syncStatus: "synced" as const,
+  })));
+  const cloudDates = new Set(cloudSafe.map((entry) => entry.date));
 
-  for (const incomingRaw of cloudEntries || []) {
-    if (!incomingRaw?.date) continue;
-    const incoming: NaturalDayDietEntry = { ...incomingRaw, syncStatus: "synced" };
+  // La nube es autoritativa para registros ya sincronizados. Si otro dispositivo
+  // eliminó uno, desaparece localmente; las ediciones pendientes nunca se podan.
+  const byDate = new Map<string, NaturalDayDietEntry>();
+  for (const entry of local) {
+    const pending = entry.syncStatus === "pending" || entry.syncStatus === "local";
+    if (pending || cloudDates.has(entry.date)) byDate.set(entry.date, entry);
+  }
+
+  for (const incoming of cloudSafe) {
+    if (!incoming?.date) continue;
     const existing = byDate.get(incoming.date);
 
     if (!existing) {
