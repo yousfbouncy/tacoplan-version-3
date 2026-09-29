@@ -1139,8 +1139,6 @@ export default function DashboardScreen() {
       const selectedPluses: PlusItemUi[] = Array.isArray(item.plusItems)
         ? item.plusItems.filter((pl) => pl.selected !== false)
         : [];
-      const plusTotal = selectedPluses.reduce((s, pl) => s + (Number(pl.amount) || 0), 0);
-
       let t: "INTERNACIONAL" | "NACIONAL" | "REGIONAL" = "NACIONAL";
       const rawType = item.type;
       if (rawType === "INTERNACIONAL" || rawType === "NACIONAL" || rawType === "REGIONAL") t = rawType;
@@ -1155,7 +1153,8 @@ export default function DashboardScreen() {
         date: String(date || ""),
         type: t,
         percentage: pct,
-        amount: (Number.isFinite(Number(amount)) ? Number(amount) : 0) + plusTotal,
+        // amount guarda SOLO la dieta base; los pluses viven exclusivamente en plusItems.
+        amount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
         location: typeof item?.location === "string" ? item.location : (item?.location ?? null),
         source: "NATURAL_DAY_OUT_OF_BASE" as const,
         previousJourneyId: typeof item?.previousJourneyId === "string" ? item.previousJourneyId : (item?.previousJourneyId ?? null),
@@ -1206,7 +1205,6 @@ export default function DashboardScreen() {
         const selectedPlusesUi: PlusItemUi[] = Array.isArray(anySrc.plusItems)
           ? anySrc.plusItems.filter((pl: any) => pl.selected !== false)
           : [];
-        const plusTotal = selectedPlusesUi.reduce((s: number, pl: any) => s + (Number(pl.amount) || 0), 0);
         const plusItemsForEntry: PlusItem[] = selectedPlusesUi.map((pl: any) => ({
           concepto: pl.concepto,
           importe: Number(pl.amount) || 0,
@@ -1216,7 +1214,8 @@ export default function DashboardScreen() {
           date: String(date || ""),
           type: t,
           percentage: pct,
-          amount: (Number.isFinite(Number(amount)) ? Number(amount) : 0) + plusTotal,
+          // amount guarda SOLO la dieta base; los pluses viven exclusivamente en plusItems.
+        amount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
           location: typeof src?.location === "string" ? src.location : (src?.location ?? null),
           source: "NATURAL_DAY_OUT_OF_BASE" as const,
           previousJourneyId: typeof src?.previousJourneyId === "string" ? src.previousJourneyId : (src?.previousJourneyId ?? null),
