@@ -11,10 +11,6 @@ const LAST_SYNC_KEY = "tacoplan_last_sync";
 const DEVICE_ID_KEY = "tacoplan_device_id";
 const DEVICE_ID_GLOBAL_KEY = "tacoplan_device_id_global";
 const SYNC_DEBOUNCE_MS = 2000;
-const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
-const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
-const JORNADA_DATE_DEBUG_RUN = "pre-fix";
-
 type SyncAction =
   | { type: "push"; timestamp: number }
   | { type: "delete"; jornadaId: string; timestamp: number }
@@ -24,31 +20,11 @@ type SyncAction =
 let onlineOverride: boolean | null = null;
 
 function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  let timezone: string | null = null;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {}
-  fetch(JORNADA_DATE_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: JORNADA_DATE_DEBUG_SESSION,
-      runId: JORNADA_DATE_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
-      data: {
-        timezone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        platform: Platform.OS,
-        ...data,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 export function setOnlineOverride(next: boolean | null): void {
   onlineOverride = next;
 }
