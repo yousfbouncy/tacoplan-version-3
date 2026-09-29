@@ -1259,7 +1259,7 @@ export default function ExportarScreen() {
 
   function buildKmHTML(
     jornadas: Jornada[],
-    resumen: { totalKm: number; totalImporte: number; desglose: Array<{ tipo: string; cantidad: number; total: number }>; extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> }; plus: { totalPlus: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> } },
+    resumen: { totalKm: number; totalImporte: number; desglose: Array<{ tipo: string; cantidad: number; total: number }>; dietas: { totalDietas: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> }; extras: { totalExtras: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> }; plus: { totalPlus: number; desglose: Array<{ tipo: string; cantidad: number; total: number }> } },
     desde: string,
     hasta: string,
     ferryExtrasSummary?: { totalTransitDiet: number; totalCabinOvernight: number; totalCountryChange: number; totalAmount: number; transitRate: number; cabinRate: number; count: number },
@@ -1285,7 +1285,9 @@ export default function ExportarScreen() {
       0,
     );
     const totalPlus = Math.round((totalPlusJornadasKm + totalPlusNaturalesKm) * 100) / 100;
-    const granTotal = Math.round((resumen.totalImporte + resumen.extras.totalExtras + totalPlus + ferryExtrasTotal + totalDietasNat) * 100) / 100;
+    const totalDietasKm = Math.round((Number(resumen.dietas?.totalDietas) || 0) * 100) / 100;
+    const totalOffsiteRestDietKm = Math.max(0, Math.round((totalDietasKm - totalDietasNat) * 100) / 100);
+    const granTotal = Math.round((resumen.totalImporte + resumen.extras.totalExtras + totalPlus + ferryExtrasTotal + totalDietasKm) * 100) / 100;
 
     const tipoLabel = (tipo: string) => {
       if (tipo === "NACIONAL") return t("common.nacional");
@@ -1382,6 +1384,10 @@ export default function ExportarScreen() {
           ${validNatDiets.length > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
             <span class="summary-label" style="color:#b45309;">Jornadas fuera de base</span>
             <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalDietasNat.toFixed(2)} \u20AC` : `${validNatDiets.length}`}</span>
+          </div>` : ""}
+          ${totalOffsiteRestDietKm > 0 ? `<div class="summary-box" style="border-color:#f59e0b;">
+            <span class="summary-label" style="color:#b45309;">Descanso semanal fuera de base</span>
+            <span class="summary-value" style="color:#b45309;">${showAmounts ? `${totalOffsiteRestDietKm.toFixed(2)} \u20AC` : "-"}</span>
           </div>` : ""}
           ${showPluses ? `<div class="summary-box">
             <span class="summary-label">${t("export.pdfPlus")}</span>
