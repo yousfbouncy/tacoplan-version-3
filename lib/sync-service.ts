@@ -293,10 +293,11 @@ function mapNaturalDayFromDb(row: any): NaturalDayDietEntry {
       if (Array.isArray(arr) && arr.length > 0) {
         plusItems = arr
           .filter((p: any) => p && String(p.concepto || "").trim().length > 0 && Number.isFinite(Number(p.amount)))
-          .map((p: any) => ({
+          .map((p: any, index: number) => ({
             concepto: String(p.concepto).trim().slice(0, 200),
             amount: Math.max(0, Math.min(99999, +Number(p.amount).toFixed(2))),
-            id: String(p.id || `${row.date}_${p.concepto}_${Math.random().toString(36).slice(2, 7)}`),
+            // ID estable para registros antiguos que no tenían id de plus.
+            id: String(p.id || `${row.date}_${String(p.concepto || "plus").trim()}_${index}`),
           }));
         if (plusItems.length === 0) plusItems = null;
       }
