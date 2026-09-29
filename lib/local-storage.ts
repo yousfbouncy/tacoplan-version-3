@@ -2988,9 +2988,10 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
         pernocta: !!j.pernocta,
         dietaModo: j.dietaModo || "spain_diet",
         dietaPercent: j.dietaPercent ?? undefined,
-        // El recálculo automático debe derivar de nuevo sábado/domingo/festivo
-        // a partir de la fecha, no conservar una marca potencialmente obsoleta.
-        dayFlag: undefined,
+        // Conserva la clasificación ya decidida al cerrar/editar la jornada.
+        // Un null puede ser un "NINGUNO" elegido por el usuario; no debemos
+        // convertirlo después en Domingo/Festivo y duplicar un plus manual.
+        dayFlag: j.dayFlag || "NINGUNO",
         customRates: customRates || undefined,
         dayExtras,
         holidays,
@@ -3064,7 +3065,7 @@ export async function recalculatePeriodSafely(from: string, to: string): Promise
         pernocta: !!j.pernocta,
         dietaModo: j.dietaModo || "spain_diet",
         dietaPercent: j.dietaPercent ?? undefined,
-        dayFlag: undefined,
+        dayFlag: j.dayFlag || "NINGUNO",
         customRates: customRates || undefined,
         dayExtras,
         holidays,
