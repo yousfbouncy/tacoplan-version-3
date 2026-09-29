@@ -578,10 +578,12 @@ function takeDetailRow(detailMap: Map<string, DietDetailRow[]>, isoDate: string,
 function inferDietPercent(
   routeTipo: "NACIONAL" | "INTERNACIONAL",
   dietAmount: number | null,
-  extraAmount: number | null,
+  _extraAmount: number | null,
 ): number | null {
   if (routeTipo === "INTERNACIONAL") return 100;
-  const base = dietAmount != null ? Math.round((dietAmount - (extraAmount || 0)) * 100) / 100 : null;
+  // La columna DIETA del informe ya contiene la dieta base. EXTRA y PLUS
+  // son columnas independientes, por lo que nunca se restan aquí.
+  const base = dietAmount != null ? Math.round(dietAmount * 100) / 100 : null;
   if (base == null) return null;
   if (Math.abs(base - 16.29) <= 0.02) return 30;
   if (Math.abs(base - 32.58) <= 0.02) return 60;
@@ -637,7 +639,11 @@ export function mapImportedJornadaToJornada(dto: ImportedJornadaDTO): Jornada {
     dietaModo: "AUTO",
     dietaManualTipo: null,
     dietaManualPct: null,
-    dietaImporteEur: formatAmount(dto.dietaTotalEur),
+    // Jornada mantiene por compatibilidad dietaImporteEur = base + extra del día.
+    // El PLUS se guarda exclusivamente en plusItems para no cobrarlo dos veces.
+    dietaImporteEur: formatAmount(
+      Math.round(((dto.dietaBaseEur || 0) + (dto.dayExtraEur || 0)) * 100) / 100,
+    ),
     dietasItems: dto.dietasItems,
     dietaPercent: dto.dietaPercent,
     dayFlag: dto.dayFlag,
@@ -910,13 +916,19 @@ function buildImportedJornadaDto(params: {
     throw new Error("El tipo de ruta importado no es válido");
   }
   const extraType = detail?.extraType || null;
-  const visibleDietAmount = detail?.dietAmount ?? null;
+  // En los informes actuales las columnas económicas son independientes:
+  // DIETA = base, EXTRA = domingo/festivo, PLUS = pluses y TOTAL = suma de las tres.
+  const baseAmount = detail?.dietAmount != null
+    ? Math.round(detail.dietAmount * 100) / 100
+    : null;
   const extraAmount = detail?.extraAmount != null && detail.extraAmount > MONEY_TOLERANCE ? detail.extraAmount : null;
   const plusAmount = detail?.plusAmount != null && detail.plusAmount > MONEY_TOLERANCE ? detail.plusAmount : null;
-  const baseAmount = visibleDietAmount != null
-    ? Math.round((visibleDietAmount - (extraAmount || 0)) * 100) / 100
-    : null;
-  const resolvedDietPercent = detail?.dietPercent ?? inferDietPercent(routeTipo, visibleDietAmount, extraAmount);
+  const visibleTotalAmount = detail?.totalAmount != null
+    ? Math.round(detail.totalAmount * 100) / 100
+    : baseAmount != null
+      ? Math.round((baseAmount + (extraAmount || 0) + (plusAmount || 0)) * 100) / 100
+      : null;
+  const resolvedDietPercent = detail?.dietPercent ?? inferDietPercent(routeTipo, baseAmount, extraAmount);
   const dietItemType = routeTipo === "INTERNACIONAL" ? "INTERNACIONAL" : routeTipo === "NACIONAL" ? "NACIONAL" : null;
   const dietasItems = baseAmount != null && resolvedDietPercent != null && dietItemType
     ? [{ tipo: dietItemType, pct: String(resolvedDietPercent), importe: baseAmount }]
@@ -933,7 +945,7 @@ function buildImportedJornadaDto(params: {
     tipoRuta: routeTipo,
     conduccionMin: parseMinutes(drivingText || "") ?? 0,
     duracionJornadaMin: parseMinutes(durationText || "") ?? 0,
-    dietaTotalEur: visibleDietAmount,
+    dietaTotalEur: visibleTotalAmount,
     dietaBaseEur: baseAmount,
     dietaPercent: resolvedDietPercent,
     dayFlag: extraType,
@@ -952,11 +964,11 @@ function buildImportedJornadaDto(params: {
     lugarInicioNormalizado: dto.lugarInicio,
     lugarFinOriginal: dto.rawLugarFin,
     lugarFinNormalizado: dto.lugarFin,
-    dietaExtraida: visibleDietAmount,
+    dietaExtraida: baseAmount,
     dietaBase: baseAmount,
     porcentaje: dto.dietaPercent,
     extra: extraAmount,
-    total: visibleDietAmount,
+    total: visibleTotalAmount,
     detalleTotalPagina2: detail?.totalAmount ?? null,
     dto,
   });
@@ -1115,7 +1127,13 @@ export function parseTacoplanReport(pdfText: string): TacoplanReportParseResult 
 
   const computedDrivingMin = jornadas.reduce((sum, row) => sum + (row.conduccionMin || 0), 0);
   const computedDurationMin = jornadas.reduce((sum, row) => sum + (row.duracionJornadaMin || 0), 0);
-  const computedDietas = Math.round(jornadas.reduce((sum, row) => sum + Number(row.dietaImporteEur || 0), 0) * 100) / 100;
+  const computedDietas = Math.round(
+    jornadas.reduce((sum, row) => {
+      const full = Number(row.dietaImporteEur || 0);
+      const extra = Number(row.dayExtraEur || 0);
+      return sum + Math.max(0, full - extra);
+    }, 0) * 100,
+  ) / 100;
   const computedExtras = Math.round(jornadas.reduce((sum, row) => sum + Number(row.dayExtraEur || 0), 0) * 100) / 100;
   const effectiveDietas = computedDietas > 0 ? computedDietas : summary.totalDietas;
   const effectiveExtras = computedExtras > 0 ? computedExtras : summary.totalExtras;
