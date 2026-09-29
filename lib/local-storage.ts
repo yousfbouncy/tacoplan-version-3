@@ -625,8 +625,25 @@ function getJornadaUtcStartDateStr(j: Jornada): string {
 async function getAllJornadas(): Promise<Jornada[]> {
   const raw = await getItemScoped(JORNADAS_KEY);
   if (!raw) return [];
-  const parsed = JSON.parse(raw);
-  return parsed.map(migrateJornada);
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const byId = new Map<string, Jornada>();
+    for (const value of parsed) {
+      if (!value) continue;
+      const jornada = migrateJornada(value);
+      if (!jornada.id) continue;
+      const current = byId.get(jornada.id);
+      if (!current || String(jornada.updatedAt || "") >= String(current.updatedAt || "")) {
+        byId.set(jornada.id, jornada);
+      }
+    }
+    // La lectura aplica la misma regla que el guardado para que un dato legado
+    // duplicado por id nunca llegue dos veces a Historial, totales o informes.
+    return Array.from(byId.values());
+  } catch {
+    return [];
+  }
 }
 
 function migrateJornada(j: any): Jornada {
