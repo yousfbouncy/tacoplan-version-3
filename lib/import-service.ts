@@ -895,6 +895,21 @@ export async function parseImportDocument(params: ParseImportParams): Promise<Pa
     return analyzeDuplicates(parsePayloadObject(payload, "json", params.fileName));
   }
 
+  // Los informes actuales contienen un backup estructurado TACOPLAN_DATA.
+  // Tiene prioridad sobre reconstruir la tabla visible: conserva IDs, pluses,
+  // jornadas fuera de base y registros especiales sin reinterpretarlos.
+  if (params.extractedPdfText?.includes(PDF_MARKER)) {
+    const embeddedCandidates = extractTacoplanBase64Candidates(params.extractedPdfText);
+    for (const base64 of embeddedCandidates) {
+      try {
+        const payload = tryParsePdfPayload(base64);
+        return analyzeDuplicates(parsePayloadObject(payload, "pdf", params.fileName));
+      } catch {
+        // Si el bloque está truncado, continuamos con el parser visible.
+      }
+    }
+  }
+
   if (params.extractedPdfText) {
     try {
       const visible = parseTacoplanReport(params.extractedPdfText);
