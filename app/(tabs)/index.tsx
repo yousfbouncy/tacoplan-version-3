@@ -114,40 +114,16 @@ import {
 
 const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
 const SUPPORT_WHATSAPP_URL = "https://wa.me/34656365216";
-const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
-const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
-const JORNADA_DATE_DEBUG_RUN = "pre-fix";
-
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
 
 const LOCALE_MAP: Record<string, string> = { es: "es-ES", en: "en-GB", ar: "ar-SA", fr: "fr-FR" };
 
 function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  let timezone: string | null = null;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {}
-  fetch(JORNADA_DATE_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: JORNADA_DATE_DEBUG_SESSION,
-      runId: JORNADA_DATE_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
-      data: {
-        timezone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        platform: Platform.OS,
-        ...data,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 function formatSyncTime(isoStr: string, t: (key: string) => string, locale: string = "es"): string {
   try {
     const d = new Date(isoStr);
