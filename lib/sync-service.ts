@@ -452,7 +452,14 @@ async function saveOfflineQueue(queue: SyncAction[]): Promise<void> {
 
 async function addToOfflineQueue(action: SyncAction): Promise<void> {
   const queue = await getOfflineQueue();
-  queue.push(action);
+  const sameAction = (existing: SyncAction): boolean => {
+    if (action.type === "push") return existing.type === "push";
+    if (action.type === "delete" && existing.type === "delete") return existing.jornadaId === action.jornadaId;
+    if (action.type === "delete_day_extra" && existing.type === "delete_day_extra") return existing.entryId === action.entryId;
+    if (action.type === "delete_natural_day" && existing.type === "delete_natural_day") return existing.entryId === action.entryId;
+    return false;
+  };
+  if (!queue.some(sameAction)) queue.push(action);
   await saveOfflineQueue(queue);
 }
 
@@ -1696,16 +1703,19 @@ export async function deleteFromCloud(
   getAccessToken: () => Promise<string | null>,
 ): Promise<void> {
   void getAccessToken;
-  try {
-    const auth = await getAuthenticatedUserOrThrow();
-    console.log("[SYNC] delete jornada in Supabase", { jornadaId, userId: auth.user.id });
-    const { error: cErr } = await supabase.from("compensaciones").delete().eq("jornada_id", jornadaId);
-    if (cErr) throw cErr;
-    const { error: jErr } = await supabase.from("jornadas").delete().eq("id", jornadaId);
-    if (jErr) throw jErr;
-  } catch (e) {
-    console.log("[SYNC] deleteFromCloud failed", e);
-  }
+  const auth = await getAuthenticatedUserOrThrow();
+  const { error: cErr } = await supabase
+    .from("compensaciones")
+    .delete()
+    .eq("jornada_id", jornadaId)
+    .eq("user_id", auth.user.id);
+  if (cErr) throw cErr;
+  const { error: jErr } = await supabase
+    .from("jornadas")
+    .delete()
+    .eq("id", jornadaId)
+    .eq("user_id", auth.user.id);
+  if (jErr) throw jErr;
 }
 
 export async function deleteNaturalDayDietFromCloud(
@@ -1727,14 +1737,13 @@ export async function deleteDayExtraEntryFromCloud(
   getAccessToken: () => Promise<string | null>,
 ): Promise<void> {
   void getAccessToken;
-  try {
-    const auth = await getAuthenticatedUserOrThrow();
-    console.log("[SYNC] delete day extra entry in Supabase", { entryId, userId: auth.user.id });
-    const { error } = await supabase.from("user_day_extra_entries").delete().eq("id", entryId);
-    if (error) throw error;
-  } catch (e) {
-    console.log("[SYNC] deleteDayExtraEntryFromCloud failed", e);
-  }
+  const auth = await getAuthenticatedUserOrThrow();
+  const { error } = await supabase
+    .from("user_day_extra_entries")
+    .delete()
+    .eq("id", entryId)
+    .eq("user_id", auth.user.id);
+  if (error) throw error;
 }
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
