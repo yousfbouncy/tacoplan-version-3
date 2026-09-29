@@ -720,6 +720,7 @@ export default function ExportarScreen() {
       validNatDiets.map((n) => [n.id, resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg)]),
     );
     const totalDietaJornadas = jornadas.reduce((s, j) => {
+      if ((j.paymentMode || "dietas") !== "dietas") return s;
       const full = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
       const extra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
       const base = (Number.isFinite(full) ? full : 0) - (Number.isFinite(extra) ? extra : 0);
@@ -775,7 +776,10 @@ export default function ExportarScreen() {
       0,
     );
     const totalPlus = Math.round((totalPlusJornadas + totalPlusNaturales) * 100) / 100;
-    const totalDietCountJornadas = jornadas.reduce((s, j) => s + (j.dietaImporteEur && parseFloat(j.dietaImporteEur) > 0 ? 1 : 0), 0);
+    const totalDietCountJornadas = jornadas.reduce(
+      (s, j) => s + ((j.paymentMode || "dietas") === "dietas" && j.dietaImporteEur && parseFloat(j.dietaImporteEur) > 0 ? 1 : 0),
+      0,
+    );
     const totalDietCount = totalDietCountJornadas + validNatDiets.length;
     const totalExtraCountJornadas = jornadas.reduce((s, j) => s + (j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0 ? 1 : 0), 0);
     const totalExtraCount = totalExtraCountJornadas + totalExtraDaysCount;
