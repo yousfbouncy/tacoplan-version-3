@@ -15,55 +15,18 @@ const ACTIVE_FERRY_REST_KEY = "tacoplan_active_ferry_rest";
 const DAY_EXTRA_ENTRIES_KEY = "tacoplan_day_extra_entries";
 const NATURAL_DAY_DIETS_KEY = "tacoplan_natural_day_diets";
 const NATURAL_DAY_DIETS_DISMISSED_KEY = "tacoplan_natural_day_diets_dismissed";
-const PDF_DIETS_DEBUG_URL = "http://127.0.0.1:7777/event";
-const PDF_DIETS_DEBUG_SESSION = "pdf-diets-not-saved";
-const PDF_DIETS_DEBUG_RUN = "pre-fix";
-const JORNADA_DATE_DEBUG_URL = "http://127.0.0.1:7777/event";
-const JORNADA_DATE_DEBUG_SESSION = "jornada-date-drift";
-const JORNADA_DATE_DEBUG_RUN = "pre-fix";
-
 function reportPdfDietDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  fetch(PDF_DIETS_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: PDF_DIETS_DEBUG_SESSION,
-      runId: PDF_DIETS_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[DEBUG] ${msg}`,
-      data,
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 function reportJornadaDateDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>): void {
-  if (typeof fetch !== "function") return;
-  let timezone: string | null = null;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {}
-  fetch(JORNADA_DATE_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: JORNADA_DATE_DEBUG_SESSION,
-      runId: JORNADA_DATE_DEBUG_RUN,
-      hypothesisId,
-      location,
-      msg: `[JORNADA_DATE_DEBUG] ${msg}`,
-      data: {
-        timezone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        ...data,
-      },
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+  void hypothesisId;
+  void location;
+  void msg;
+  void data;
 }
-
 async function getItemScoped(base: string): Promise<string | null> {
   return AsyncStorage.getItem(await userScopedKey(base));
 }
