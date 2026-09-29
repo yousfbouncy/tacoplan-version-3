@@ -749,17 +749,25 @@ export default function ExportarScreen() {
     }, 0);
     const totalExtrasHistorialJornadas = jornadas.reduce((s, j) => s + (j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0), 0);
     let totalExtrasExtraDays = 0;
+    let totalOffsiteRestDiet = 0;
     let totalExtraDaysCount = 0;
     for (const e of extraDaysInRange) {
-      const amt =
-        e.amount != null
-          ? Number(e.amount)
-          : (e.entryType === "day_extra" && e.dayFlag ? calcDayExtra(e.dayFlag, dayExtrasCfg) : 0);
+      if (e.entryType === "offsite_weekly_rest") {
+        const split = splitOffsiteWeeklyRestEntry(e, dayExtrasCfg);
+        totalOffsiteRestDiet += Number(split.restAmount) || 0;
+        totalExtrasExtraDays += Number(split.plusAmount) || 0;
+        if ((Number(split.restAmount) || 0) > 0 || (Number(split.plusAmount) || 0) > 0) totalExtraDaysCount += 1;
+        continue;
+      }
+      const amt = e.amount != null
+        ? Number(e.amount)
+        : (e.entryType === "day_extra" && e.dayFlag ? calcDayExtra(e.dayFlag, dayExtrasCfg) : 0);
       if (Number.isFinite(amt) && amt > 0) {
         totalExtrasExtraDays += amt;
         totalExtraDaysCount += 1;
       }
     }
+    totalOffsiteRestDiet = Math.round(totalOffsiteRestDiet * 100) / 100;
     const totalExtrasHistorial = Math.round((totalExtrasHistorialJornadas + totalExtrasExtraDays) * 100) / 100;
     const totalPlusJornadas = jornadas.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
     const totalPlusNaturales = validNatDiets.reduce(
@@ -939,11 +947,18 @@ export default function ExportarScreen() {
 
     for (const e of extraDaysInRange) {
       const ts = new Date(`${e.date}T12:00:00`).getTime();
-      const amount =
-        e.amount != null
-          ? Number(e.amount)
-          : (e.entryType === "day_extra" && e.dayFlag ? calcDayExtra(e.dayFlag, dayExtrasCfg) : 0);
-      const amountCell = opts.showAmounts ? (Number.isFinite(amount) && amount > 0 ? `${amount.toFixed(2)} \u20AC` : "-") : "1";
+      const offsiteSplit = e.entryType === "offsite_weekly_rest"
+        ? splitOffsiteWeeklyRestEntry(e, dayExtrasCfg)
+        : null;
+      const regularExtra = e.entryType === "day_extra"
+        ? (e.amount != null ? Number(e.amount) : (e.dayFlag ? calcDayExtra(e.dayFlag, dayExtrasCfg) : 0))
+        : 0;
+      const restBase = offsiteSplit ? (Number(offsiteSplit.restAmount) || 0) : 0;
+      const extraAmount = offsiteSplit ? (Number(offsiteSplit.plusAmount) || 0) : (Number.isFinite(regularExtra) ? regularExtra : 0);
+      const billingAmount = e.entryType === "offsite_weekly_rest" && billingMode === "dietas" ? restBase : 0;
+      const amountCell = opts.showAmounts
+        ? (billingAmount > 0 ? `${billingAmount.toFixed(2)} \u20AC` : "-")
+        : (billingAmount > 0 ? "1" : "-");
       const extraLabel = (() => {
         if (e.entryType === "offsite_weekly_rest") return t("dietas.offsiteWeeklyRestHistorialTitle");
         if (e.dayFlag) return dayFlagLabelI18n(e.dayFlag);
@@ -959,6 +974,9 @@ export default function ExportarScreen() {
       const extraCell = [extraLabel, detailParts.length > 0 ? `(${detailParts.join(" \u00b7 ")})` : ""].filter(Boolean).join(" ");
       const obsText = e.note ? e.note.substring(0, 30) : "-";
       const extraCellSafe = escapeHtml(extraCell);
+      const extraAmountCell = opts.showAmounts
+        ? (extraAmount > 0 ? `${extraAmount.toFixed(2)} \u20AC` : "-")
+        : (extraAmount > 0 ? "1" : "-");
       const obsSafe = escapeHtml(obsText);
       combinedRows.push({ ts, html: `<tr style="background: ${Colors.light.tint}10;">
         <td>\u{1F6CC} ${formatFecha(e.date)}</td>
@@ -969,7 +987,7 @@ export default function ExportarScreen() {
         <td class="num">-</td>
         <td class="num">-</td>
         <td class="num">${amountCell}</td>
-        <td>${extraCellSafe}</td>
+        <td>${extraCellSafe}${extraAmountCell !== "-" ? ` · ${extraAmountCell}` : ""}</td>
         ${opts.showPluses ? `<td class="num">-</td>` : ""}
         <td>${obsSafe}</td>
       </tr>` });
@@ -1026,7 +1044,11 @@ export default function ExportarScreen() {
         ? t("export.pdfTripAmount")
         : t("export.pdfDiet");
 
-    const totalBilling = billingMode === "km" ? totalKmImporte : billingMode === "viaje" ? totalViajeImporte : totalDieta;
+    const totalBilling = billingMode === "km"
+      ? totalKmImporte
+      : billingMode === "viaje"
+        ? totalViajeImporte
+        : (totalDieta + totalOffsiteRestDiet);
     const totalBillingNoAmount = billingMode === "km" ? `${Math.round(totalKm)} km` : billingMode === "viaje" ? `${totalViajeCount}` : `${totalDietCount}`;
 
     const totalRow = `<tr style="font-weight: bold; background: #f0f0f0;">
