@@ -731,16 +731,19 @@ export default function ExportarScreen() {
     );
     const totalDieta = Math.round((totalDietaJornadas + totalDietaNat) * 100) / 100;
     const totalKm = jornadas.reduce((s, j) => {
+      if (j.paymentMode !== "km") return s;
       const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
       return s + (Number.isFinite(km) ? km : 0);
     }, 0);
     const totalKmImporte = jornadas.reduce((s, j) => {
+      if (j.paymentMode !== "km") return s;
       const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
       const kmSafe = Number.isFinite(km) ? km : 0;
       const imp = j.importeKm != null ? j.importeKm : (j.pricePerKm != null ? kmSafe * j.pricePerKm : 0);
       return s + (Number.isFinite(imp) ? imp : 0);
     }, 0);
     const totalViajeImporte = jornadas.reduce((s, j) => {
+      if (j.paymentMode !== "viaje") return s;
       const imp = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
       return s + (Number.isFinite(imp) ? imp : 0);
     }, 0);
@@ -772,6 +775,7 @@ export default function ExportarScreen() {
       jornadas.reduce((s, j) => s + ((j.plusItems || []).length > 0 ? 1 : 0), 0) +
       validNatDiets.reduce((s, n) => s + ((naturalFinancials.get(n.id)?.plusItems.length || 0) > 0 ? 1 : 0), 0);
     const totalViajeCount = jornadas.reduce((s, j) => {
+      if (j.paymentMode !== "viaje") return s;
       const imp = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
       return s + (Number.isFinite(imp) && imp > 0 ? 1 : 0);
     }, 0);
@@ -827,12 +831,16 @@ export default function ExportarScreen() {
         const secondDriver = isDouble ? ((j as any).secondDriverName || null) : null;
 
         const billingCell = (() => {
+          const rowPaymentMode = j.paymentMode || "dietas";
           if (billingMode === "km") {
+            if (rowPaymentMode !== "km") return "-";
             return opts.showAmounts ? (Number.isFinite(kmImporte) && kmImporte > 0 ? `${kmImporte.toFixed(2)} \u20AC` : "-") : `${Math.round(kmSafe)} km`;
           }
           if (billingMode === "viaje") {
+            if (rowPaymentMode !== "viaje") return "-";
             return opts.showAmounts ? (Number.isFinite(viajeImporte) && viajeImporte > 0 ? `${viajeImporte.toFixed(2)} \u20AC` : "-") : (Number.isFinite(viajeImporte) && viajeImporte > 0 ? "1" : "-");
           }
+          if (rowPaymentMode !== "dietas") return "-";
           if (!opts.showAmounts) return buildDietLabel(j);
           const full = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
           const extraInDiet = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
@@ -847,7 +855,7 @@ export default function ExportarScreen() {
         if (j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0) {
           extraParts.push(opts.showAmounts ? `${dayFlagLabelI18n(j.dayFlag)} +${j.dayExtraEur}\u20AC` : `${dayFlagLabelI18n(j.dayFlag)}`);
         }
-        if (billingMode === "km") {
+        if (billingMode === "km" && j.paymentMode === "km") {
           if (opts.showAmounts) {
             const p = j.pricePerKm != null && Number.isFinite(j.pricePerKm) ? j.pricePerKm : null;
             extraParts.push(`${Math.round(kmSafe)} km${p != null ? ` \u00b7 ${p.toFixed(2)} \u20AC/km` : ""}`);
@@ -1244,9 +1252,7 @@ export default function ExportarScreen() {
       0,
     );
 
-    const jornadasKm = jornadas.filter((j) =>
-      j.kmTotal != null || (j.kmInicio != null && j.kmFin != null)
-    );
+    const jornadasKm = jornadas.filter((j) => j.paymentMode === "km");
     const totalPlusJornadasKm = jornadasKm.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
     const totalPlusNaturalesKm = validNatDiets.reduce(
       (s, n) => s + (naturalFinancialsKm.get(n.id)?.plusTotal || 0),
@@ -1433,9 +1439,7 @@ export default function ExportarScreen() {
       0,
     );
 
-    const jornadasViaje = jornadas.filter((j) =>
-      j.importeViaje != null || j.pricePerTrip != null
-    );
+    const jornadasViaje = jornadas.filter((j) => j.paymentMode === "viaje");
     const totalViajes = jornadasViaje.reduce((s, j) => {
       const imp = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
       return s + (Number.isFinite(imp) ? imp : 0);
