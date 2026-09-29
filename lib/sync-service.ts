@@ -132,6 +132,22 @@ async function getColumnSet(table: string): Promise<Set<string>> {
   } catch {
     const cols = new Set<string>();
     cols.add("id");
+    if (table === "user_natural_day_diets") {
+      [
+        "user_id", "date", "type", "percentage", "amount", "location", "source",
+        "previous_journey_id", "next_journey_id", "confirmed_by_user",
+        "dismissed_at", "created_at", "updated_at", "pluses_json",
+        "is_domingo", "is_festivo",
+      ].forEach((name) => cols.add(name));
+    }
+    if (table === "user_day_extras") {
+      [
+        "user_id", "extra_saturday", "extra_sunday", "extra_holiday",
+        "offsite_weekly_reduced_nacional", "offsite_weekly_reduced_internacional",
+        "offsite_weekly_complete_nacional", "offsite_weekly_complete_internacional",
+        "updated_at",
+      ].forEach((name) => cols.add(name));
+    }
     columnsCache.set(table, cols);
     return cols;
   }
