@@ -49,6 +49,9 @@ import {
   calcDayExtra,
   findRate,
   resolveNaturalDayDietFinancials,
+  auditPeriodConsistency,
+  recalculatePeriodSafely,
+  type PeriodAuditResult,
   type UserDietRate,
   type UserDayExtras,
   type DayExtraEntry,
@@ -1130,6 +1133,14 @@ export default function HistorialScreen() {
   const [nddEditItem, setNddEditItem] = useState<NaturalDayDietEntry | null>(null);
   const [nddEditVisible, setNddEditVisible] = useState(false);
 
+  // Herramientas de revisión del periodo
+  const [periodAudit, setPeriodAudit] = useState<PeriodAuditResult | null>(null);
+  const [auditVisible, setAuditVisible] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [calendarCursor, setCalendarCursor] = useState(() => new Date());
+
   const periodo = useMemo(() => {
     return getPeriod(periodoIdx);
   }, [periodoIdx, getPeriod]);
@@ -1817,6 +1828,119 @@ export default function HistorialScreen() {
     }, 0) +
     (extraDaysSplit.totalExtras || 0) +
     naturalDayPlusesTotal;
+
+  const runPeriodAudit = useCallback(async () => {
+    if (auditLoading) return;
+    setAuditLoading(true);
+    try {
+      const result = await auditPeriodConsistency(periodo.from, periodo.to);
+      setPeriodAudit(result);
+      setAuditVisible(true);
+    } catch (e: any) {
+      Alert.alert(t("common.error"), e?.message || "No se pudo revisar el periodo.");
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditLoading, periodo.from, periodo.to, t]);
+
+  const doRecalculatePeriod = useCallback(async () => {
+    if (recalcLoading) return;
+    setRecalcLoading(true);
+    try {
+      const result = await recalculatePeriodSafely(periodo.from, periodo.to);
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["jornadas"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+        qc.refetchQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
+      ]);
+      await refreshNaturalDayDiets();
+      triggerSync();
+
+      if (result.manualArrivalDays.length > 0) {
+        setPendingDiets(result.manualArrivalDays);
+        setPendingDietsVisible(true);
+      }
+
+      const msg =
+        `${result.recalculatedJourneys} jornadas recalculadas · ${result.autoAddedOutOfBaseDays} jornadas fuera de base añadidas` +
+        (result.manualArrivalDays.length > 0
+          ? ` · ${result.manualArrivalDays.length} llegada(s) a base requieren revisión manual`
+          : "");
+      Alert.alert("Periodo recalculado", msg);
+    } catch (e: any) {
+      Alert.alert(t("common.error"), e?.message || "No se pudo recalcular el periodo.");
+    } finally {
+      setRecalcLoading(false);
+    }
+  }, [periodo.from, periodo.to, qc, recalcLoading, refreshNaturalDayDiets, t, triggerSync]);
+
+  const confirmRecalculatePeriod = useCallback(() => {
+    const run = () => doRecalculatePeriod();
+    const message =
+      "Se recalcularán las jornadas automáticas, domingos/festivos y días fuera de base. Las dietas manuales, pluses y observaciones se conservarán.";
+    if (Platform.OS === "web") {
+      if ((window as any).confirm?.(message)) run();
+      return;
+    }
+    Alert.alert("Recalcular periodo", message, [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Recalcular", onPress: run },
+    ]);
+  }, [doRecalculatePeriod]);
+
+  const openCalendar = useCallback(() => {
+    const base = new Date(`${periodo.to}T12:00:00`);
+    setCalendarCursor(Number.isNaN(base.getTime()) ? new Date() : base);
+    setCalendarVisible(true);
+  }, [periodo.to]);
+
+  const calendarData = useMemo(() => {
+    const year = calendarCursor.getFullYear();
+    const month = calendarCursor.getMonth();
+    const first = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leading = (first.getDay() + 6) % 7; // lunes=0
+    const cells: Array<{
+      key: string;
+      day: number | null;
+      date: string | null;
+      journey: Jornada | null;
+      natural: NaturalDayDietEntry | null;
+      plusCount: number;
+    }> = [];
+
+    for (let i = 0; i < leading; i++) {
+      cells.push({ key: `blank-${i}`, day: null, date: null, journey: null, natural: null, plusCount: 0 });
+    }
+
+    const pad = (v: number) => String(v).padStart(2, "0");
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${year}-${pad(month + 1)}-${pad(day)}`;
+      const dayJourneys = jornadasData.filter((j) => j.fechaInicio === date);
+      const journey = dayJourneys.find((j) =>
+        j.tipoRuta === "INTERNACIONAL" || j.tipoRuta === "REGIONAL_INTL" || j.tipoRuta === "NAC_INTL"
+      ) || dayJourneys[0] || null;
+      const natural = naturalDayDiets.find(
+        (n) => n.date === date && n.confirmedByUser && !n.dismissedAt
+      ) || null;
+      const plusCount =
+        dayJourneys.reduce((sum, j) => sum + (Array.isArray(j.plusItems) ? j.plusItems.length : 0), 0) +
+        (natural?.plusItems?.length || 0);
+      cells.push({ key: date, day, date, journey, natural, plusCount });
+    }
+
+    while (cells.length % 7 !== 0) {
+      cells.push({ key: `tail-${cells.length}`, day: null, date: null, journey: null, natural: null, plusCount: 0 });
+    }
+
+    return {
+      title: calendarCursor.toLocaleDateString("es-ES", { month: "long", year: "numeric" }),
+      cells,
+    };
+  }, [calendarCursor, jornadasData, naturalDayDiets]);
+
   const totalFerryExtras = useMemo(() => {
     let total = 0;
     const linkedJornadaIds = new Set<string>();
@@ -1940,6 +2064,159 @@ export default function HistorialScreen() {
           />
         </Pressable>
       </View>
+
+      <View style={styles.periodToolsRow}>
+        <Pressable
+          onPress={runPeriodAudit}
+          disabled={auditLoading}
+          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
+        >
+          {auditLoading ? (
+            <ActivityIndicator size="small" color={Colors.light.tint} />
+          ) : (
+            <Ionicons name="shield-checkmark-outline" size={17} color={Colors.light.tint} />
+          )}
+          <Text style={styles.periodToolText}>Revisar</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={confirmRecalculatePeriod}
+          disabled={recalcLoading}
+          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
+        >
+          {recalcLoading ? (
+            <ActivityIndicator size="small" color={Colors.light.tint} />
+          ) : (
+            <Ionicons name="calculator-outline" size={17} color={Colors.light.tint} />
+          )}
+          <Text style={styles.periodToolText}>Recalcular</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={openCalendar}
+          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
+        >
+          <Ionicons name="calendar-outline" size={17} color={Colors.light.tint} />
+          <Text style={styles.periodToolText}>Calendario</Text>
+        </Pressable>
+      </View>
+
+      <Modal visible={auditVisible} transparent animationType="fade" onRequestClose={() => setAuditVisible(false)}>
+        <View style={styles.toolsModalOverlay}>
+          <View style={styles.toolsModalCard}>
+            <View style={styles.toolsModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toolsModalTitle}>Revisión del periodo</Text>
+                {periodAudit ? (
+                  <Text style={styles.toolsModalSubtitle}>
+                    {periodAudit.checkedJourneys} jornadas · {periodAudit.checkedNaturalDays} fuera de base
+                  </Text>
+                ) : null}
+              </View>
+              <Pressable onPress={() => setAuditVisible(false)} hitSlop={10}>
+                <Ionicons name="close" size={22} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ gap: 9, paddingBottom: 8 }}>
+              {periodAudit && periodAudit.issues.length === 0 ? (
+                <View style={styles.auditOk}>
+                  <Ionicons name="checkmark-circle" size={22} color={Colors.light.success} />
+                  <Text style={styles.auditOkText}>No se han detectado incoherencias en este periodo.</Text>
+                </View>
+              ) : (
+                periodAudit?.issues.map((issue) => (
+                  <View key={issue.id} style={styles.auditIssue}>
+                    <Ionicons
+                      name={issue.severity === "error" ? "alert-circle" : "warning-outline"}
+                      size={18}
+                      color={issue.severity === "error" ? Colors.light.danger : Colors.light.warning}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.auditIssueTitle}>
+                        {issue.date ? `${issue.date.split("-").reverse().join("/")} · ` : ""}{issue.title}
+                      </Text>
+                      <Text style={styles.auditIssueDetail}>{issue.detail}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <Pressable
+              onPress={() => {
+                setAuditVisible(false);
+                confirmRecalculatePeriod();
+              }}
+              style={({ pressed }) => [styles.toolsPrimaryBtn, pressed && { opacity: 0.86 }]}
+            >
+              <Ionicons name="calculator-outline" size={18} color="#fff" />
+              <Text style={styles.toolsPrimaryBtnText}>Recalcular periodo</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={calendarVisible} transparent animationType="fade" onRequestClose={() => setCalendarVisible(false)}>
+        <View style={styles.toolsModalOverlay}>
+          <View style={[styles.toolsModalCard, { maxWidth: 560 }]}>
+            <View style={styles.toolsModalHeader}>
+              <Pressable
+                onPress={() => setCalendarCursor((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                hitSlop={10}
+              >
+                <Ionicons name="chevron-back" size={24} color={Colors.light.tint} />
+              </Pressable>
+              <Text style={[styles.toolsModalTitle, { flex: 1, textAlign: "center", textTransform: "capitalize" }]}>
+                {calendarData.title}
+              </Text>
+              <Pressable
+                onPress={() => setCalendarCursor((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                hitSlop={10}
+              >
+                <Ionicons name="chevron-forward" size={24} color={Colors.light.tint} />
+              </Pressable>
+              <Pressable onPress={() => setCalendarVisible(false)} hitSlop={10} style={{ marginLeft: 8 }}>
+                <Ionicons name="close" size={22} color={Colors.light.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.calendarWeekRow}>
+              {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
+                <Text key={d} style={styles.calendarWeekText}>{d}</Text>
+              ))}
+            </View>
+            <View style={styles.calendarGrid}>
+              {calendarData.cells.map((cell) => {
+                if (!cell.day || !cell.date) {
+                  return <View key={cell.key} style={styles.calendarCell} />;
+                }
+                const natural = !!cell.natural;
+                const route = cell.journey?.tipoRuta || "";
+                const label = natural
+                  ? "FUERA"
+                  : route === "INTERNACIONAL" || route === "REGIONAL_INTL" || route === "NAC_INTL"
+                    ? "INT"
+                    : route === "REGIONAL"
+                      ? "REG"
+                      : cell.journey
+                        ? "NAC"
+                        : "";
+                return (
+                  <View key={cell.key} style={[styles.calendarCell, (cell.journey || natural) && styles.calendarCellActive]}>
+                    <Text style={styles.calendarDay}>{cell.day}</Text>
+                    {label ? <Text style={[styles.calendarTag, natural && { color: Colors.light.warning }]}>{label}</Text> : null}
+                    {cell.plusCount > 0 ? (
+                      <Text style={styles.calendarPlus}>+{cell.plusCount}</Text>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={styles.calendarLegend}>INT internacional · NAC nacional · REG regional · FUERA jornada fuera de base · +N pluses</Text>
+          </View>
+        </View>
+      </Modal>
 
       {(jornadasData.length > 0 || ferryRests.length > 0) && (
         <View style={styles.summaryRow}>
@@ -3133,6 +3410,159 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.text,
     minWidth: 130,
+    textAlign: "center" as const,
+  },
+  periodToolsRow: {
+    flexDirection: "row" as const,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  periodToolBtn: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    backgroundColor: Colors.light.surface,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  periodToolText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.tint,
+  },
+  toolsModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.42)",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    padding: 18,
+  },
+  toolsModalCard: {
+    width: "100%",
+    maxWidth: 620,
+    maxHeight: "88%",
+    backgroundColor: Colors.light.surface,
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+  },
+  toolsModalHeader: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+  },
+  toolsModalTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+  },
+  toolsModalSubtitle: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    marginTop: 2,
+  },
+  auditOk: {
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: "#ECFDF5",
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 9,
+  },
+  auditOkText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.success,
+  },
+  auditIssue: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    padding: 12,
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    gap: 9,
+  },
+  auditIssueTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  auditIssueDetail: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  toolsPrimaryBtn: {
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.light.tint,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 7,
+  },
+  toolsPrimaryBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+  },
+  calendarWeekRow: {
+    flexDirection: "row" as const,
+  },
+  calendarWeekText: {
+    width: "14.2857%",
+    textAlign: "center" as const,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.textSecondary,
+  },
+  calendarGrid: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+  },
+  calendarCell: {
+    width: "14.2857%",
+    minHeight: 58,
+    padding: 4,
+    borderRadius: 8,
+    alignItems: "center" as const,
+    justifyContent: "flex-start" as const,
+  },
+  calendarCellActive: {
+    backgroundColor: Colors.light.background,
+  },
+  calendarDay: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  calendarTag: {
+    marginTop: 3,
+    fontSize: 9,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.tint,
+  },
+  calendarPlus: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.accent,
+  },
+  calendarLegend: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
     textAlign: "center" as const,
   },
   summaryRow: {
