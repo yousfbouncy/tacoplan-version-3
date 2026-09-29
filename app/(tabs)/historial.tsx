@@ -1105,7 +1105,7 @@ export default function HistorialScreen() {
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const qc = useQueryClient();
-  const { triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, syncVersion } = useSync();
+  const { triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, triggerDeleteNaturalDayDietSync, syncVersion } = useSync();
   const { getPeriod } = usePeriod();
   const { user } = useAuth();
   const [periodoIdx, setPeriodoIdx] = useState(0);
@@ -2540,6 +2540,7 @@ export default function HistorialScreen() {
                         onPress={() => {
                           const doDelete = async () => {
                             await deleteNaturalDayDiet(ndd.id);
+                            triggerDeleteNaturalDayDietSync(ndd.id);
                             qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
                             qc.invalidateQueries({ queryKey: ["km-resumen"] });
                             qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
