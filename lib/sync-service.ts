@@ -350,8 +350,7 @@ function mapNaturalDayFromDb(row: any): NaturalDayDietEntry {
 }
 
 async function applyNaturalDayDietsLocally(list: any[]): Promise<void> {
-  if (!list || list.length === 0) return;
-  await LS.mergeNaturalDayDietsFromCloud(list as any);
+  await LS.mergeNaturalDayDietsFromCloud((list || []) as any);
 }
 
 async function pullCloudAll(user: User): Promise<CloudPayload> {
@@ -1606,9 +1605,7 @@ export async function syncAll(
       await mergeFromCloud(cloudJ, cloudC, cloudE);
     }
 
-    if (cloudN.length > 0) {
-      await applyNaturalDayDietsLocally(cloudN);
-    }
+    await applyNaturalDayDietsLocally(cloudN);
 
     merged = Math.max(0, pulled - pushed);
 
@@ -1846,9 +1843,7 @@ export async function restoreFromCloud(
       await mergeFromCloud(cloudJornadas, cloudCompensaciones, cloudDayExtraEntries);
     }
 
-    if (cloudNaturalDayDiets.length > 0) {
-      await applyNaturalDayDietsLocally(cloudNaturalDayDiets);
-    }
+    await applyNaturalDayDietsLocally(cloudNaturalDayDiets);
 
     await markAllSynced();
     await saveLastSyncTime();
