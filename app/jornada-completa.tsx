@@ -23,8 +23,6 @@ import {
   addRecentPlace,
   loadDietDerivationContext,
   type PlusItem,
-  type UserDietRate,
-  type UserDayExtras,
 } from "@/lib/local-storage";
 import { useSync } from "@/lib/sync-context";
 import { useI18n } from "@/lib/i18n-context";
@@ -157,17 +155,6 @@ export default function JornadaCompletaScreen() {
   const [plusItems, setPlusItems] = useState<PlusItem[]>([]);
   const [plusConcepto, setPlusConcepto] = useState("");
   const [plusImporte, setPlusImporte] = useState("");
-  const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
-  const [dayExtras, setDayExtras] = useState<UserDayExtras>({
-    extra_saturday: 0,
-    extra_sunday: 0,
-    extra_holiday: 0,
-    offsite_weekly_reduced_nacional: 0,
-    offsite_weekly_reduced_internacional: 0,
-    offsite_weekly_complete_nacional: 0,
-    offsite_weekly_complete_internacional: 0,
-  });
-  const [holidays, setHolidays] = useState<string[]>([]);
 
   const [recentPlaces, setRecentPlaces] = useState<string[]>([]);
   const [showLugarInicioSug, setShowLugarInicioSug] = useState(false);
@@ -180,15 +167,6 @@ export default function JornadaCompletaScreen() {
         setLugarInicio((prev) => (prev === "" ? lugar : prev));
       }
     });
-    loadDietDerivationContext()
-      .then((ctx) => {
-        setCustomRates(ctx.customRates);
-        setDayExtras(ctx.dayExtras);
-        setHolidays(ctx.holidays);
-      })
-      .catch(() => {
-        // Los valores por defecto de local-storage siguen siendo válidos.
-      });
   }, []);
 
   const isCrossSundayMonday = useMemo(() => {
@@ -211,6 +189,9 @@ export default function JornadaCompletaScreen() {
 
   const mutation = useMutation({
     mutationFn: async () => {
+      // Se lee la configuración justo al guardar para evitar usar tarifas
+      // antiguas o valores por defecto si la pantalla se abrió hace un instante.
+      const dietContext = await loadDietDerivationContext();
       const resolvedFechaInicio = parseDisplayDateToISO(fechaInicioInput);
       if (!resolvedFechaInicio) throw new Error(t("common.invalidDate"));
       const resolvedFechaFin = parseDisplayDateToISO(fechaFinInput);
@@ -225,9 +206,9 @@ export default function JornadaCompletaScreen() {
         tipoRuta,
         pernocta,
         dietaModo,
-        customRates: customRates || undefined,
-        dayExtras,
-        holidays,
+        customRates: dietContext.customRates || undefined,
+        dayExtras: dietContext.dayExtras,
+        holidays: dietContext.holidays,
       };
       if (isCrossSundayMonday && conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null) {
         body.conduccionDomingoMin = conduccionDomingoParsed.minutes;
