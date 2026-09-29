@@ -976,8 +976,30 @@ export async function upsertJornadasImported(jornadas: Jornada[]): Promise<{ add
 async function getAllCompensaciones(): Promise<Compensacion[]> {
   const raw = await getItemScoped(COMPENSACIONES_KEY);
   if (!raw) return [];
-  const parsed = JSON.parse(raw);
-  const list: Compensacion[] = parsed.map(migrateCompensacion);
+
+  let parsed: any[];
+  try {
+    const value = JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    parsed = value;
+  } catch {
+    return [];
+  }
+
+  // IMPORTANT: deduplicar por id ANTES de cualquier suma/normalización.
+  // Si el almacenamiento legado contiene dos copias del mismo id, sumar ambas
+  // inflaría artificialmente la deuda de compensación.
+  const byId = new Map<string, Compensacion>();
+  for (const value of parsed) {
+    if (!value) continue;
+    const item = migrateCompensacion(value);
+    if (!item.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  const list: Compensacion[] = Array.from(byId.values());
 
   // ================================================================
   // MIGRACIÓN one-shot compensaciones históricas mal calculadas.
@@ -5773,7 +5795,18 @@ export async function getAllViajes(): Promise<Viaje[]> {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return parsed.map(migrateViaje);
+    if (!Array.isArray(parsed)) return [];
+    const byId = new Map<string, Viaje>();
+    for (const value of parsed) {
+      if (!value) continue;
+      const viaje = migrateViaje(value);
+      if (!viaje.id) continue;
+      const current = byId.get(viaje.id);
+      if (!current || String(viaje.updatedAt || "") >= String(current.updatedAt || "")) {
+        byId.set(viaje.id, viaje);
+      }
+    }
+    return Array.from(byId.values());
   } catch {
     return [];
   }
@@ -6133,12 +6166,24 @@ export interface TachoActivity {
 
 const TACHO_ACTIVITIES_KEY = "tacoplan_tacho_activities";
 
+function dedupeTachoActivities(items: TachoActivity[]): TachoActivity[] {
+  const byId = new Map<string, TachoActivity>();
+  for (const item of items || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 export async function getAllTachoActivities(): Promise<TachoActivity[]> {
   const raw = await getItemScoped(TACHO_ACTIVITIES_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? dedupeTachoActivities(parsed) : [];
   } catch {
     return [];
   }
@@ -6167,7 +6212,7 @@ export async function upsertTachoActivitiesImported(items: TachoActivity[]): Pro
 }
 
 export async function replaceImportedTachoActivities(items: TachoActivity[]): Promise<void> {
-  await setItemScoped(TACHO_ACTIVITIES_KEY, JSON.stringify(items));
+  await setItemScoped(TACHO_ACTIVITIES_KEY, JSON.stringify(dedupeTachoActivities(items)));
 }
 
 export interface MoroccoTrip {
@@ -6200,11 +6245,24 @@ export interface FerryRestRecord {
   ferryExtras?: FerryExtras;
 }
 
+function dedupeMoroccoTrips(items: MoroccoTrip[]): MoroccoTrip[] {
+  const byId = new Map<string, MoroccoTrip>();
+  for (const item of items || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 export async function getAllMoroccoTrips(): Promise<MoroccoTrip[]> {
   try {
     const raw = await getItemScoped(MOROCCO_TRIPS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? dedupeMoroccoTrips(parsed) : [];
   } catch {
     return [];
   }
@@ -6220,7 +6278,7 @@ export async function addMoroccoTrip(trip: Omit<MoroccoTrip, "id" | "createdAt" 
     updatedAt: now,
   };
   all.push(newTrip);
-  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(all));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(dedupeMoroccoTrips(all)));
   return newTrip;
 }
 
@@ -6229,13 +6287,13 @@ export async function updateMoroccoTrip(id: string, updates: Partial<MoroccoTrip
   const idx = all.findIndex((t) => t.id === id);
   if (idx === -1) return;
   all[idx] = { ...all[idx], ...updates, updatedAt: new Date().toISOString() };
-  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(all));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(dedupeMoroccoTrips(all)));
 }
 
 export async function deleteMoroccoTrip(id: string): Promise<void> {
   const all = await getAllMoroccoTrips();
   const filtered = all.filter((t) => t.id !== id);
-  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(filtered));
+  await setItemScoped(MOROCCO_TRIPS_KEY, JSON.stringify(dedupeMoroccoTrips(filtered)));
 }
 
 export async function getMoroccoTripsSummary(desde: string, hasta: string): Promise<{
