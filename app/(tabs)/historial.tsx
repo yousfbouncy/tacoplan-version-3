@@ -791,7 +791,9 @@ function JornadaItem({
   const durMin = item.duracionJornadaMin || 0;
   const condMin = item.conduccionMin || Math.round(durMin * 0.65);
   const matchedViajes = findViajesForJornada(item, viajes);
-  const pm = item.moroccoPaymentMode ? (item.paymentMode || "dietas") : billingMode;
+  // Cada jornada conserva el modo con el que fue registrada. El modo global
+  // solo sirve de fallback para registros antiguos que no tenían paymentMode.
+  const pm = item.paymentMode || billingMode;
   const kmTotal = item.kmTotal != null ? item.kmTotal : (item.kmInicio != null && item.kmFin != null ? (item.kmFin - item.kmInicio) : null);
   const kmRate = item.pricePerKm;
   const kmImporte = item.importeKm != null
@@ -1779,6 +1781,7 @@ export default function HistorialScreen() {
   }, [pendingDiets, t]);
 
   const totalKm = billingMode === "km" ? jornadasData.reduce((acc, j) => {
+    if (j.paymentMode !== "km") return acc;
     const km = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : 0);
     return acc + (Number.isFinite(km) ? km : 0);
   }, 0) : 0;
@@ -1802,21 +1805,25 @@ export default function HistorialScreen() {
   );
 
   const fallbackBaseBilling = jornadasData.reduce((acc, j) => {
+    const rowMode = j.paymentMode || "dietas";
     if (billingMode === "km") {
+      if (rowMode !== "km") return acc;
       const kmTotal = j.kmTotal != null ? j.kmTotal : (j.kmInicio != null && j.kmFin != null ? (j.kmFin - j.kmInicio) : null);
       const importeKm = j.importeKm != null ? j.importeKm : (kmTotal != null && j.pricePerKm != null ? kmTotal * j.pricePerKm : 0);
       return acc + (Number.isFinite(importeKm) ? importeKm : 0);
     }
     if (billingMode === "viaje") {
+      if (rowMode !== "viaje") return acc;
       const importeViaje = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
       return acc + (Number.isFinite(importeViaje) ? importeViaje : 0);
     }
-    if (!j.dietaImporteEur) return acc;
+    if (rowMode !== "dietas" || !j.dietaImporteEur) return acc;
     const dietaFull = parseFloat(j.dietaImporteEur);
     const dayExtra = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
     const base = dietaFull - dayExtra;
     return acc + (Number.isFinite(base) ? base : 0);
-  }, 0) + (extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal;
+  }, 0) +
+    (billingMode === "dietas" ? ((extraDaysSplit.offsiteBase || 0) + naturalDayDietsTotal) : 0);
 
   const totalBaseBilling = fallbackBaseBilling;
 
