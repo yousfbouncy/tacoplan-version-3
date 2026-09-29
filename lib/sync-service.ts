@@ -18,7 +18,8 @@ const JORNADA_DATE_DEBUG_RUN = "pre-fix";
 type SyncAction =
   | { type: "push"; timestamp: number }
   | { type: "delete"; jornadaId: string; timestamp: number }
-  | { type: "delete_day_extra"; entryId: string; timestamp: number };
+  | { type: "delete_day_extra"; entryId: string; timestamp: number }
+  | { type: "delete_natural_day"; entryId: string; timestamp: number };
 
 let onlineOverride: boolean | null = null;
 
@@ -350,10 +351,7 @@ function mapNaturalDayFromDb(row: any): NaturalDayDietEntry {
 
 async function applyNaturalDayDietsLocally(list: any[]): Promise<void> {
   if (!list || list.length === 0) return;
-  const fn = (LS as any).saveAllNaturalDayDiets;
-  if (typeof fn === "function") {
-    await fn(list);
-  }
+  await LS.mergeNaturalDayDietsFromCloud(list as any);
 }
 
 async function pullCloudAll(user: User): Promise<CloudPayload> {
@@ -1368,17 +1366,12 @@ export async function syncAll(
             }
             const { error } = await supabase
               .from("user_natural_day_diets")
-              .upsert(row, { onConflict: "id" });
+              .upsert(row, { onConflict: "user_id,date" });
             if (error) throw error;
             natPushed += 1;
           }
-          if (natPushed > 0 && typeof (LS as any).saveAllNaturalDayDiets === "function") {
-            const updated = allLocal.map((x: any) =>
-              pendingLocal.find((p: any) => p.id === x.id)
-                ? { ...x, syncStatus: "synced" as const, updatedAt: nowIso }
-                : x
-            );
-            await (LS as any).saveAllNaturalDayDiets(updated);
+          if (natPushed > 0) {
+            await LS.markNaturalDayDietsSynced(pendingLocal.map((p: any) => p.id));
           }
         }
       } catch (e) {
@@ -1556,6 +1549,7 @@ export async function syncAll(
     const queue = await getOfflineQueue();
     const deleteJornadas = queue.filter((a): a is Extract<SyncAction, { type: "delete" }> => a.type === "delete");
     const deleteDayExtras = queue.filter((a): a is Extract<SyncAction, { type: "delete_day_extra" }> => a.type === "delete_day_extra");
+    const deleteNaturalDays = queue.filter((a): a is Extract<SyncAction, { type: "delete_natural_day" }> => a.type === "delete_natural_day");
     const failedDeletes: SyncAction[] = [];
     let allDeletesOk = true;
     for (const action of deleteJornadas) {
@@ -1569,6 +1563,14 @@ export async function syncAll(
     for (const action of deleteDayExtras) {
       try {
         await deleteDayExtraEntryFromCloud(action.entryId, getAccessToken);
+      } catch {
+        allDeletesOk = false;
+        failedDeletes.push(action);
+      }
+    }
+    for (const action of deleteNaturalDays) {
+      try {
+        await deleteNaturalDayDietFromCloud(action.entryId, getAccessToken);
       } catch {
         allDeletesOk = false;
         failedDeletes.push(action);
@@ -1709,6 +1711,20 @@ export async function deleteFromCloud(
   }
 }
 
+export async function deleteNaturalDayDietFromCloud(
+  entryId: string,
+  getAccessToken: () => Promise<string | null>,
+): Promise<void> {
+  void getAccessToken;
+  const auth = await getAuthenticatedUserOrThrow();
+  const { error } = await supabase
+    .from("user_natural_day_diets")
+    .delete()
+    .eq("id", entryId)
+    .eq("user_id", auth.user.id);
+  if (error) throw error;
+}
+
 export async function deleteDayExtraEntryFromCloud(
   entryId: string,
   getAccessToken: () => Promise<string | null>,
@@ -1779,6 +1795,10 @@ export async function queueDeleteForSync(jornadaId: string): Promise<void> {
 
 export async function queueDeleteDayExtraEntryForSync(entryId: string): Promise<void> {
   await addToOfflineQueue({ type: "delete_day_extra", entryId, timestamp: Date.now() });
+}
+
+export async function queueDeleteNaturalDayDietForSync(entryId: string): Promise<void> {
+  await addToOfflineQueue({ type: "delete_natural_day", entryId, timestamp: Date.now() });
 }
 
 export async function restoreFromCloud(
