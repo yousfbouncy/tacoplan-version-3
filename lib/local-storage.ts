@@ -774,7 +774,15 @@ function migrateJornada(j: any): Jornada {
 }
 
 async function saveAllJornadas(list: Jornada[]): Promise<void> {
-  await setItemScoped(JORNADAS_KEY, JSON.stringify(list));
+  const byId = new Map<string, Jornada>();
+  for (const item of list || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  await setItemScoped(JORNADAS_KEY, JSON.stringify(Array.from(byId.values())));
 }
 
 export async function replaceImportedJornadas(list: Jornada[]): Promise<void> {
@@ -1174,7 +1182,15 @@ function migrateCompensacion(c: any): Compensacion {
 }
 
 async function saveAllCompensaciones(list: Compensacion[]): Promise<void> {
-  await setItemScoped(COMPENSACIONES_KEY, JSON.stringify(list));
+  const byId = new Map<string, Compensacion>();
+  for (const item of list || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  await setItemScoped(COMPENSACIONES_KEY, JSON.stringify(Array.from(byId.values())));
 }
 
 function findPreviousClosed(allJornadas: Jornada[], beforeStartAt: string): Jornada | null {
@@ -4259,7 +4275,15 @@ export async function getAllDayExtraEntries(): Promise<DayExtraEntry[]> {
 }
 
 async function saveAllDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
-  await setItemScoped(DAY_EXTRA_ENTRIES_KEY, JSON.stringify(list));
+  const byId = new Map<string, DayExtraEntry>();
+  for (const item of list || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  await setItemScoped(DAY_EXTRA_ENTRIES_KEY, JSON.stringify(Array.from(byId.values())));
 }
 
 export async function replaceImportedDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
@@ -5729,7 +5753,15 @@ function migrateViaje(v: any): Viaje {
 }
 
 async function saveAllViajes(list: Viaje[]): Promise<void> {
-  await setItemScoped(VIAJES_KEY, JSON.stringify(list));
+  const byId = new Map<string, Viaje>();
+  for (const item of list || []) {
+    if (!item?.id) continue;
+    const current = byId.get(item.id);
+    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(item.id, item);
+    }
+  }
+  await setItemScoped(VIAJES_KEY, JSON.stringify(Array.from(byId.values())));
 }
 
 export async function replaceImportedViajes(list: Viaje[]): Promise<void> {
