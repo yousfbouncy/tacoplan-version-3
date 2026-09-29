@@ -1864,7 +1864,9 @@ export default function HistorialScreen() {
       }
 
       const msg =
-        `${result.recalculatedJourneys} jornadas recalculadas · ${result.autoAddedOutOfBaseDays} jornadas fuera de base añadidas` +
+        `${result.recalculatedJourneys} jornadas recalculadas` +
+        (result.normalizedNaturalDays > 0 ? ` · ${result.normalizedNaturalDays} registro(s) antiguo(s) normalizado(s)` : "") +
+        ` · ${result.autoAddedOutOfBaseDays} jornadas fuera de base añadidas` +
         (result.manualArrivalDays.length > 0
           ? ` · ${result.manualArrivalDays.length} llegada(s) a base requieren revisión manual`
           : "");
