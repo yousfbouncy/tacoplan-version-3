@@ -2900,6 +2900,76 @@ export async function auditPeriodConsistency(from: string, to: string): Promise<
     }
   } catch {}
 
+  // Jornadas normales exactamente repetidas (mismo inicio/fin y lugares).
+  const normalizeAuditLocation = (value: unknown) =>
+    String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const journeyComposite = (j: Jornada) => [
+    j.fechaInicio || "",
+    j.horaInicio || "",
+    j.fechaFin || "",
+    j.horaFin || "",
+    normalizeAuditLocation(j.lugarInicio),
+    normalizeAuditLocation(j.lugarFin),
+  ].join("|");
+  const seenJourneys = new Map<string, Jornada>();
+  for (const j of periodJourneys) {
+    const key = journeyComposite(j);
+    const existing = seenJourneys.get(key);
+    if (existing && existing.id !== j.id) {
+      push({
+        id: `dup-journey-${existing.id}-${j.id}`,
+        severity: "error",
+        date: j.fechaInicio,
+        title: "Jornada duplicada",
+        detail: "Hay dos registros con el mismo inicio, fin y ruta.",
+      });
+    } else {
+      seenJourneys.set(key, j);
+    }
+  }
+
+  // Extras de día: detecta duplicados lógicos aunque tengan IDs distintos
+  // (por ejemplo dos DOMINGO para la misma fecha tras una importación/sync).
+  const dayExtrasInPeriod = (await getAllDayExtraEntries()).filter(
+    (entry) => entry.date >= from && entry.date <= to,
+  );
+  const seenDayExtraKeys = new Map<string, DayExtraEntry>();
+  for (const entry of dayExtrasInPeriod) {
+    const key = dayExtraLogicalKey(entry);
+    const existing = seenDayExtraKeys.get(key);
+    if (existing && existing.id !== entry.id) {
+      push({
+        id: `dup-day-extra-${key}`,
+        severity: "error",
+        date: entry.date,
+        title: "Extra/descanso fuera de base duplicado",
+        detail: "Hay más de un registro económico equivalente para el mismo día.",
+      });
+    } else {
+      seenDayExtraKeys.set(key, entry);
+    }
+  }
+
+  // Una dieta natural y un descanso semanal fuera de base el mismo día pueden
+  // ser conceptos distintos según convenio, por eso no se borran automáticamente;
+  // se señalan para revisión para evitar una doble dieta accidental.
+  const offsiteDates = new Set(
+    dayExtrasInPeriod
+      .filter((entry) => entry.entryType === "offsite_weekly_rest")
+      .map((entry) => entry.date),
+  );
+  for (const n of natural) {
+    if (offsiteDates.has(n.date)) {
+      push({
+        id: `natural-offsite-overlap-${n.date}`,
+        severity: "warning",
+        date: n.date,
+        title: "Dos conceptos fuera de base el mismo día",
+        detail: "Existe una Jornada fuera de base y también un descanso semanal fuera de base. Confirma que ambos conceptos deben cobrarse.",
+      });
+    }
+  }
+
   // 2) Duplicados por fecha en jornadas naturales.
   const byNaturalDate = new Map<string, NaturalDayDietEntry[]>();
   for (const n of natural) {
@@ -4106,14 +4176,17 @@ export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensacion
         syncStatus: "synced",
         conduccionDomingoMin: cj.conduccionDomingoMin ?? existing.conduccionDomingoMin,
         conduccionLunesMin: cj.conduccionLunesMin ?? existing.conduccionLunesMin,
-        plusItems: cj.plusItems ?? existing.plusItems,
+        // Si la nube es más reciente, null significa "el usuario lo borró".
+        // No debemos resucitar pluses eliminados desde otro dispositivo.
+        plusItems: cj.plusItems,
         plannedRestMin: cj.plannedRestMin ?? existing.plannedRestMin,
         plannedRestType: cj.plannedRestType ?? existing.plannedRestType,
         legalSummary: cj.legalSummary ?? existing.legalSummary,
         dietBaseEur: cj.dietBaseEur ?? existing.dietBaseEur,
         dietRule: cj.dietRule ?? existing.dietRule,
         dietCalculatedAt: cj.dietCalculatedAt ?? existing.dietCalculatedAt,
-        observaciones: cj.observaciones ?? existing.observaciones,
+        // Igual para observaciones: una limpieza remota debe propagarse.
+        observaciones: cj.observaciones,
         ferryPending: cj.ferryPending != null ? cj.ferryPending : existing.ferryPending,
         ferryRestType: cj.ferryRestType ?? existing.ferryRestType,
         ferryDestination: cj.ferryDestination ?? existing.ferryDestination,
@@ -4189,6 +4262,46 @@ export async function addRecentPlace(place: string): Promise<void> {
   await setItemScoped(RECENT_PLACES_KEY, JSON.stringify(updated));
 }
 
+function dayExtraLogicalKey(entry: Pick<DayExtraEntry, "date" | "entryType" | "dayFlag">): string {
+  if (entry.entryType === "offsite_weekly_rest") {
+    // Solo puede existir un descanso semanal fuera de base por día natural.
+    return `${entry.date}|offsite_weekly_rest`;
+  }
+  // Un sábado/domingo/festivo concreto solo debe contabilizarse una vez.
+  return `${entry.date}|day_extra|${entry.dayFlag || "NONE"}`;
+}
+
+function dedupeDayExtraEntries(list: DayExtraEntry[]): DayExtraEntry[] {
+  const byLogicalKey = new Map<string, DayExtraEntry>();
+
+  const rank = (entry: DayExtraEntry): number =>
+    entry.syncStatus === "pending" || entry.syncStatus === "local" ? 2 : 1;
+
+  for (const entry of list || []) {
+    if (!entry?.id || !entry?.date) continue;
+    const key = dayExtraLogicalKey(entry);
+    const current = byLogicalKey.get(key);
+    if (!current) {
+      byLogicalKey.set(key, entry);
+      continue;
+    }
+
+    const currentRank = rank(current);
+    const incomingRank = rank(entry);
+    const currentUpdated = String(current.updatedAt || current.createdAt || "");
+    const incomingUpdated = String(entry.updatedAt || entry.createdAt || "");
+
+    if (
+      incomingRank > currentRank ||
+      (incomingRank === currentRank && incomingUpdated >= currentUpdated)
+    ) {
+      byLogicalKey.set(key, entry);
+    }
+  }
+
+  return Array.from(byLogicalKey.values());
+}
+
 export async function getAllDayExtraEntries(): Promise<DayExtraEntry[]> {
   const raw = await getItemScoped(DAY_EXTRA_ENTRIES_KEY);
   if (!raw) return [];
@@ -4196,7 +4309,7 @@ export async function getAllDayExtraEntries(): Promise<DayExtraEntry[]> {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const nowIso = new Date().toISOString();
-    return parsed
+    const normalizedEntries = parsed
       .filter(Boolean)
       .map((e: any) => {
         const entryType: DayExtraEntryType =
@@ -4234,21 +4347,14 @@ export async function getAllDayExtraEntries(): Promise<DayExtraEntry[]> {
         };
         return normalized;
       });
+    return dedupeDayExtraEntries(normalizedEntries);
   } catch {
     return [];
   }
 }
 
 async function saveAllDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
-  const byId = new Map<string, DayExtraEntry>();
-  for (const item of list || []) {
-    if (!item?.id) continue;
-    const current = byId.get(item.id);
-    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
-      byId.set(item.id, item);
-    }
-  }
-  await setItemScoped(DAY_EXTRA_ENTRIES_KEY, JSON.stringify(Array.from(byId.values())));
+  await setItemScoped(DAY_EXTRA_ENTRIES_KEY, JSON.stringify(dedupeDayExtraEntries(list)));
 }
 
 export async function replaceImportedDayExtraEntries(list: DayExtraEntry[]): Promise<void> {
@@ -4278,6 +4384,13 @@ export async function addDayExtraEntry(data: {
     throw new Error("Tipo de día inválido");
   }
   const all = await getAllDayExtraEntries();
+  if (all.some((entry) =>
+    entry.entryType === "day_extra" &&
+    entry.date === data.date &&
+    entry.dayFlag === data.dayFlag
+  )) {
+    throw new Error("Este extra ya está registrado para ese día");
+  }
   const now = new Date().toISOString();
   let resolvedAmount: number | null = data.amount ?? null;
   if (resolvedAmount == null) {
@@ -4573,10 +4686,11 @@ export async function getAllNaturalDayDiets(): Promise<NaturalDayDietEntry[]> {
           Array.isArray(rawPluses)
             ? rawPluses
                 .filter((p) => p && String(p.concepto || "").trim().length > 0 && Number.isFinite(Number(p.amount)))
-                .map((p) => ({
+                .map((p, index) => ({
                   concepto: String(p.concepto).trim().slice(0, 200),
                   amount: Math.max(0, Math.min(99999, +Number(p.amount).toFixed(2))),
-                  id: String(p.id || `${e.date}_${p.concepto}_${Math.random().toString(36).slice(2, 7)}`),
+                  // Determinista: leer el mismo registro no genera una identidad distinta cada vez.
+                  id: String(p.id || `${e.date}_${String(p.concepto || "plus").trim()}_${index}`),
                 }))
             : null;
         const normalized: NaturalDayDietEntry = {
