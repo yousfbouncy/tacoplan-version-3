@@ -4652,7 +4652,7 @@ export async function getAllNaturalDayDiets(): Promise<NaturalDayDietEntry[]> {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const nowIso = new Date().toISOString();
-    return parsed
+    const normalizedEntries = parsed
       .filter(Boolean)
       .map((e: any) => {
         const validTypes: NaturalDayDietType[] = ["INTERNACIONAL", "NACIONAL", "REGIONAL"];
@@ -4698,6 +4698,9 @@ export async function getAllNaturalDayDiets(): Promise<NaturalDayDietEntry[]> {
         };
         return normalized;
       });
+    // También deduplicamos al LEER para que datos antiguos corruptos no puedan
+    // entrar dos veces en un total antes de que ocurra el siguiente guardado.
+    return dedupeNaturalDayDietsByDate(normalizedEntries);
   } catch {
     return [];
   }
