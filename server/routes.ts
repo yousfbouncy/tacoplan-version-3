@@ -1,6 +1,39 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "node:http";
 import { supabase, getUserFromToken, createUserClient, requireSupabaseAdmin } from "./supabase";
+import { collectCloudPages } from "../lib/sync-pagination";
+
+async function fetchAllServerRows(
+  client: ReturnType<typeof createUserClient>,
+  table: string,
+  userId: string,
+  orderBy: Array<{ column: string; ascending: boolean }>,
+): Promise<any[]> {
+  return collectCloudPages<any>((from, to) => {
+    let query: any = client.from(table).select("*").eq("user_id", userId);
+    for (const order of orderBy) {
+      query = query.order(order.column, { ascending: order.ascending });
+    }
+    return query.range(from, to);
+  });
+}
+
+function validTimestampOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+function nonnegativeIntOrNull(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+function cloudIsNewer(cloudUpdatedAt: unknown, localUpdatedAt: unknown): boolean {
+  const cloud = typeof cloudUpdatedAt === "string" ? cloudUpdatedAt : "";
+  const local = typeof localUpdatedAt === "string" ? localUpdatedAt : "";
+  return !!cloud && (!local || cloud > local);
+}
 
 function decodeJwtRole(jwt: string): string | null {
   try {
@@ -518,6 +551,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let jPushed = 0, jErrors = 0;
       if (jornadas && jornadas.length > 0) {
         for (const j of jornadas) {
+          const existing = await client
+            .from("jornadas")
+            .select("updated_at")
+            .eq("user_id", user.id)
+            .eq("id", j.id)
+            .maybeSingle();
+          if (existing.error) throw existing.error;
+          if (cloudIsNewer(existing.data?.updated_at, j.updatedAt)) {
+            jPushed++;
+            continue;
+          }
           const baseRow: Record<string, any> = {
             id: j.id,
             user_id: user.id,
@@ -561,6 +605,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
             previous_rest_source: j.previousRestSource || null,
             previous_rest_id: j.previousRestId || null,
             previous_rest_valid: j.previousRestValid ?? null,
+            previous_rest_start_at: j.previousRestStartAt ?? null,
+            previous_rest_end_at: j.previousRestEndAt ?? null,
+            previous_rest_legal_type: j.previousRestLegalType ?? null,
+            previous_rest_start_location: j.previousRestStartLocation ?? null,
+            previous_rest_end_location: j.previousRestEndLocation ?? null,
+            previous_rest_in_base: j.previousRestInBase ?? null,
+            previous_rest_distance_km: j.previousRestDistanceKm ?? null,
+            previous_rest_performed_in_vehicle: j.previousRestPerformedInVehicle ?? null,
+            previous_rest_accommodation: j.previousRestAccommodation ?? null,
+            previous_rest_comp_generated_min: j.previousRestCompGeneratedMin ?? null,
+            previous_rest_comp_used_min: j.previousRestCompUsedMin ?? null,
+            previous_rest_observations: j.previousRestObservations ?? null,
+            split_rest_detected: j.splitRestDetected ?? false,
+            split_rest_first_part_min: j.splitRestFirstPartMin ?? null,
+            split_rest_second_part_min: j.splitRestSecondPartMin ?? null,
+            counts_as_reduced_rest: j.countsAsReducedRest ?? true,
+            payment_mode: j.paymentMode ?? null,
+            km_inicio: j.kmInicio ?? null,
+            km_fin: j.kmFin ?? null,
+            km_total: j.kmTotal ?? null,
+            price_per_km: j.pricePerKm ?? null,
+            importe_km: j.importeKm ?? null,
+            price_per_trip: j.pricePerTrip ?? null,
+            importe_viaje: j.importeViaje ?? null,
+            report_hide_amounts: j.reportHideAmounts ?? false,
+            report_hide_pluses: j.reportHidePluses ?? false,
+            tacho_daily_summary_id: j.tachoDailySummaryId ?? null,
+            tacho_driving_min: j.tachoDrivingMin ?? null,
+            tacho_work_min: j.tachoWorkMin ?? null,
+            tacho_available_min: j.tachoAvailableMin ?? null,
+            tacho_rest_min: j.tachoRestMin ?? null,
+            tacho_countries: Array.isArray(j.tachoCountries) ? j.tachoCountries : [],
+            tacho_country_entries: j.tachoCountryEntries ?? 0,
+            tacho_km_total: j.tachoKmTotal ?? null,
+            tacho_first_activity_at: j.tachoFirstActivityAt ?? null,
+            tacho_last_activity_at: j.tachoLastActivityAt ?? null,
+            tacho_disconnections: j.tachoDisconnections ?? 0,
+            tacho_data_quality: j.tachoDataQuality ?? null,
+            is_double_driving: j.isDoubleDriving === true,
+            second_driver_name: j.secondDriverName ?? null,
             morocco_payment_mode: j.moroccoPaymentMode || null,
             morocco_trip_rate: j.moroccoTripRate ?? null,
             morocco_pernight_rate: j.moroccoPernightRate ?? null,
@@ -589,8 +673,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let cPushed = 0, cErrors = 0;
       if (compensaciones && compensaciones.length > 0) {
         for (const c of compensaciones) {
+          let existingQuery: any = client
+            .from("compensaciones")
+            .select("id,updated_at")
+            .eq("user_id", user.id);
+          existingQuery = c.jornadaId
+            ? existingQuery.eq("jornada_id", c.jornadaId)
+            : existingQuery.eq("id", c.id);
+          const existing = await existingQuery.limit(1).maybeSingle();
+          if (existing.error) throw existing.error;
+          if (cloudIsNewer(existing.data?.updated_at, c.updatedAt)) {
+            cPushed++;
+            continue;
+          }
           const row = {
-            id: c.id,
+            id: existing.data?.id || c.id,
             user_id: user.id,
             jornada_id: c.jornadaId,
             horas_deuda: c.horasDeuda,
@@ -598,12 +695,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             fecha_limite: c.fechaLimite,
             compensada: c.compensada,
             fecha_compensacion: c.fechaCompensacion,
+            source_rest_start_at: c.sourceRestStartAt ?? null,
+            source_rest_end_at: c.sourceRestEndAt ?? null,
+            source_rest_duration_min: c.sourceRestDurationMin ?? null,
+            source_rest_legal_type: c.sourceRestLegalType ?? null,
+            source_rest_location_start: c.sourceRestLocationStart ?? null,
+            source_rest_location_end: c.sourceRestLocationEnd ?? null,
+            source_rest_in_base: c.sourceRestInBase ?? null,
+            source_rest_distance_km: c.sourceRestDistanceKm ?? null,
+            source_rest_observations: c.sourceRestObservations ?? null,
+            recovered_in_jornada_id: c.recoveredInJornadaId ?? null,
+            recovery_rest_start_at: c.recoveryRestStartAt ?? null,
+            recovery_rest_end_at: c.recoveryRestEndAt ?? null,
+            recovery_rest_duration_min: c.recoveryRestDurationMin ?? null,
             updated_at: c.updatedAt,
           };
 
           const { error } = await client
             .from("compensaciones")
-            .upsert(row, { onConflict: "id" });
+            .upsert(row, { onConflict: c.jornadaId ? "user_id,jornada_id" : "id" });
           if (error) {
             console.error("[Sync Push] compensacion upsert error:", error);
             cErrors++;
@@ -627,25 +737,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const token = (req as any).accessToken;
       const client = createUserClient(token);
 
-      const { data: jornadas, error: jErr } = await client
-        .from("jornadas")
-        .select("*")
-        .order("start_at", { ascending: false });
-
-      if (jErr) {
-        console.error("[Sync Pull] jornadas error:", jErr);
-        return res.status(500).json({ message: jErr.message });
-      }
-
-      const { data: compensaciones, error: cErr } = await client
-        .from("compensaciones")
-        .select("*")
-        .order("fecha_limite", { ascending: true });
-
-      if (cErr) {
-        console.error("[Sync Pull] compensaciones error:", cErr);
-        return res.status(500).json({ message: cErr.message });
-      }
+      const [jornadas, compensaciones] = await Promise.all([
+        fetchAllServerRows(client, "jornadas", user.id, [
+          { column: "start_at", ascending: false },
+          { column: "id", ascending: true },
+        ]),
+        fetchAllServerRows(client, "compensaciones", user.id, [
+          { column: "fecha_limite", ascending: true },
+          { column: "id", ascending: true },
+        ]),
+      ]);
 
       console.log(`[Sync Pull] user=${user.id}, found ${(jornadas || []).length} jornadas, ${(compensaciones || []).length} compensaciones`);
 
@@ -657,9 +758,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fechaFin: j.fecha_fin,
         horaFin: j.hora_fin,
         lugarFin: j.lugar_fin,
-        startAt: j.start_at,
-        endAt: j.end_at,
-        conduccionMin: j.conduccion_min,
+        startAt: validTimestampOrNull(j.start_at),
+        endAt: validTimestampOrNull(j.end_at),
+        conduccionMin: nonnegativeIntOrNull(j.conduccion_min),
         conduccionDomingoMin: j.conduccion_domingo_min ?? null,
         conduccionLunesMin: j.conduccion_lunes_min ?? null,
         tipoRuta: j.tipo_ruta,
@@ -675,9 +776,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dietBaseEur: j.diet_base_eur ?? null,
         dietRule: j.diet_rule ?? null,
         dietCalculatedAt: j.diet_calculated_at ?? null,
-        descansoAnteriorMin: j.descanso_anterior_min,
+        descansoAnteriorMin: nonnegativeIntOrNull(j.descanso_anterior_min),
         tipoDescansoAnterior: j.tipo_descanso_anterior,
-        duracionJornadaMin: j.duracion_jornada_min,
+        duracionJornadaMin: nonnegativeIntOrNull(j.duracion_jornada_min),
         countsAsDailyReduced: j.counts_as_daily_reduced || false,
         plannedRestMin: j.planned_rest_min ?? null,
         plannedRestType: j.planned_rest_type ?? null,
@@ -687,6 +788,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         previousRestSource: j.previous_rest_source ?? null,
         previousRestId: j.previous_rest_id ?? null,
         previousRestValid: j.previous_rest_valid ?? null,
+        previousRestStartAt: j.previous_rest_start_at ?? null,
+        previousRestEndAt: j.previous_rest_end_at ?? null,
+        previousRestLegalType: j.previous_rest_legal_type ?? null,
+        previousRestStartLocation: j.previous_rest_start_location ?? null,
+        previousRestEndLocation: j.previous_rest_end_location ?? null,
+        previousRestInBase: j.previous_rest_in_base ?? null,
+        previousRestDistanceKm: j.previous_rest_distance_km == null ? null : Number(j.previous_rest_distance_km),
+        previousRestPerformedInVehicle: j.previous_rest_performed_in_vehicle ?? null,
+        previousRestAccommodation: j.previous_rest_accommodation ?? null,
+        previousRestCompGeneratedMin: j.previous_rest_comp_generated_min ?? null,
+        previousRestCompUsedMin: j.previous_rest_comp_used_min ?? null,
+        previousRestObservations: j.previous_rest_observations ?? null,
+        splitRestDetected: j.split_rest_detected ?? false,
+        splitRestFirstPartMin: j.split_rest_first_part_min ?? null,
+        splitRestSecondPartMin: j.split_rest_second_part_min ?? null,
+        countsAsReducedRest: j.counts_as_reduced_rest ?? true,
+        paymentMode: j.payment_mode ?? null,
+        kmInicio: j.km_inicio ?? null,
+        kmFin: j.km_fin ?? null,
+        kmTotal: j.km_total ?? null,
+        pricePerKm: j.price_per_km ?? null,
+        importeKm: j.importe_km ?? null,
+        pricePerTrip: j.price_per_trip ?? null,
+        importeViaje: j.importe_viaje ?? null,
+        reportHideAmounts: j.report_hide_amounts ?? false,
+        reportHidePluses: j.report_hide_pluses ?? false,
+        tachoDailySummaryId: j.tacho_daily_summary_id ?? null,
+        tachoDrivingMin: j.tacho_driving_min ?? null,
+        tachoWorkMin: j.tacho_work_min ?? null,
+        tachoAvailableMin: j.tacho_available_min ?? null,
+        tachoRestMin: j.tacho_rest_min ?? null,
+        tachoCountries: j.tacho_countries ?? [],
+        tachoCountryEntries: j.tacho_country_entries ?? 0,
+        tachoKmTotal: j.tacho_km_total ?? null,
+        tachoFirstActivityAt: j.tacho_first_activity_at ?? null,
+        tachoLastActivityAt: j.tacho_last_activity_at ?? null,
+        tachoDisconnections: j.tacho_disconnections ?? 0,
+        tachoDataQuality: j.tacho_data_quality ?? null,
+        isDoubleDriving: j.is_double_driving === true,
+        secondDriverName: j.second_driver_name ?? null,
         moroccoPaymentMode: j.morocco_payment_mode ?? null,
         moroccoTripRate: j.morocco_trip_rate ?? null,
         moroccoPernightRate: j.morocco_pernight_rate ?? null,
@@ -708,6 +849,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fechaLimite: c.fecha_limite,
         compensada: c.compensada,
         fechaCompensacion: c.fecha_compensacion,
+        sourceRestStartAt: c.source_rest_start_at ?? null,
+        sourceRestEndAt: c.source_rest_end_at ?? null,
+        sourceRestDurationMin: c.source_rest_duration_min ?? null,
+        sourceRestLegalType: c.source_rest_legal_type ?? null,
+        sourceRestLocationStart: c.source_rest_location_start ?? null,
+        sourceRestLocationEnd: c.source_rest_location_end ?? null,
+        sourceRestInBase: c.source_rest_in_base ?? null,
+        sourceRestDistanceKm: c.source_rest_distance_km == null ? null : Number(c.source_rest_distance_km),
+        sourceRestObservations: c.source_rest_observations ?? null,
+        recoveredInJornadaId: c.recovered_in_jornada_id ?? null,
+        recoveryRestStartAt: c.recovery_rest_start_at ?? null,
+        recoveryRestEndAt: c.recovery_rest_end_at ?? null,
+        recoveryRestDurationMin: c.recovery_rest_duration_min ?? null,
         updatedAt: c.updated_at,
         syncStatus: "synced" as const,
       }));
@@ -962,7 +1116,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!data) {
         const { data: insertedProfile, error: insertProfileError } = await client
           .from("profiles")
-          .insert({
+          .upsert({
             id: userId,
             email: userEmail || "",
             display_name: "",
@@ -971,7 +1125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             period_start_day: 1,
             period_end_day: 30,
             updated_at: new Date().toISOString(),
-          })
+          }, { onConflict: "id" })
           .select()
           .single();
 
@@ -1105,14 +1259,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const client = createUserClient(token);
       const userId = user.id;
 
-      const [profileRes, jornadasRes, compensacionesRes, ratesRes, extrasRes, holidaysRes] = await Promise.all([
+      const [profileRes, jornadasRows, compensacionesRows, ratesRows, extrasRes, holidaysRows] = await Promise.all([
         client.from("profiles").select("*").eq("id", userId).maybeSingle(),
-        client.from("jornadas").select("*").order("start_at", { ascending: false }),
-        client.from("compensaciones").select("*").order("fecha_limite", { ascending: true }),
-        client.from("user_diet_rates").select("*").eq("user_id", userId),
+        fetchAllServerRows(client, "jornadas", userId, [
+          { column: "start_at", ascending: false },
+          { column: "id", ascending: true },
+        ]),
+        fetchAllServerRows(client, "compensaciones", userId, [
+          { column: "fecha_limite", ascending: true },
+          { column: "id", ascending: true },
+        ]),
+        fetchAllServerRows(client, "user_diet_rates", userId, [
+          { column: "trip_type", ascending: true },
+          { column: "percent", ascending: true },
+          { column: "id", ascending: true },
+        ]),
         client.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
-        client.from("user_holidays").select("*").eq("user_id", userId).order("date"),
+        fetchAllServerRows(client, "user_holidays", userId, [
+          { column: "date", ascending: true },
+          { column: "id", ascending: true },
+        ]),
       ]);
+
+      if (profileRes.error) throw profileRes.error;
+      if (extrasRes.error) throw extrasRes.error;
 
       let profile = profileRes.error ? null : profileRes.data;
       if (!profile) {
@@ -1133,7 +1303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!insertProfileError) profile = insertedProfile;
       }
 
-      const mappedJornadas = (jornadasRes.data || []).map((j: any) => ({
+      const mappedJornadas = jornadasRows.map((j: any) => ({
         id: j.id,
         fechaInicio: j.fecha_inicio,
         horaInicio: j.hora_inicio,
@@ -1141,9 +1311,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fechaFin: j.fecha_fin,
         horaFin: j.hora_fin,
         lugarFin: j.lugar_fin,
-        startAt: j.start_at,
-        endAt: j.end_at,
-        conduccionMin: j.conduccion_min,
+        startAt: validTimestampOrNull(j.start_at),
+        endAt: validTimestampOrNull(j.end_at),
+        conduccionMin: nonnegativeIntOrNull(j.conduccion_min),
         conduccionDomingoMin: j.conduccion_domingo_min ?? null,
         conduccionLunesMin: j.conduccion_lunes_min ?? null,
         tipoRuta: j.tipo_ruta,
@@ -1159,9 +1329,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dietBaseEur: j.diet_base_eur ?? null,
         dietRule: j.diet_rule ?? null,
         dietCalculatedAt: j.diet_calculated_at ?? null,
-        descansoAnteriorMin: j.descanso_anterior_min,
+        descansoAnteriorMin: nonnegativeIntOrNull(j.descanso_anterior_min),
         tipoDescansoAnterior: j.tipo_descanso_anterior,
-        duracionJornadaMin: j.duracion_jornada_min,
+        duracionJornadaMin: nonnegativeIntOrNull(j.duracion_jornada_min),
         countsAsDailyReduced: j.counts_as_daily_reduced || false,
         plannedRestMin: j.planned_rest_min ?? null,
         plannedRestType: j.planned_rest_type ?? null,
@@ -1171,6 +1341,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         previousRestSource: j.previous_rest_source ?? null,
         previousRestId: j.previous_rest_id ?? null,
         previousRestValid: j.previous_rest_valid ?? null,
+        previousRestStartAt: j.previous_rest_start_at ?? null,
+        previousRestEndAt: j.previous_rest_end_at ?? null,
+        previousRestLegalType: j.previous_rest_legal_type ?? null,
+        previousRestStartLocation: j.previous_rest_start_location ?? null,
+        previousRestEndLocation: j.previous_rest_end_location ?? null,
+        previousRestInBase: j.previous_rest_in_base ?? null,
+        previousRestDistanceKm: j.previous_rest_distance_km == null ? null : Number(j.previous_rest_distance_km),
+        previousRestPerformedInVehicle: j.previous_rest_performed_in_vehicle ?? null,
+        previousRestAccommodation: j.previous_rest_accommodation ?? null,
+        previousRestCompGeneratedMin: j.previous_rest_comp_generated_min ?? null,
+        previousRestCompUsedMin: j.previous_rest_comp_used_min ?? null,
+        previousRestObservations: j.previous_rest_observations ?? null,
+        splitRestDetected: j.split_rest_detected ?? false,
+        splitRestFirstPartMin: j.split_rest_first_part_min ?? null,
+        splitRestSecondPartMin: j.split_rest_second_part_min ?? null,
+        countsAsReducedRest: j.counts_as_reduced_rest ?? true,
+        paymentMode: j.payment_mode ?? null,
+        kmInicio: j.km_inicio ?? null,
+        kmFin: j.km_fin ?? null,
+        kmTotal: j.km_total ?? null,
+        pricePerKm: j.price_per_km ?? null,
+        importeKm: j.importe_km ?? null,
+        pricePerTrip: j.price_per_trip ?? null,
+        importeViaje: j.importe_viaje ?? null,
+        reportHideAmounts: j.report_hide_amounts ?? false,
+        reportHidePluses: j.report_hide_pluses ?? false,
+        tachoDailySummaryId: j.tacho_daily_summary_id ?? null,
+        tachoDrivingMin: j.tacho_driving_min ?? null,
+        tachoWorkMin: j.tacho_work_min ?? null,
+        tachoAvailableMin: j.tacho_available_min ?? null,
+        tachoRestMin: j.tacho_rest_min ?? null,
+        tachoCountries: j.tacho_countries ?? [],
+        tachoCountryEntries: j.tacho_country_entries ?? 0,
+        tachoKmTotal: j.tacho_km_total ?? null,
+        tachoFirstActivityAt: j.tacho_first_activity_at ?? null,
+        tachoLastActivityAt: j.tacho_last_activity_at ?? null,
+        tachoDisconnections: j.tacho_disconnections ?? 0,
+        tachoDataQuality: j.tacho_data_quality ?? null,
+        isDoubleDriving: j.is_double_driving === true,
+        secondDriverName: j.second_driver_name ?? null,
         moroccoPaymentMode: j.morocco_payment_mode ?? null,
         moroccoTripRate: j.morocco_trip_rate ?? null,
         moroccoPernightRate: j.morocco_pernight_rate ?? null,
@@ -1184,7 +1394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         syncStatus: "synced" as const,
       }));
 
-      const mappedCompensaciones = (compensacionesRes.data || []).map((c: any) => ({
+      const mappedCompensaciones = compensacionesRows.map((c: any) => ({
         id: c.id,
         jornadaId: c.jornada_id,
         horasDeuda: c.horas_deuda,
@@ -1192,21 +1402,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fechaLimite: c.fecha_limite,
         compensada: c.compensada,
         fechaCompensacion: c.fecha_compensacion,
+        sourceRestStartAt: c.source_rest_start_at ?? null,
+        sourceRestEndAt: c.source_rest_end_at ?? null,
+        sourceRestDurationMin: c.source_rest_duration_min ?? null,
+        sourceRestLegalType: c.source_rest_legal_type ?? null,
+        sourceRestLocationStart: c.source_rest_location_start ?? null,
+        sourceRestLocationEnd: c.source_rest_location_end ?? null,
+        sourceRestInBase: c.source_rest_in_base ?? null,
+        sourceRestDistanceKm: c.source_rest_distance_km == null ? null : Number(c.source_rest_distance_km),
+        sourceRestObservations: c.source_rest_observations ?? null,
+        recoveredInJornadaId: c.recovered_in_jornada_id ?? null,
+        recoveryRestStartAt: c.recovery_rest_start_at ?? null,
+        recoveryRestEndAt: c.recovery_rest_end_at ?? null,
+        recoveryRestDurationMin: c.recovery_rest_duration_min ?? null,
         updatedAt: c.updated_at,
         syncStatus: "synced" as const,
       }));
 
-      const rates = ratesRes.data || [];
-      let extras = extrasRes.error ? null : extrasRes.data;
+      const rates = ratesRows;
+      let extras = extrasRes.data;
       if (!extras) {
         const { data: insertedExtras, error: insertExtrasError } = await client
           .from("user_day_extras")
-          .insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: new Date().toISOString() })
+          .upsert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
           .select()
           .single();
-        if (!insertExtrasError) extras = insertedExtras;
+        if (insertExtrasError) throw insertExtrasError;
+        extras = insertedExtras;
       }
-      const holidays = holidaysRes.data || [];
+      const holidays = holidaysRows;
 
       res.json({
         profile,

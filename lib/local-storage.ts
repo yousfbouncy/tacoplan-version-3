@@ -1006,7 +1006,7 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
       byId.set(item.id, item);
     }
   }
-  const list: Compensacion[] = Array.from(byId.values());
+  const list: Compensacion[] = dedupeCompensacionesByJornada(Array.from(byId.values()));
 
   // ================================================================
   // MIGRACIÓN one-shot compensaciones históricas mal calculadas.
@@ -1203,6 +1203,27 @@ function migrateCompensacion(c: any): Compensacion {
   };
 }
 
+function dedupeCompensacionesByJornada(list: Compensacion[]): Compensacion[] {
+  const byLogicalKey = new Map<string, Compensacion>();
+  for (const item of list || []) {
+    if (!item?.id) continue;
+    const key = item.jornadaId ? `jornada:${item.jornadaId}` : `id:${item.id}`;
+    const current = byLogicalKey.get(key);
+    if (!current) {
+      byLogicalKey.set(key, item);
+      continue;
+    }
+
+    const currentUpdated = String(current.updatedAt || "");
+    const incomingUpdated = String(item.updatedAt || "");
+    const incomingWins =
+      incomingUpdated > currentUpdated ||
+      (incomingUpdated === currentUpdated && item.syncStatus === "synced" && current.syncStatus !== "synced");
+    if (incomingWins) byLogicalKey.set(key, item);
+  }
+  return Array.from(byLogicalKey.values());
+}
+
 async function saveAllCompensaciones(list: Compensacion[]): Promise<void> {
   const byId = new Map<string, Compensacion>();
   for (const item of list || []) {
@@ -1212,7 +1233,10 @@ async function saveAllCompensaciones(list: Compensacion[]): Promise<void> {
       byId.set(item.id, item);
     }
   }
-  await setItemScoped(COMPENSACIONES_KEY, JSON.stringify(Array.from(byId.values())));
+  await setItemScoped(
+    COMPENSACIONES_KEY,
+    JSON.stringify(dedupeCompensacionesByJornada(Array.from(byId.values()))),
+  );
 }
 
 function findPreviousClosed(allJornadas: Jornada[], beforeStartAt: string): Jornada | null {
@@ -4348,14 +4372,14 @@ function dedupeDayExtraEntries(list: DayExtraEntry[]): DayExtraEntry[] {
       continue;
     }
 
-    const currentRank = rank(current);
-    const incomingRank = rank(entry);
     const currentUpdated = String(current.updatedAt || current.createdAt || "");
     const incomingUpdated = String(entry.updatedAt || entry.createdAt || "");
+    const currentRank = rank(current);
+    const incomingRank = rank(entry);
 
     if (
-      incomingRank > currentRank ||
-      (incomingRank === currentRank && incomingUpdated >= currentUpdated)
+      incomingUpdated > currentUpdated ||
+      (incomingUpdated === currentUpdated && incomingRank >= currentRank)
     ) {
       byLogicalKey.set(key, entry);
     }

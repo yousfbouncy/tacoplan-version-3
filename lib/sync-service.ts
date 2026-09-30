@@ -4,6 +4,7 @@ import { getPendingSyncData, markAllSynced, mergeFromCloud } from "@/lib/local-s
 import * as LS from "@/lib/local-storage";
 import { normalizeLocationText } from "@/lib/location-normalization";
 import { supabase } from "@/lib/supabase";
+import { collectCloudPages } from "@/lib/sync-pagination";
 import type { User } from "@supabase/supabase-js";
 
 const OFFLINE_QUEUE_KEY = "tacoplan_offline_queue";
@@ -94,66 +95,72 @@ export interface NaturalDayDietEntry {
 
 const columnsCache = new Map<string, Set<string>>();
 
+const knownColumnsWhenEmpty: Record<string, string[]> = {
+  jornadas: [
+    "split_rest_detected", "split_rest_first_part_min", "split_rest_second_part_min",
+    "counts_as_reduced_rest", "payment_mode", "km_inicio", "km_fin", "km_total",
+    "price_per_km", "importe_km", "price_per_trip", "importe_viaje",
+    "report_hide_amounts", "report_hide_pluses", "tacho_daily_summary_id",
+    "tacho_driving_min", "tacho_work_min", "tacho_available_min", "tacho_rest_min",
+    "tacho_countries", "tacho_country_entries", "tacho_km_total",
+    "tacho_first_activity_at", "tacho_last_activity_at", "tacho_disconnections",
+    "tacho_data_quality", "is_double_driving", "second_driver_name",
+  ],
+  user_natural_day_diets: [
+    "user_id", "date", "type", "percentage", "amount", "location", "source",
+    "previous_journey_id", "next_journey_id", "confirmed_by_user",
+    "dismissed_at", "created_at", "updated_at", "pluses_json",
+    "is_domingo", "is_festivo",
+  ],
+  user_day_extras: [
+    "user_id", "extra_saturday", "extra_sunday", "extra_holiday",
+    "offsite_weekly_reduced_nacional", "offsite_weekly_reduced_internacional",
+    "offsite_weekly_complete_nacional", "offsite_weekly_complete_internacional",
+    "updated_at",
+  ],
+  user_day_extra_entries: [
+    "user_id", "date", "entry_type", "day_flag", "offsite_rest_type", "offsite_base",
+    "plus_sunday", "plus_holiday", "location_start", "location_end", "in_base",
+    "distance_to_base_km", "amount", "note", "created_at", "updated_at",
+  ],
+};
+
 async function getColumnSet(table: string): Promise<Set<string>> {
   const cached = columnsCache.get(table);
   if (cached) return cached;
 
   try {
     const res = await supabase.from(table).select("*").limit(1);
+    if (res.error) throw res.error;
     const row = Array.isArray(res.data) && res.data.length > 0 ? res.data[0] : null;
     const cols = new Set<string>();
     if (row && typeof row === "object") {
       for (const k of Object.keys(row)) cols.add(k);
     } else {
       cols.add("id");
-      // select("*").limit(1) no permite descubrir columnas cuando la tabla
-      // todavía está vacía. Para tablas cuyo esquema forma parte de nuestras
-      // migraciones, conocemos esas columnas y no debemos perder datos en el
-      // primer sync (especialmente pluses de jornadas fuera de base).
-      if (table === "user_natural_day_diets") {
-        [
-          "user_id", "date", "type", "percentage", "amount", "location", "source",
-          "previous_journey_id", "next_journey_id", "confirmed_by_user",
-          "dismissed_at", "created_at", "updated_at", "pluses_json",
-          "is_domingo", "is_festivo",
-        ].forEach((name) => cols.add(name));
-      }
-      if (table === "user_day_extras") {
-        [
-          "user_id", "extra_saturday", "extra_sunday", "extra_holiday",
-          "offsite_weekly_reduced_nacional", "offsite_weekly_reduced_internacional",
-          "offsite_weekly_complete_nacional", "offsite_weekly_complete_internacional",
-          "updated_at",
-        ].forEach((name) => cols.add(name));
-      }
+      // select("*").limit(1) no descubre el esquema de una tabla vacía. Usar
+      // el contrato conocido evita que el primer sync omita campos modernos.
+      (knownColumnsWhenEmpty[table] || []).forEach((name) => cols.add(name));
     }
     columnsCache.set(table, cols);
     return cols;
-  } catch {
-    const cols = new Set<string>();
-    cols.add("id");
-    if (table === "user_natural_day_diets") {
-      [
-        "user_id", "date", "type", "percentage", "amount", "location", "source",
-        "previous_journey_id", "next_journey_id", "confirmed_by_user",
-        "dismissed_at", "created_at", "updated_at", "pluses_json",
-        "is_domingo", "is_festivo",
-      ].forEach((name) => cols.add(name));
-    }
-    if (table === "user_day_extras") {
-      [
-        "user_id", "extra_saturday", "extra_sunday", "extra_holiday",
-        "offsite_weekly_reduced_nacional", "offsite_weekly_reduced_internacional",
-        "offsite_weekly_complete_nacional", "offsite_weekly_complete_internacional",
-        "updated_at",
-      ].forEach((name) => cols.add(name));
-    }
-    columnsCache.set(table, cols);
-    return cols;
+  } catch (error) {
+    // Un error transitorio no debe convertirse en un esquema vacío cacheado:
+    // eso haría que posteriores escrituras descartasen columnas sin avisar.
+    throw error;
   }
 }
 
 function mapJornadaFromDb(j: any) {
+  const validTimestampOrNull = (value: unknown): string | null => {
+    if (typeof value !== "string" || !value.trim()) return null;
+    return Number.isFinite(Date.parse(value)) ? value : null;
+  };
+  const nonnegativeIntOrNull = (value: unknown): number | null => {
+    if (value == null) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+  };
   const mapped = {
     id: j.id,
     fechaInicio: j.fecha_inicio,
@@ -162,9 +169,9 @@ function mapJornadaFromDb(j: any) {
     fechaFin: j.fecha_fin,
     horaFin: j.hora_fin,
     lugarFin: j.lugar_fin ? normalizeLocationText(j.lugar_fin) : null,
-    startAt: j.start_at,
-    endAt: j.end_at,
-    conduccionMin: j.conduccion_min,
+    startAt: validTimestampOrNull(j.start_at),
+    endAt: validTimestampOrNull(j.end_at),
+    conduccionMin: nonnegativeIntOrNull(j.conduccion_min),
     conduccionDomingoMin: j.conduccion_domingo_min ?? null,
     conduccionLunesMin: j.conduccion_lunes_min ?? null,
     tipoRuta: j.tipo_ruta,
@@ -180,9 +187,9 @@ function mapJornadaFromDb(j: any) {
     dietBaseEur: j.diet_base_eur ?? null,
     dietRule: j.diet_rule ?? null,
     dietCalculatedAt: j.diet_calculated_at ?? null,
-    descansoAnteriorMin: j.descanso_anterior_min,
+    descansoAnteriorMin: nonnegativeIntOrNull(j.descanso_anterior_min),
     tipoDescansoAnterior: j.tipo_descanso_anterior,
-    duracionJornadaMin: j.duracion_jornada_min,
+    duracionJornadaMin: nonnegativeIntOrNull(j.duracion_jornada_min),
     countsAsDailyReduced: j.counts_as_daily_reduced || false,
     plannedRestMin: j.planned_rest_min ?? null,
     plannedRestType: j.planned_rest_type ?? null,
@@ -366,66 +373,111 @@ async function applyNaturalDayDietsLocally(list: any[]): Promise<void> {
   await LS.mergeNaturalDayDietsFromCloud((list || []) as any);
 }
 
+type CloudOrder = { column: string; ascending: boolean };
+
+async function fetchAllUserRows(
+  table: string,
+  userId: string,
+  orderBy: CloudOrder[],
+): Promise<any[]> {
+  return collectCloudPages<any>((from, to) => {
+    let query: any = supabase.from(table).select("*").eq("user_id", userId);
+    for (const order of orderBy) {
+      query = query.order(order.column, { ascending: order.ascending });
+    }
+    return query.range(from, to);
+  });
+}
+
+async function findCloudRow(
+  table: string,
+  userId: string,
+  filters: Record<string, unknown>,
+): Promise<{ id: string; updated_at: string | null } | null> {
+  let query: any = supabase
+    .from(table)
+    .select("id,updated_at")
+    .eq("user_id", userId);
+  for (const [column, value] of Object.entries(filters)) {
+    query = value == null ? query.is(column, null) : query.eq(column, value);
+  }
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? { id: String(data.id), updated_at: data.updated_at ?? null } : null;
+}
+
+function cloudIsNewer(cloudUpdatedAt: string | null | undefined, localUpdatedAt: string | null | undefined): boolean {
+  if (!cloudUpdatedAt) return false;
+  if (!localUpdatedAt) return true;
+  return cloudUpdatedAt > localUpdatedAt;
+}
+
 async function pullCloudAll(user: User): Promise<CloudPayload> {
   const userId = user.id;
-  const [profileRes, jornadasRes, compensacionesRes, ratesRes, extrasRes, holidaysRes, dayExtraRes, natRes] = await Promise.all([
+  const [profileRes, jornadasRows, compensacionesRows, ratesRows, extrasRes, holidaysRows, dayExtraRows, naturalRows] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
-    supabase.from("jornadas").select("*").eq("user_id", userId).order("start_at", { ascending: false }),
-    supabase.from("compensaciones").select("*").eq("user_id", userId).order("fecha_limite", { ascending: true }),
-    supabase.from("user_diet_rates").select("*").eq("user_id", userId),
+    fetchAllUserRows("jornadas", userId, [
+      { column: "start_at", ascending: false },
+      { column: "id", ascending: true },
+    ]),
+    fetchAllUserRows("compensaciones", userId, [
+      { column: "fecha_limite", ascending: true },
+      { column: "id", ascending: true },
+    ]),
+    fetchAllUserRows("user_diet_rates", userId, [
+      { column: "trip_type", ascending: true },
+      { column: "percent", ascending: true },
+      { column: "id", ascending: true },
+    ]),
     supabase.from("user_day_extras").select("*").eq("user_id", userId).maybeSingle(),
-    supabase.from("user_holidays").select("*").eq("user_id", userId).order("date"),
-    supabase.from("user_day_extra_entries").select("*").eq("user_id", userId).order("date"),
-    supabase.from("user_natural_day_diets").select("*").eq("user_id", userId).order("date", { ascending: true }),
+    fetchAllUserRows("user_holidays", userId, [
+      { column: "date", ascending: true },
+      { column: "id", ascending: true },
+    ]),
+    fetchAllUserRows("user_day_extra_entries", userId, [
+      { column: "date", ascending: true },
+      { column: "id", ascending: true },
+    ]),
+    fetchAllUserRows("user_natural_day_diets", userId, [
+      { column: "date", ascending: true },
+      { column: "id", ascending: true },
+    ]),
   ]);
 
   if (profileRes.error) throw profileRes.error;
-  if (jornadasRes.error) throw jornadasRes.error;
-  if (compensacionesRes.error) throw compensacionesRes.error;
-  if (ratesRes.error) throw ratesRes.error;
-  if (holidaysRes.error) throw holidaysRes.error;
+  if (extrasRes.error) throw extrasRes.error;
 
-  const jornadas = (jornadasRes.data || []).map(mapJornadaFromDb);
-  const compensaciones = (compensacionesRes.data || []).map(mapCompensacionFromDb);
-  const dayExtraEntries = dayExtraRes.error ? [] : (dayExtraRes.data || []).map(mapDayExtraEntryFromDb);
-  const naturalDayDiets = (natRes.data || []).map(mapNaturalDayFromDb);
+  const jornadas = jornadasRows.map(mapJornadaFromDb);
+  const compensaciones = compensacionesRows.map(mapCompensacionFromDb);
+  const dayExtraEntries = dayExtraRows.map(mapDayExtraEntryFromDb);
+  const naturalDayDiets = naturalRows.map(mapNaturalDayFromDb);
 
-  let extras = extrasRes.error ? null : extrasRes.data;
+  let extras = extrasRes.data;
   if (!extras) {
-    try {
-      const cols = await getColumnSet("user_day_extras");
-      const baseRow: Record<string, any> = {
-        user_id: userId,
-        extra_saturday: 0,
-        extra_sunday: 0,
-        extra_holiday: 0,
-        updated_at: new Date().toISOString(),
-      };
-      if (cols.has("offsite_weekly_reduced_nacional")) baseRow.offsite_weekly_reduced_nacional = 0;
-      if (cols.has("offsite_weekly_reduced_internacional")) baseRow.offsite_weekly_reduced_internacional = 0;
-      if (cols.has("offsite_weekly_complete_nacional")) baseRow.offsite_weekly_complete_nacional = 0;
-      if (cols.has("offsite_weekly_complete_internacional")) baseRow.offsite_weekly_complete_internacional = 0;
-      const inserted = await supabase.from("user_day_extras").insert(baseRow).select().single();
-      if (inserted.error) throw inserted.error;
-      extras = inserted.data;
-    } catch (e) {
-      const inserted = await supabase
-        .from("user_day_extras")
-        .insert({ user_id: userId, extra_saturday: 0, extra_sunday: 0, extra_holiday: 0, updated_at: new Date().toISOString() })
-        .select()
-        .single();
-      if (inserted.error) throw inserted.error;
-      extras = inserted.data;
-    }
+    const cols = await getColumnSet("user_day_extras");
+    const baseRow: Record<string, any> = {
+      user_id: userId,
+      extra_saturday: 0,
+      extra_sunday: 0,
+      extra_holiday: 0,
+      updated_at: new Date().toISOString(),
+    };
+    if (cols.has("offsite_weekly_reduced_nacional")) baseRow.offsite_weekly_reduced_nacional = 0;
+    if (cols.has("offsite_weekly_reduced_internacional")) baseRow.offsite_weekly_reduced_internacional = 0;
+    if (cols.has("offsite_weekly_complete_nacional")) baseRow.offsite_weekly_complete_nacional = 0;
+    if (cols.has("offsite_weekly_complete_internacional")) baseRow.offsite_weekly_complete_internacional = 0;
+    const inserted = await supabase
+      .from("user_day_extras")
+      .upsert(baseRow, { onConflict: "user_id" })
+      .select()
+      .single();
+    if (inserted.error) throw inserted.error;
+    extras = inserted.data;
   }
 
-  let ferryConfig: any | null = null;
-  try {
-    const ferryRes = await supabase.from("user_ferry_config").select("*").eq("user_id", userId).maybeSingle();
-    ferryConfig = ferryRes.error ? null : (ferryRes.data ?? null);
-  } catch {
-    ferryConfig = null;
-  }
+  const ferryRes = await supabase.from("user_ferry_config").select("*").eq("user_id", userId).maybeSingle();
+  if (ferryRes.error) throw ferryRes.error;
+  const ferryConfig = ferryRes.data ?? null;
 
   return {
     profile: profileRes.data ?? null,
@@ -435,9 +487,9 @@ async function pullCloudAll(user: User): Promise<CloudPayload> {
     naturalDayDiets,
     ferryConfig,
     dietasConfig: {
-      rates: ratesRes.data || [],
+      rates: ratesRows,
       extras,
-      holidays: holidaysRes.data || [],
+      holidays: holidaysRows,
     },
   };
 }
@@ -940,10 +992,10 @@ async function ensureDietasConfigRow(user: User): Promise<void> {
   if (!data) {
     const { error: insertError } = await supabase
       .from("dietas_config")
-      .insert({
+      .upsert({
         user_id: user.id,
         updated_at: new Date().toISOString(),
-      })
+      }, { onConflict: "user_id" })
       .select()
       .single();
 
@@ -963,12 +1015,12 @@ async function ensureProfileRow(user: User): Promise<void> {
   if (!profileData) {
     const { error: insertProfileError } = await supabase
       .from("profiles")
-      .insert({
+      .upsert({
         id: user.id,
         email: user.email ?? "",
         display_name: (user.user_metadata as any)?.full_name ?? "",
         updated_at: new Date().toISOString(),
-      })
+      }, { onConflict: "id" })
       .select()
       .single();
 
@@ -1127,8 +1179,14 @@ export async function syncAll(
         naturalDayDietsPending: hasNatPending,
       });
 
+      let jornadasPushed = 0;
+      let compensacionesPushed = 0;
       const jornadasCols = await getColumnSet("jornadas");
       for (const j of pending.jornadas) {
+        const existingCloud = await findCloudRow("jornadas", authUser.id, { id: j.id });
+        if (cloudIsNewer(existingCloud?.updated_at, j.updatedAt)) {
+          continue;
+        }
         const baseRow: Record<string, any> = {
           id: j.id,
           user_id: authUser.id,
@@ -1151,7 +1209,9 @@ export async function syncAll(
           dieta_percent: j.dietaPercent,
           day_flag: j.dayFlag,
           day_extra_eur: j.dayExtraEur,
-          descanso_anterior_min: j.descansoAnteriorMin == null ? null : clampInt4(j.descansoAnteriorMin, 0, 60 * 24 * 7),
+          // Un descanso entre jornadas puede durar semanas. Limitarlo a siete
+          // días alteraba el historial al sincronizar tras vacaciones/bajas.
+          descanso_anterior_min: j.descansoAnteriorMin == null ? null : clampInt4(j.descansoAnteriorMin),
           tipo_descanso_anterior: j.tipoDescansoAnterior,
           duracion_jornada_min: j.duracionJornadaMin == null ? null : clampInt4(j.duracionJornadaMin, 0, 60 * 24 * 7),
           updated_at: j.updatedAt,
@@ -1241,6 +1301,7 @@ export async function syncAll(
         // #endregion
         const { error } = await supabase.from("jornadas").upsert(row, { onConflict: "id" });
         if (error) throw error;
+        jornadasPushed += 1;
         const storedRes = await supabase
           .from("jornadas")
           .select("id,fecha_inicio,hora_inicio,fecha_fin,hora_fin,start_at,end_at,updated_at")
@@ -1267,8 +1328,14 @@ export async function syncAll(
       }
 
       for (const c of pending.compensaciones) {
+        const existingCloud = c.jornadaId
+          ? await findCloudRow("compensaciones", authUser.id, { jornada_id: c.jornadaId })
+          : await findCloudRow("compensaciones", authUser.id, { id: c.id });
+        if (cloudIsNewer(existingCloud?.updated_at, c.updatedAt)) {
+          continue;
+        }
         const row = {
-          id: c.id,
+          id: existingCloud?.id || c.id,
           user_id: authUser.id,
           jornada_id: c.jornadaId,
           horas_deuda: c.horasDeuda == null ? null : clampInt4(c.horasDeuda, 0, 48),
@@ -1278,7 +1345,7 @@ export async function syncAll(
           fecha_compensacion: c.fechaCompensacion,
           source_rest_start_at: c.sourceRestStartAt ?? null,
           source_rest_end_at: c.sourceRestEndAt ?? null,
-          source_rest_duration_min: c.sourceRestDurationMin == null ? null : clampInt4(c.sourceRestDurationMin, 0, 60 * 24 * 14),
+          source_rest_duration_min: c.sourceRestDurationMin == null ? null : clampInt4(c.sourceRestDurationMin),
           source_rest_legal_type: c.sourceRestLegalType ?? null,
           source_rest_location_start: c.sourceRestLocationStart ?? null,
           source_rest_location_end: c.sourceRestLocationEnd ?? null,
@@ -1288,14 +1355,18 @@ export async function syncAll(
           recovered_in_jornada_id: c.recoveredInJornadaId ?? null,
           recovery_rest_start_at: c.recoveryRestStartAt ?? null,
           recovery_rest_end_at: c.recoveryRestEndAt ?? null,
-          recovery_rest_duration_min: c.recoveryRestDurationMin == null ? null : clampInt4(c.recoveryRestDurationMin, 0, 60 * 24 * 14),
+          recovery_rest_duration_min: c.recoveryRestDurationMin == null ? null : clampInt4(c.recoveryRestDurationMin),
           updated_at: c.updatedAt,
         };
-        const { error } = await supabase.from("compensaciones").upsert(row, { onConflict: "id" });
+        const { error } = await supabase
+          .from("compensaciones")
+          .upsert(row, { onConflict: c.jornadaId ? "user_id,jornada_id" : "id" });
         if (error) throw error;
+        compensacionesPushed += 1;
       }
       let dayExtraPushed = 0;
       let dayExtraPushOk = true;
+      const dayExtraCols = await getColumnSet("user_day_extra_entries");
       for (const e of pending.dayExtraEntries) {
         try {
           const rawAmount = (e as any).amount;
@@ -1306,11 +1377,22 @@ export async function syncAll(
                   const n = Number(rawAmount);
                   return Number.isFinite(n) ? Math.max(0, Math.min(99999, +n.toFixed(2))) : null;
                 })();
+          const entryType = (e as any).entryType ?? "day_extra";
+          const logicalFilters: Record<string, unknown> = {
+            date: e.date,
+            entry_type: entryType,
+          };
+          if (entryType === "day_extra") logicalFilters.day_flag = (e as any).dayFlag ?? null;
+          const existingCloud = await findCloudRow("user_day_extra_entries", authUser.id, logicalFilters);
+          if (cloudIsNewer(existingCloud?.updated_at, e.updatedAt)) {
+            continue;
+          }
+
           const fullRow: Record<string, any> = {
-            id: e.id,
+            id: existingCloud?.id || e.id,
             user_id: authUser.id,
             date: e.date,
-            entry_type: (e as any).entryType ?? "day_extra",
+            entry_type: entryType,
             day_flag: (e as any).dayFlag ?? null,
             offsite_rest_type: (e as any).offsiteRestType ?? null,
             offsite_base: (e as any).offsiteBase ?? null,
@@ -1325,20 +1407,11 @@ export async function syncAll(
             created_at: e.createdAt,
             updated_at: e.updatedAt,
           };
-          const fullRes = await supabase.from("user_day_extra_entries").upsert(fullRow, { onConflict: "id" });
-          if (fullRes.error) {
-            const minimalRow: Record<string, any> = {
-              id: e.id,
-              user_id: authUser.id,
-              date: e.date,
-              amount: safeAmount,
-              note: e.note,
-              created_at: e.createdAt,
-              updated_at: e.updatedAt,
-            };
-            const minRes = await supabase.from("user_day_extra_entries").upsert(minimalRow, { onConflict: "id" });
-            if (minRes.error) throw minRes.error;
-          }
+          const row = Object.fromEntries(
+            Object.entries(fullRow).filter(([column]) => column === "id" || dayExtraCols.has(column)),
+          );
+          const fullRes = await supabase.from("user_day_extra_entries").upsert(row, { onConflict: "id" });
+          if (fullRes.error) throw fullRes.error;
           dayExtraPushed += 1;
         } catch (e) {
           console.error("SYNC ERROR: day extra entries upsert", e);
@@ -1360,12 +1433,14 @@ export async function syncAll(
             natCols = await getColumnSet("user_natural_day_diets");
           } catch {}
           for (const n of pendingLocal) {
+            const existingCloud = await findCloudRow("user_natural_day_diets", authUser.id, { date: n.date });
+            if (cloudIsNewer(existingCloud?.updated_at, n.updatedAt)) {
+              continue;
+            }
             const row: Record<string, any> = {
-              // user_natural_day_diets.id es UUID en Supabase. Muchos registros
-              // locales históricos usan IDs legibles/no-UUID. No enviamos el id:
-              // UNIQUE(user_id,date) identifica el registro y Supabase conserva o
-              // genera el UUID correcto. En el pull posterior ese UUID reemplaza
-              // al id local por fecha.
+              // La migración alinea el id con el modelo local (text), mientras el
+              // UNIQUE(user_id,date) impide duplicados entre dispositivos.
+              id: n.id,
               user_id: authUser.id,
               date: n.date,
               type: n.type,
@@ -1447,13 +1522,14 @@ export async function syncAll(
         natPushOk = false;
       }
 
-      pushed = pending.jornadas.length + pending.compensaciones.length + dayExtraPushed + natPushed;
+      pushed = jornadasPushed + compensacionesPushed + dayExtraPushed + natPushed;
       (syncAll as any).__dayExtraPushOk = dayExtraPushOk;
       (syncAll as any).__natPushOk = natPushOk;
     }
 
     let profilePushOk = true;
     let dietasPushOk = true;
+    let ferryPushOk = true;
     const localSettings = await collectLocalSettings();
     if (localSettings) {
       const maxIso = (a: any, b: any): string | null => {
@@ -1608,10 +1684,14 @@ export async function syncAll(
             };
             if (cols.has("ferry_transit_rate")) row.ferry_transit_rate = Number(f.ferryTransitRate) || 54.3;
             if (cols.has("ferry_cabin_rate")) row.ferry_cabin_rate = Number(f.ferryCabinRate) || 54.3;
-            await supabase.from("user_ferry_config").upsert(row, { onConflict: "user_id" });
+            const { error } = await supabase.from("user_ferry_config").upsert(row, { onConflict: "user_id" });
+            if (error) throw error;
           }
         }
-      } catch {}
+      } catch (error) {
+        console.error("SYNC ERROR: ferry config upsert", error);
+        ferryPushOk = false;
+      }
     }
 
     const queue = await getOfflineQueue();
@@ -1704,6 +1784,22 @@ export async function syncAll(
       const pushes = queue.filter((a) => a.type === "push");
       const remaining = [...pushes, ...failedDeletes];
       await saveOfflineQueue(remaining.length > 0 ? remaining : []);
+    }
+
+    const partialFailures: string[] = [];
+    if (!dayExtraPushOk) partialFailures.push("extras diarios");
+    if (!natPushOk) partialFailures.push("dietas por día natural");
+    if (!profilePushOk) partialFailures.push("perfil");
+    if (!dietasPushOk) partialFailures.push("configuración de dietas");
+    if (!ferryPushOk) partialFailures.push("configuración de ferry");
+    if (!allDeletesOk) partialFailures.push("eliminaciones pendientes");
+
+    if (partialFailures.length > 0) {
+      return {
+        success: false,
+        message: `Sincronización parcial: falta ${partialFailures.join(", ")}`,
+        stats: { pulled, pushed, merged },
+      };
     }
 
     await saveLastSyncTime();
