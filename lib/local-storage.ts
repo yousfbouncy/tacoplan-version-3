@@ -646,6 +646,28 @@ async function getAllJornadas(): Promise<Jornada[]> {
   }
 }
 
+function normalizeJornadaPlusItems(value: unknown): PlusItem[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: PlusItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const concepto = String(raw?.concepto || "").trim();
+    const importe = Number(raw?.importe);
+    if (!concepto || !Number.isFinite(importe) || importe <= 0) continue;
+    const normalizedConcept = concepto
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+    const rounded = Math.round(importe * 100) / 100;
+    const key = `${normalizedConcept}|${rounded.toFixed(2)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ concepto, importe: rounded });
+  }
+  return out.length > 0 ? out : null;
+}
+
 function migrateJornada(j: any): Jornada {
   const migrated: Jornada = {
     ...j,
@@ -688,6 +710,7 @@ function migrateJornada(j: any): Jornada {
     importeViaje: j.importeViaje ?? null,
     reportHideAmounts: j.reportHideAmounts ?? false,
     reportHidePluses: j.reportHidePluses ?? false,
+    plusItems: normalizeJornadaPlusItems(j.plusItems),
     previousRestStartAt: j.previousRestStartAt ?? null,
     previousRestEndAt: j.previousRestEndAt ?? null,
     previousRestLegalType: j.previousRestLegalType ?? null,
@@ -757,9 +780,13 @@ async function saveAllJornadas(list: Jornada[]): Promise<void> {
   const byId = new Map<string, Jornada>();
   for (const item of list || []) {
     if (!item?.id) continue;
-    const current = byId.get(item.id);
-    if (!current || String(item.updatedAt || "") >= String(current.updatedAt || "")) {
-      byId.set(item.id, item);
+    const normalized: Jornada = {
+      ...item,
+      plusItems: normalizeJornadaPlusItems(item.plusItems),
+    };
+    const current = byId.get(normalized.id);
+    if (!current || String(normalized.updatedAt || "") >= String(current.updatedAt || "")) {
+      byId.set(normalized.id, normalized);
     }
   }
   await setItemScoped(JORNADAS_KEY, JSON.stringify(Array.from(byId.values())));
@@ -1226,7 +1253,7 @@ export function resolveNaturalDayDietFinancials(
   plusTotal: number;
 } {
   const configured = findRate(customRates, nd.type, nd.percentage);
-  const explicitPluses = Array.isArray(nd.plusItems)
+  const explicitPlusesRaw = Array.isArray(nd.plusItems)
     ? nd.plusItems
         .filter((p) => p && Number.isFinite(Number(p.amount)) && Number(p.amount) > 0)
         .map((p) => ({
@@ -1235,6 +1262,19 @@ export function resolveNaturalDayDietFinancials(
           id: String(p.id || `${nd.date}_${p.concepto || "plus"}`),
         }))
     : [];
+  const explicitPluses: Array<{ concepto: string; amount: number; id: string }> = [];
+  const explicitSeen = new Set<string>();
+  for (const plus of explicitPlusesRaw) {
+    const concept = plus.concepto
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+    const key = `${concept}|${plus.amount.toFixed(2)}`;
+    if (explicitSeen.has(key)) continue;
+    explicitSeen.add(key);
+    explicitPluses.push(plus);
+  }
 
   const explicitPlusTotal = Math.round(
     explicitPluses.reduce((sum, p) => sum + p.amount, 0) * 100,
