@@ -376,6 +376,8 @@ export default function DietasScreen() {
         updatedAt: nowIso,
         syncStatus: "pending" as const,
         plusItems: plusItems && plusItems.length > 0 ? plusItems : null,
+        isDomingo: src.isDomingo === true,
+        isFestivo: src.isFestivo === true,
       });
     }
     if (entries.length > 0) {

@@ -6,6 +6,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { normalizeLocationText } from "@/lib/location-normalization";
 import { supabase } from "@/lib/supabase";
 import { calculateCompensationDeadline } from "@/lib/compensation-deadline";
+import { classifyNaturalDayAddons } from "@/lib/natural-day-addons";
 export { calculateCompensationDeadline } from "@/lib/compensation-deadline";
 
 const JORNADAS_KEY = "tacoplan_jornadas";
@@ -3520,7 +3521,15 @@ export async function getResumenDietas(
     desglose[key].cantidad++;
     desglose[key].total = Math.round((desglose[key].total + dietAmount) * 100) / 100;
 
-    for (const pi of resolved.plusItems) {
+    const classifiedAddons = classifyNaturalDayAddons(nd, resolved.plusItems, extrasCfg);
+    for (const special of classifiedAddons.dayExtras) {
+      totalExtras = Math.round((totalExtras + special.amount) * 100) / 100;
+      if (!extrasDesglose[special.tipo]) extrasDesglose[special.tipo] = { cantidad: 0, total: 0 };
+      extrasDesglose[special.tipo].cantidad++;
+      extrasDesglose[special.tipo].total = Math.round((extrasDesglose[special.tipo].total + special.amount) * 100) / 100;
+    }
+
+    for (const pi of classifiedAddons.plusItems) {
       const amt = Number.isFinite(Number(pi.amount)) ? Number(pi.amount) : 0;
       if (amt <= 0) continue;
       totalPlus = Math.round((totalPlus + amt) * 100) / 100;
@@ -3708,7 +3717,15 @@ export async function getResumenKm(
     dietasDesglose[key].cantidad++;
     dietasDesglose[key].total = Math.round((dietasDesglose[key].total + resolved.dietAmount) * 100) / 100;
 
-    for (const plus of resolved.plusItems) {
+    const classifiedAddons = classifyNaturalDayAddons(nd, resolved.plusItems, extrasCfg);
+    for (const special of classifiedAddons.dayExtras) {
+      totalExtras = Math.round((totalExtras + special.amount) * 100) / 100;
+      if (!extrasDesglose[special.tipo]) extrasDesglose[special.tipo] = { cantidad: 0, total: 0 };
+      extrasDesglose[special.tipo].cantidad++;
+      extrasDesglose[special.tipo].total = Math.round((extrasDesglose[special.tipo].total + special.amount) * 100) / 100;
+    }
+
+    for (const plus of classifiedAddons.plusItems) {
       const amount = Number(plus.amount) || 0;
       if (amount <= 0) continue;
       const concepto = String(plus.concepto || "Plus").trim() || "Plus";
@@ -3890,7 +3907,15 @@ export async function getResumenViaje(
     dietasDesglose[key].cantidad++;
     dietasDesglose[key].total = Math.round((dietasDesglose[key].total + resolved.dietAmount) * 100) / 100;
 
-    for (const plus of resolved.plusItems) {
+    const classifiedAddons = classifyNaturalDayAddons(nd, resolved.plusItems, extrasCfg);
+    for (const special of classifiedAddons.dayExtras) {
+      totalExtras = Math.round((totalExtras + special.amount) * 100) / 100;
+      if (!extrasDesglose[special.tipo]) extrasDesglose[special.tipo] = { cantidad: 0, total: 0 };
+      extrasDesglose[special.tipo].cantidad++;
+      extrasDesglose[special.tipo].total = Math.round((extrasDesglose[special.tipo].total + special.amount) * 100) / 100;
+    }
+
+    for (const plus of classifiedAddons.plusItems) {
       const amount = Number(plus.amount) || 0;
       if (amount <= 0) continue;
       const concepto = String(plus.concepto || "Plus").trim() || "Plus";

@@ -52,6 +52,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n-context";
 import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
+import { classifyNaturalDayAddons } from "@/lib/natural-day-addons";
 
 type ExportContent = "historial" | "dietas" | "viajes" | "ambos" | "todo";
 type ReportOptions = { showAmounts: boolean; showPluses: boolean };
@@ -769,10 +770,21 @@ export default function ExportarScreen() {
       }
     }
     totalOffsiteRestDiet = Math.round(totalOffsiteRestDiet * 100) / 100;
-    const totalExtrasHistorial = Math.round((totalExtrasHistorialJornadas + totalExtrasExtraDays) * 100) / 100;
+    let totalExtrasHistorial = Math.round((totalExtrasHistorialJornadas + totalExtrasExtraDays) * 100) / 100;
     const totalPlusJornadas = jornadas.reduce((s, j) => s + ((j.plusItems || []).reduce((ps, p) => ps + p.importe, 0)), 0);
+    const naturalAddons = new Map(
+      validNatDiets.map((n) => {
+        const resolved = naturalFinancials.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtrasCfg);
+        return [n.id, classifyNaturalDayAddons(n, resolved.plusItems, dayExtrasCfg)] as const;
+      }),
+    );
+    const totalNaturalDayExtras = validNatDiets.reduce(
+      (sum, n) => sum + (naturalAddons.get(n.id)?.dayExtras.reduce((s, e) => s + e.amount, 0) || 0),
+      0,
+    );
+    totalExtrasHistorial = Math.round((totalExtrasHistorial + totalNaturalDayExtras) * 100) / 100;
     const totalPlusNaturales = validNatDiets.reduce(
-      (s, n) => s + (naturalFinancials.get(n.id)?.plusTotal || 0),
+      (sum, n) => sum + (naturalAddons.get(n.id)?.plusItems.reduce((s, p) => s + p.amount, 0) || 0),
       0,
     );
     const totalPlus = Math.round((totalPlusJornadas + totalPlusNaturales) * 100) / 100;
@@ -782,10 +794,14 @@ export default function ExportarScreen() {
     );
     const totalDietCount = totalDietCountJornadas + validNatDiets.length;
     const totalExtraCountJornadas = jornadas.reduce((s, j) => s + (j.dayFlag && j.dayExtraEur && parseFloat(j.dayExtraEur) > 0 ? 1 : 0), 0);
-    const totalExtraCount = totalExtraCountJornadas + totalExtraDaysCount;
+    const totalNaturalDayExtraCount = validNatDiets.reduce(
+      (sum, n) => sum + (naturalAddons.get(n.id)?.dayExtras.length || 0),
+      0,
+    );
+    const totalExtraCount = totalExtraCountJornadas + totalExtraDaysCount + totalNaturalDayExtraCount;
     const totalPlusCount =
       jornadas.reduce((s, j) => s + ((j.plusItems || []).length > 0 ? 1 : 0), 0) +
-      validNatDiets.reduce((s, n) => s + ((naturalFinancials.get(n.id)?.plusItems.length || 0) > 0 ? 1 : 0), 0);
+      validNatDiets.reduce((s, n) => s + ((naturalAddons.get(n.id)?.plusItems.length || 0) > 0 ? 1 : 0), 0);
     const totalViajeCount = jornadas.reduce((s, j) => {
       if (j.paymentMode !== "viaje") return s;
       const imp = j.importeViaje != null ? j.importeViaje : (j.pricePerTrip != null ? j.pricePerTrip : 0);
@@ -932,7 +948,13 @@ export default function ExportarScreen() {
           : billingMode === "km"
             ? (opts.showAmounts ? `${resolved.dietAmount.toFixed(2)} \u20AC` : "-")
             : (opts.showAmounts ? `${resolved.dietAmount.toFixed(2)} \u20AC` : "-");
-        const plusCellNat = !opts.showPluses ? "" : buildPlusCellHTML(resolved.plusItems, opts);
+        const classified = naturalAddons.get(n.id) || classifyNaturalDayAddons(n, resolved.plusItems, dayExtrasCfg);
+        const naturalExtraCell = classified.dayExtras.length > 0
+          ? classified.dayExtras.map((e) => opts.showAmounts
+            ? `${dayFlagLabelI18n(e.tipo)} +${e.amount.toFixed(2)}\u20AC`
+            : dayFlagLabelI18n(e.tipo)).join(" · ")
+          : "";
+        const plusCellNat = !opts.showPluses ? "" : buildPlusCellHTML(classified.plusItems, opts);
         combinedRows.push({ ts, html: `<tr style="background: #fef3c7;">
         <td>${fechaCell}</td>
         <td>-</td>
@@ -942,7 +964,7 @@ export default function ExportarScreen() {
         <td class="num">-</td>
         <td class="num">-</td>
         <td${opts.showAmounts ? ' class="num"' : ""}>${billingCell}</td>
-        <td>${infCell}</td>
+        <td>${naturalExtraCell || infCell}</td>
         ${opts.showPluses ? `<td${opts.showAmounts ? ' class="num"' : ""}>${plusCellNat}</td>` : ""}
         <td>${obsCell}</td>
       </tr>` });
@@ -1166,15 +1188,18 @@ export default function ExportarScreen() {
       if (n.location) detalleParts.push(escapeHtml(n.location));
       const detalleCell = detalleParts.join(" | ");
       const resolved = naturalFinancials.get(n.id) || resolveNaturalDayDietFinancials(n, jornadas, customRates, dayExtras);
-      const plusCellNatDiet = showPluses ? buildPlusCellHTML(resolved.plusItems, reportOpts) : "";
+      const classified = classifyNaturalDayAddons(n, resolved.plusItems, dayExtras);
+      const naturalExtraTotal = classified.dayExtras.reduce((sum, extra) => sum + extra.amount, 0);
+      const plusTotal = classified.plusItems.reduce((sum, plus) => sum + plus.amount, 0);
+      const plusCellNatDiet = showPluses ? buildPlusCellHTML(classified.plusItems, reportOpts) : "";
       return `<tr style="background: #fef3c7;">
         <td>${formatFecha(n.date)}</td>
         <td>${detalleCell}</td>
         <td class="num">${n.percentage}%</td>
         ${showAmounts ? `<td class="num">${resolved.dietAmount.toFixed(2)} \u20AC</td>` : ""}
-        ${showAmounts ? `<td class="num">-</td>` : ""}
+        ${showAmounts ? `<td class="num">${naturalExtraTotal > 0 ? naturalExtraTotal.toFixed(2) + " \u20AC" : "-"}</td>` : ""}
         ${showPluses ? `<td class="num">${plusCellNatDiet || "-"}</td>` : ""}
-        ${showAmounts ? `<td class="num">${(resolved.dietAmount + resolved.plusTotal).toFixed(2)} \u20AC</td>` : ""}
+        ${showAmounts ? `<td class="num">${(resolved.dietAmount + naturalExtraTotal + plusTotal).toFixed(2)} \u20AC</td>` : ""}
       </tr>`;
     }).join("");
 
