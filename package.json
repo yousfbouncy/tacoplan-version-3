@@ -17,7 +17,8 @@
     "lint:fix": "npx expo lint --fix",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
