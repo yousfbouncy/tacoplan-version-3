@@ -1348,6 +1348,7 @@ export async function syncAll(
 
       let natPushed = 0;
       let natPushOk = true;
+      const natFullySyncedIds: string[] = [];
       try {
         const getAllFn = (LS as any).getAllNaturalDayDiets;
         if (typeof getAllFn === "function") {
@@ -1402,30 +1403,43 @@ export async function syncAll(
             let naturalUpsert = await supabase
               .from("user_natural_day_diets")
               .upsert(row, { onConflict: "user_id,date" });
+            let partialNaturalSync = false;
 
             // Compatibilidad con instalaciones que aún no hayan aplicado las
-            // columnas opcionales de septiembre. No perdemos la dieta base por
-            // culpa de pluses_json/is_domingo/is_festivo; se sincronizarán cuando
-            // el esquema esté actualizado.
-            if (naturalUpsert.error && (
-              Object.prototype.hasOwnProperty.call(row, "pluses_json") ||
-              Object.prototype.hasOwnProperty.call(row, "is_domingo") ||
-              Object.prototype.hasOwnProperty.call(row, "is_festivo")
-            )) {
+            // columnas opcionales. La dieta base se guarda, pero si omitimos
+            // información real (pluses/flags/referencias) el registro queda
+            // pendiente para completar el sync cuando la migración exista.
+            if (naturalUpsert.error) {
               const fallbackRow = { ...row };
+              const hadOptionalData =
+                (Array.isArray(n.plusItems) && n.plusItems.length > 0) ||
+                n.isDomingo === true ||
+                n.isFestivo === true ||
+                !!n.previousJourneyId ||
+                !!n.nextJourneyId;
+
               delete fallbackRow.pluses_json;
               delete fallbackRow.is_domingo;
               delete fallbackRow.is_festivo;
+              delete fallbackRow.previous_journey_id;
+              delete fallbackRow.next_journey_id;
+
               naturalUpsert = await supabase
                 .from("user_natural_day_diets")
                 .upsert(fallbackRow, { onConflict: "user_id,date" });
+              partialNaturalSync = !naturalUpsert.error && hadOptionalData;
             }
 
             if (naturalUpsert.error) throw naturalUpsert.error;
             natPushed += 1;
+            if (partialNaturalSync) {
+              natPushOk = false;
+            } else {
+              natFullySyncedIds.push(n.id);
+            }
           }
-          if (natPushed > 0) {
-            await LS.markNaturalDayDietsSynced(pendingLocal.map((p: any) => p.id));
+          if (natFullySyncedIds.length > 0) {
+            await LS.markNaturalDayDietsSynced(natFullySyncedIds);
           }
         }
       } catch (e) {
