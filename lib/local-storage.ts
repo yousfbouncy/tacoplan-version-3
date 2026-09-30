@@ -318,6 +318,13 @@ const DIETAS = {
   NACIONAL: { "100": 54.3, "60": 32.58, "30": 16.29 },
 } as const;
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const n = typeof value === "number"
+    ? value
+    : parseFloat(String(value ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
@@ -3435,10 +3442,12 @@ export async function getResumenDietas(
   for (const j of jornadasPeriodo) {
     if (j.plusItems && j.plusItems.length > 0) {
       for (const pi of j.plusItems) {
-        totalPlus = Math.round((totalPlus + pi.importe) * 100) / 100;
+        const plusAmount = finiteNumber(pi.importe);
+        if (plusAmount <= 0) continue;
+        totalPlus = Math.round((totalPlus + plusAmount) * 100) / 100;
         if (!plusDesglose[pi.concepto]) plusDesglose[pi.concepto] = { cantidad: 0, total: 0 };
         plusDesglose[pi.concepto].cantidad++;
-        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
+        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + plusAmount) * 100) / 100;
       }
     }
     if (j.dayFlag) {
@@ -3456,16 +3465,16 @@ export async function getResumenDietas(
     }
 
     if (!j.dietaImporteEur) continue;
-    const importe = parseFloat(j.dietaImporteEur);
-    const dayExtraInDieta = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
-    totalGeneral += (importe - dayExtraInDieta);
+    const importe = finiteNumber(j.dietaImporteEur);
+    const dayExtraInDieta = finiteNumber(j.dayExtraEur);
+    totalGeneral = Math.round((totalGeneral + Math.max(0, importe - dayExtraInDieta)) * 100) / 100;
 
     if (j.dietasItems && j.dietasItems.length > 0) {
       for (const item of j.dietasItems) {
         const key = `${item.tipo}_${item.pct}`;
         if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
         desglose[key].cantidad++;
-        desglose[key].total = Math.round((desglose[key].total + item.importe) * 100) / 100;
+        desglose[key].total = Math.round((desglose[key].total + finiteNumber(item.importe)) * 100) / 100;
       }
     } else {
       let key: string;
@@ -3639,10 +3648,12 @@ export async function getResumenKm(
   for (const j of jornadasPeriodo) {
     if (j.plusItems && j.plusItems.length > 0) {
       for (const pi of j.plusItems) {
-        totalPlus = Math.round((totalPlus + pi.importe) * 100) / 100;
+        const plusAmount = finiteNumber(pi.importe);
+        if (plusAmount <= 0) continue;
+        totalPlus = Math.round((totalPlus + plusAmount) * 100) / 100;
         if (!plusDesglose[pi.concepto]) plusDesglose[pi.concepto] = { cantidad: 0, total: 0 };
         plusDesglose[pi.concepto].cantidad++;
-        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
+        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + plusAmount) * 100) / 100;
       }
     }
 
@@ -3821,10 +3832,12 @@ export async function getResumenViaje(
   for (const j of jornadasPeriodo) {
     if (j.plusItems && j.plusItems.length > 0) {
       for (const pi of j.plusItems) {
-        totalPlus = Math.round((totalPlus + pi.importe) * 100) / 100;
+        const plusAmount = finiteNumber(pi.importe);
+        if (plusAmount <= 0) continue;
+        totalPlus = Math.round((totalPlus + plusAmount) * 100) / 100;
         if (!plusDesglose[pi.concepto]) plusDesglose[pi.concepto] = { cantidad: 0, total: 0 };
         plusDesglose[pi.concepto].cantidad++;
-        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + pi.importe) * 100) / 100;
+        plusDesglose[pi.concepto].total = Math.round((plusDesglose[pi.concepto].total + plusAmount) * 100) / 100;
       }
     }
 
@@ -5394,7 +5407,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
 
   const journeyStartDatesWithDiet = new Set<string>();
   for (const j of allJornadas) {
-    const dietAmount = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
+    const dietAmount = finiteNumber(j.dietaImporteEur);
     if (dietAmount > 0 && j.fechaInicio) journeyStartDatesWithDiet.add(j.fechaInicio);
   }
   const anyJourneyStartByDate = new Map<string, Jornada>();
@@ -6374,10 +6387,10 @@ export async function getMoroccoJornadaSummary(
   let totalDieta = 0;
   let totalExtras = 0;
   for (const j of filtered) {
-    const dieta = j.dietaImporteEur ? parseFloat(j.dietaImporteEur) : 0;
-    const dayEx = j.dayExtraEur ? parseFloat(j.dayExtraEur) : 0;
-    totalDieta += (dieta - dayEx);
-    totalExtras += dayEx;
+    const dieta = finiteNumber(j.dietaImporteEur);
+    const dayEx = finiteNumber(j.dayExtraEur);
+    totalDieta += Math.max(0, dieta - dayEx);
+    totalExtras += Math.max(0, dayEx);
   }
   return {
     count: filtered.length,
