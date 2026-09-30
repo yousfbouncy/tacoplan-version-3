@@ -57,7 +57,6 @@ import {
   type LegalSummaryStored,
   type UserDietRate,
   type UserDayExtras,
-  type PlusItem,
   type FerryExtras,
   type FerryInterruption,
   addFerryRest,
@@ -1119,9 +1118,10 @@ export default function DashboardScreen() {
       const rawType = item.type;
       if (rawType === "INTERNACIONAL" || rawType === "NACIONAL" || rawType === "REGIONAL") t = rawType;
 
-      const plusItemsForEntry: PlusItem[] = selectedPluses.map((pl) => ({
-        concepto: pl.concepto,
-        importe: Number(pl.amount) || 0,
+      const plusItemsForEntry: NonNullable<NaturalDayDietEntry["plusItems"]> = selectedPluses.map((pl) => ({
+        concepto: String(pl.concepto || "Plus").trim() || "Plus",
+        amount: Math.max(0, +(Number(pl.amount) || 0).toFixed(2)),
+        id: String(pl.id || `${date}_${pl.concepto || "plus"}`),
       }));
 
       entries.push({
@@ -1181,9 +1181,10 @@ export default function DashboardScreen() {
         const selectedPlusesUi: PlusItemUi[] = Array.isArray(anySrc.plusItems)
           ? anySrc.plusItems.filter((pl: any) => pl.selected !== false)
           : [];
-        const plusItemsForEntry: PlusItem[] = selectedPlusesUi.map((pl: any) => ({
-          concepto: pl.concepto,
-          importe: Number(pl.amount) || 0,
+        const plusItemsForEntry: NonNullable<NaturalDayDietEntry["plusItems"]> = selectedPlusesUi.map((pl: any) => ({
+          concepto: String(pl.concepto || "Plus").trim() || "Plus",
+          amount: Math.max(0, +(Number(pl.amount) || 0).toFixed(2)),
+          id: String(pl.id || `${date}_${pl.concepto || "plus"}`),
         }));
         entries.push({
           id: Date.now().toString(36) + Math.random().toString(36).slice(2, 9) + `_${date}`,
