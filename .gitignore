@@ -48,3 +48,6 @@ credentials/
 tacoplan-ac581-firebase-adminsdk-fbsvc-a7964a5695.json
 tacoplan-ac581-firebase-adminsdk-fbsvc-a7964a5695.json
 *.apk
+.dbg/
+.home/
+expo-export-*.log
