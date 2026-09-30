@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tacoplan",
-      "buildNumber": "11",
+      "buildNumber": "12",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para autocompletar el lugar de fin de jornada (provincia y país).",
