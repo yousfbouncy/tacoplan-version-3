@@ -51,6 +51,7 @@ function validationReasonKey(reason: string): string {
     NEGATIVE_INTERRUPTION_TIME: "ferry.restForm.interruptionOrder",
     INTERRUPTION_END_BEFORE_START: "ferry.restForm.interruptionOrder",
     TOTAL_INTERRUPTIONS_EXCEED_60MIN: "ferry.restForm.maxTotalInterruption",
+    INTERRUPTED_REST_REQUIRES_11H: "ferry.restForm.interruptedRegularOnly",
     OVERLAPPING_INTERRUPTIONS: "ferry.restForm.interruptionOverlap",
   };
   return map[reason] || reason;

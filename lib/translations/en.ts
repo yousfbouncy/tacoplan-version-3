@@ -926,6 +926,7 @@ const en: Record<string, string> = {
   "ferry.interruptionsUsed": "Interruptions",
   "ferry.restForm.maxInterruptions": "Maximum 2 interruptions allowed",
   "ferry.restForm.maxTotalInterruption": "Interruptions cannot exceed 60 minutes total",
+  "ferry.restForm.interruptedRegularOnly": "An interrupted ferry rest must be a regular 11-hour daily rest",
   "ferry.restForm.saved": "Ferry rest recorded",
   "ferry.restComplete": "Rest completed",
   "ferry.embarking": "Boarding a ferry?",

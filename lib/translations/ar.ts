@@ -926,6 +926,7 @@ const ar: Record<string, string> = {
   "ferry.interruptionsUsed": "الانقطاعات",
   "ferry.restForm.maxInterruptions": "الحد الأقصى انقطاعان",
   "ferry.restForm.maxTotalInterruption": "لا يمكن أن تتجاوز الانقطاعات 60 دقيقة إجمالاً",
+  "ferry.restForm.interruptedRegularOnly": "يجب أن تكون راحة العبّارة المتقطعة راحة يومية عادية مدتها 11 ساعة",
   "ferry.restForm.saved": "تم تسجيل راحة العبارة",
   "ferry.restComplete": "اكتملت الراحة",
   "ferry.embarking": "هل ستركب العبارة؟",

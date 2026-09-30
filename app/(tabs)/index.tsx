@@ -57,6 +57,7 @@ import {
   type LegalSummaryStored,
   type UserDietRate,
   type UserDayExtras,
+  type PlusItem,
   type FerryExtras,
   type FerryInterruption,
   addFerryRest,

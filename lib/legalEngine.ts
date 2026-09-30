@@ -438,34 +438,24 @@ export function evaluateJornada(
     if (jCond > 9 * 60) extensiones10h++;
   }
 
-  const descansosReducidos = computeReducedRestsInUtcWeek(
-    allJornadas,
-    lunesStr,
-    domingoStr,
-    {
-      startAt: jornada.startAt,
-      descansoAnteriorMin: jornada.descansoAnteriorMin,
-      tipoDescansoAnterior: jornada.tipoDescansoAnterior,
-    },
-  );
+  // El límite de tres descansos diarios reducidos no se reinicia el lunes:
+  // se cuenta entre dos descansos semanales (art. 8.4). La jornada evaluada
+  // suele llegar separada de `allJornadas`, así que la incorporamos una sola vez.
+  const jornadasConActual = [
+    ...allJornadas.filter((j) => j.id !== jornada.id),
+    jornada,
+  ];
+  const descansosReducidos = computeReducidosSinceLastWeeklyRest(jornadasConActual);
 
   const prevWeekMondayStr = lunesAnteriorStr;
   const prevWeekSundayStr = formatUTCDateStr(new Date(lunes.getTime() - 86400000));
   let conduccionBisemanalMin = conduccionSemanalMin;
-  const biSeenIds = new Set<string>(seenIds);
-  biSeenIds.add(jornada.id);
+  const previousWeekSeenIds = new Set<string>();
   for (const j of semanaAnterior) {
-    if (biSeenIds.has(j.id)) continue;
-    biSeenIds.add(j.id);
+    if (previousWeekSeenIds.has(j.id)) continue;
+    previousWeekSeenIds.add(j.id);
     const prevWeekDriving = getJornadaDrivingForWeek(j, prevWeekMondayStr, prevWeekSundayStr);
     conduccionBisemanalMin += prevWeekDriving;
-  }
-  for (const j of semana) {
-    if (!biSeenIds.has(j.id)) {
-      biSeenIds.add(j.id);
-      const prevWeekDriving = getJornadaDrivingForWeek(j, prevWeekMondayStr, prevWeekSundayStr);
-      conduccionBisemanalMin += prevWeekDriving;
-    }
   }
 
   if (conduccionSemanalMin > 56 * 60) {
@@ -790,28 +780,31 @@ export function computeLegalPlan(
     if (jCond > 9 * 60) extensionsUsed++;
   }
 
-  const shouldIncludePrevGap = !!currentJornada && !currentJornada.endAt;
-  const reducedRestsUsed = computeReducedRestsInUtcWeek(
+  const currentClosedAlreadyIncluded = !!currentJornada?.endAt && allJornadas.some((j) =>
+    j.startAt === currentJornada.startAt && j.endAt === currentJornada.endAt
+  );
+  const reducedRestsUsed = computeReducidosSinceLastWeeklyRest(
     allJornadas,
-    lunesStr,
-    domingoStr,
-    shouldIncludePrevGap ? {
-      startAt: currentJornada?.startAt,
-      descansoAnteriorMin: currentJornada?.descansoAnteriorMin,
-      tipoDescansoAnterior: currentJornada?.tipoDescansoAnterior,
-    } : null,
+    currentJornada && !currentClosedAlreadyIncluded
+      ? {
+          descansoAnteriorMin: currentJornada.descansoAnteriorMin,
+          tipoDescansoAnterior: currentJornada.tipoDescansoAnterior,
+        }
+      : null,
   );
 
   let biweeklyDriveMin = weeklyDriveMin;
-  const biSeenIds = new Set<string>(seenIds);
+  const previousWeekSeenIds = new Set<string>();
   for (const j of semanaAnterior) {
-    if (biSeenIds.has(j.id)) continue;
-    biSeenIds.add(j.id);
+    if (previousWeekSeenIds.has(j.id)) continue;
+    previousWeekSeenIds.add(j.id);
     const prevWeekDriving = getJornadaDrivingForWeek(j, lunesAnteriorStr, prevWeekSundayStr);
     biweeklyDriveMin += prevWeekDriving;
   }
 
-  if (currentJornada) {
+  // Una jornada cerrada ya forma parte de `allJornadas`; sumarla de nuevo
+  // duplicaba tanto la conducción semanal como la bisemanal en el modal final.
+  if (currentJornada && !currentClosedAlreadyIncluded) {
     const curCond = currentJornada.conduccionMin || 0;
     if (curCond > 0) {
       weeklyDriveMin += curCond;
@@ -962,7 +955,7 @@ export function computeLegalPlan(
   }
   if (reducedRestsUsed >= 3 && !canUseSplitRest) {
     if (isCurrentDouble) {
-      warnings.push("3 descansos reducidos usados (descanso 9h no disponible hasta siguiente semana).");
+      warnings.push("3 descansos reducidos usados (descanso 9h no disponible hasta el siguiente descanso semanal).");
     } else {
       warnings.push("3 descansos reducidos usados. Disponibilidad 13h.");
     }

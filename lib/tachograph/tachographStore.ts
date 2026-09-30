@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getSupabaseClient } from "../supabase-client";
+import { supabase } from "../supabase";
 import { userScopedKey } from "../user-scope";
 import type {
   TachographActivity,
@@ -12,7 +12,12 @@ import type {
 
 async function getSb() {
   try {
-    return await getSupabaseClient();
+    // Reutiliza el cliente autenticado principal. El cliente antiguo obtenía
+    // otra configuración desde /api/auth/config pero no heredaba la sesión,
+    // por lo que RLS rechazaba silenciosamente las escrituras del tacógrafo.
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session) return null;
+    return supabase;
   } catch {
     return null;
   }

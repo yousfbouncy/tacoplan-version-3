@@ -5,6 +5,8 @@ import { assessWeeklyRest, type WeeklyRestAssessment } from "@/lib/weekly-rest";
 import { userScopedKey } from "@/lib/user-scope";
 import { normalizeLocationText } from "@/lib/location-normalization";
 import { supabase } from "@/lib/supabase";
+import { calculateCompensationDeadline } from "@/lib/compensation-deadline";
+export { calculateCompensationDeadline } from "@/lib/compensation-deadline";
 
 const JORNADAS_KEY = "tacoplan_jornadas";
 const COMPENSACIONES_KEY = "tacoplan_compensaciones";
@@ -348,41 +350,12 @@ export function addDays(dateStr: string, days: number): string {
 /**
  * Extrae "YYYY-MM-DD" de cualquier string de fecha/ISO (puede ser
  * "2026-08-31" solo fecha o "2026-08-31T22:15:00.000Z" ISO completo).
- * Úsalo para obtener la fecha base del FIN de descanso y sumar 14 días
- * (plazo legal Art. 8.6 Reg. 561/2006 según última regla del usuario).
+ * Úsalo para obtener una fecha civil estable sin desplazamientos de zona horaria.
  */
 export function extractYyyyMmDd(isoOrDate: string | null | undefined): string | null {
   if (!isoOrDate) return null;
   const m = String(isoOrDate).match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : null;
-}
-
-/**
- * Calcula la FECHA LÍMITE canónica para compensar un descanso semanal reducido,
- * según regla VERBATIM del usuario:
- *   "la fecha limite para compensacion es 14 dias desde el fin descanso
- *    que ha generado la compensacion"
- *
- * Orden de preferencia para el origen (fin descanso):
- *   1. sourceRestEndAt          (campo Compensacion)
- *   2. previousRestEndAt        (campo Jornada, si tenemos la jornada ligada)
- *   3. fechaInicio de la jornada (fallback lo más cercano posible si se desconoce
- *                                 el fin del descanso)
- *   4. hoy+14d                  (si no hay nada más, no penalizar vencida al instante)
- */
-function calculateCompensationDeadline(params: {
-  sourceRestEndAt?: string | null;
-  jornadaPreviousRestEndAt?: string | null;
-  fechaInicioJornada?: string | null;
-  hoyStr?: string;
-}): string {
-  const candidate =
-    extractYyyyMmDd(params.sourceRestEndAt) ??
-    extractYyyyMmDd(params.jornadaPreviousRestEndAt) ??
-    extractYyyyMmDd(params.fechaInicioJornada) ??
-    params.hoyStr ??
-    extractYyyyMmDd(new Date().toISOString())!;
-  return addDays(candidate, 14);
 }
 
 /**
@@ -1099,17 +1072,15 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
   }
   const mergedCleaned: Compensacion[] = list.filter(c => !mergedIdsToRemove.has(c.id));
 
-  // 3) Recalcular TODAS las compensaciones pendientes al nuevo cálculo VERBATIM:
-  //    "fecha limite para compensacion es 14 dias desde el fin descanso
-  //     que ha generado la compensacion".
-  //
-  //    Esto corrige tanto los viejos "fechaInicio+14d" como los posteriores
-  //    "fechaInicio+21d" (fases anteriores). NO TOCAMOS COMPENSADAS (manual o
+  // 3) Recalcular TODAS las compensaciones pendientes según el final de la
+  //    tercera semana siguiente. Esto corrige plazos históricos de 14/21 días.
+  //    NO TOCAMOS COMPENSADAS (manual o
   //    algoritmo, su fecha límite no es relevante).
   const hoy = formatUTCDateStr(new Date());
   let jornadasForDeadline: Jornada[] | null = null;
   for (const c of mergedCleaned) {
     if (c.compensada) continue;
+    let jPrevRestStartAt: string | null = null;
     let jPrevRestEndAt: string | null = null;
     let jFechaInicio: string | null = null;
     if (c.jornadaId) {
@@ -1118,11 +1089,18 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
       }
       const j = jornadasForDeadline.find(x => x.id === c.jornadaId);
       if (j) {
+        jPrevRestStartAt = j.previousRestStartAt ?? null;
         jPrevRestEndAt = j.previousRestEndAt ?? null;
         jFechaInicio = j.fechaInicio ?? null;
       }
     }
+    const hasDeadlineSource = !!(
+      c.sourceRestStartAt || c.sourceRestEndAt ||
+      jPrevRestStartAt || jPrevRestEndAt || jFechaInicio
+    );
+    if (!hasDeadlineSource) continue;
     const nuevoLimite = calculateCompensationDeadline({
+      sourceRestStartAt: c.sourceRestStartAt ?? jPrevRestStartAt,
       sourceRestEndAt: c.sourceRestEndAt,
       jornadaPreviousRestEndAt: jPrevRestEndAt,
       fechaInicioJornada: jFechaInicio,
@@ -1138,7 +1116,7 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
 
   // 4) SANITY CHECK fechaLimite ABSURDA (bug 2028 detectado en UI):
   //    Si fechaLimite > hoy + 90 días → claramente un cálculo erróneo histórico.
-  //    Forzamos calculateCompensationDeadline (14d desde fin descanso).
+  //    Forzamos calculateCompensationDeadline con la regla de tercera semana.
   //    NO TOCAMOS COMPENSADAS.
   const hoyDate = new Date();
   const hoyStr = formatUTCDateStr(hoyDate);
@@ -1152,16 +1130,24 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
       if (loadedJornadasForNorm === null) {
         try { loadedJornadasForNorm = await getAllJornadas(); } catch { loadedJornadasForNorm = []; }
       }
+      let jPrevRestStartAt: string | null = null;
       let jPrevRestEndAt: string | null = null;
       let jFechaInicio: string | null = null;
       if (c.jornadaId) {
         const j = loadedJornadasForNorm.find(x => x.id === c.jornadaId);
         if (j) {
+          jPrevRestStartAt = j.previousRestStartAt ?? null;
           jPrevRestEndAt = j.previousRestEndAt ?? null;
           jFechaInicio = j.fechaInicio ?? null;
         }
       }
+      const hasDeadlineSource = !!(
+        c.sourceRestStartAt || c.sourceRestEndAt ||
+        jPrevRestStartAt || jPrevRestEndAt || jFechaInicio
+      );
+      if (!hasDeadlineSource) continue;
       const nuevoLimite = calculateCompensationDeadline({
+        sourceRestStartAt: c.sourceRestStartAt ?? jPrevRestStartAt,
         sourceRestEndAt: c.sourceRestEndAt,
         jornadaPreviousRestEndAt: jPrevRestEndAt,
         fechaInicioJornada: jFechaInicio,
@@ -2049,13 +2035,12 @@ async function processCompensaciones(
 
   // ======================================================================
   // BLOQUE COMPENSAR: cada vez que hacemos UN descanso, revisamos si
-  // este descanso "completa 45h semanal regular + horas pendientes".
+  // este descanso contiene las horas de compensación unidas a otro descanso
+  // de al menos 9h (art. 8.7).
   // REGLA 3-B / 3-C.
   // ======================================================================
   if (descansoAnteriorMin != null && descansoAnteriorMin > 0 && pendientesExistentes.length > 0) {
-    // REGLA 3-C: Umbral = 24h (mín semanal) + deuda pendiente
-    //            Equivale a: "semanal completo regular + horas extra que compensan la deuda".
-    const umbralCompensarMin = 24 * 60 + totalPendienteMin;
+    const umbralCompensarMin = 9 * 60 + totalPendienteMin;
 
     if (descansoAnteriorMin >= umbralCompensarMin) {
       // REGLA 3-C: marcar TODO como compensado.
@@ -2122,9 +2107,10 @@ async function processCompensaciones(
           // fechaLimite NO cambia: conservamos la FECHA MÁS ANTIGUA.
         } else {
           // REGLA 3-A sin pendientes → creamos la COMPENSACIÓN NUEVA.
-          // Plazo VERBATIM usuario: "14 dias desde el fin descanso que ha
-          // generado la compensacion". Origen de fecha: previousRestEndAt.
+          // Plazo legal: final de la tercera semana siguiente a la semana
+          // del descanso que generó la reducción.
           const fechaLimite = calculateCompensationDeadline({
+            sourceRestStartAt: restMeta?.previousRestStartAt ?? null,
             sourceRestEndAt: restMeta?.previousRestEndAt ?? null,
             jornadaPreviousRestEndAt: restMeta?.previousRestEndAt ?? null,
             fechaInicioJornada: fechaInicio,
@@ -6581,6 +6567,9 @@ export function validateFerryRestCompletion(active: ActiveFerryRest): {
 
   if (intCount > 2) return { isValid: false, isComplete: false, reason: "ferry.restForm.maxInterruptions" };
   if (totalIntMin > 60) return { isValid: false, isComplete: false, reason: "ferry.restForm.maxTotalInterruption" };
+  if (active.restType === "9h" && intCount > 0) {
+    return { isValid: false, isComplete: false, reason: "ferry.restForm.interruptedRegularOnly" };
+  }
   if (accum < requiredMin) return { isValid: true, isComplete: false, reason: "ferry.incompleteModal.message" };
   return { isValid: true, isComplete: true, reason: null };
 }

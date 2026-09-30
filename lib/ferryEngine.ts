@@ -49,6 +49,13 @@ export function validateFerryRest(rest: FerryRest): FerryRestValidation {
     return { valid: false, reason: "TOTAL_INTERRUPTIONS_EXCEED_60MIN", computedEnd: null };
   }
 
+  // El art. 9 permite interrumpir el descanso diario normal (11h), no un
+  // descanso diario reducido de 9h. Un descanso de 9h sigue siendo válido
+  // únicamente cuando no se ha interrumpido.
+  if (rest.restType === "9h" && rest.interruptions.length > 0) {
+    return { valid: false, reason: "INTERRUPTED_REST_REQUIRES_11H", computedEnd: null };
+  }
+
   for (let i = 0; i < rest.interruptions.length - 1; i++) {
     for (let j = i + 1; j < rest.interruptions.length; j++) {
       const a = rest.interruptions[i];
