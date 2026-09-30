@@ -8,7 +8,6 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
-  TextInput,
   Alert,
 } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
-import { addOffsiteWeeklyRestEntry, getResumenDietas, getResumenKm, getResumenViaje, findRate, getMoroccoJornadaSummary, getFerryExtrasSummary, listAvailableOffsiteWeeklyRestDates, detectMissingOutOfBaseDietDays, dismissNaturalDayDiets, upsertNaturalDayDiets, clearDismissedNaturalDayDietsInRange, type UserDietRate, type UserDayExtras, type DetectedMissingNaturalDay, type NaturalDayDietEntry } from "@/lib/local-storage";
+import { getResumenDietas, getResumenKm, getResumenViaje, findRate, getMoroccoJornadaSummary, getFerryExtrasSummary, detectMissingOutOfBaseDietDays, dismissNaturalDayDiets, upsertNaturalDayDiets, clearDismissedNaturalDayDietsInRange, type UserDietRate, type UserDayExtras, type DetectedMissingNaturalDay, type NaturalDayDietEntry } from "@/lib/local-storage";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import { useAuth } from "@/lib/auth-context";
@@ -27,7 +26,6 @@ import { useSync } from "@/lib/sync-context";
 import { useFerry } from "@/lib/ferry-context";
 import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
-import { formatFecha } from "@/lib/utils";
 
 type ResumenDietas = {
   total: number;
@@ -64,16 +62,6 @@ export default function DietasScreen() {
   });
   const [showReferencePrices, setShowReferencePrices] = useState(false);
   const [paymentMode, setPaymentMode] = useState<"dietas" | "km" | "viaje">("dietas");
-  const [showOffsiteForm, setShowOffsiteForm] = useState(false);
-  const [offsiteDate, setOffsiteDate] = useState("");
-  const [offsiteRestType, setOffsiteRestType] = useState<"WEEKLY_REDUCED" | "WEEKLY_COMPLETE">("WEEKLY_COMPLETE");
-  const [offsiteBase, setOffsiteBase] = useState<"NACIONAL" | "INTERNACIONAL">("NACIONAL");
-  const [offsitePlusSunday, setOffsitePlusSunday] = useState(false);
-  const [offsitePlusHoliday, setOffsitePlusHoliday] = useState(false);
-  const [offsiteAmount, setOffsiteAmount] = useState("");
-  const [offsiteAmountTouched, setOffsiteAmountTouched] = useState(false);
-  const [offsiteNote, setOffsiteNote] = useState("");
-  const [savingOffsite, setSavingOffsite] = useState(false);
   const [pendingDietsVisible, setPendingDietsVisible] = useState(false);
   const [pendingDietsBannerVisible, setPendingDietsBannerVisible] = useState(false);
   const [pendingDiets, setPendingDiets] = useState<DetectedMissingNaturalDay[]>([]);
@@ -157,20 +145,6 @@ export default function DietasScreen() {
   const periodo = useMemo(() => {
     return getPeriod(periodoIdx);
   }, [periodoIdx, getPeriod]);
-
-  const offsiteDatesQuery = useQuery<string[]>({
-    queryKey: ["offsite-weekly-rest-dates", syncVersion],
-    queryFn: () => listAvailableOffsiteWeeklyRestDates(),
-    enabled: !isMoroccoMode,
-    staleTime: 30_000,
-  });
-
-  const hasOffsiteDates = (offsiteDatesQuery.data || []).length > 0;
-
-  useEffect(() => {
-    if (offsiteDatesQuery.isLoading) return;
-    if (!hasOffsiteDates && showOffsiteForm) setShowOffsiteForm(false);
-  }, [offsiteDatesQuery.isLoading, hasOffsiteDates, showOffsiteForm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,34 +234,6 @@ export default function DietasScreen() {
     moroccoQuery.isRefetching ||
     ferryExtrasQuery.isRefetching;
 
-  const suggestedOffsiteBaseAmount = useMemo(() => {
-    const base =
-      offsiteRestType === "WEEKLY_REDUCED"
-        ? (offsiteBase === "NACIONAL"
-          ? dayExtras.offsite_weekly_reduced_nacional
-          : dayExtras.offsite_weekly_reduced_internacional)
-        : (offsiteBase === "NACIONAL"
-          ? dayExtras.offsite_weekly_complete_nacional
-          : dayExtras.offsite_weekly_complete_internacional);
-    return Math.round(Number(base || 0) * 100) / 100;
-  }, [offsiteRestType, offsiteBase, dayExtras]);
-
-  const suggestedOffsitePlusAmount = useMemo(() => {
-    const plus = (offsitePlusSunday ? dayExtras.extra_sunday : 0) + (offsitePlusHoliday ? dayExtras.extra_holiday : 0);
-    return Math.round(Number(plus || 0) * 100) / 100;
-  }, [offsitePlusSunday, offsitePlusHoliday, dayExtras]);
-
-  const effectiveOffsiteBaseAmount = useMemo(() => {
-    const raw = offsiteAmount.trim().replace(",", ".");
-    if (!raw) return suggestedOffsiteBaseAmount;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : suggestedOffsiteBaseAmount;
-  }, [offsiteAmount, suggestedOffsiteBaseAmount]);
-
-  const effectiveOffsiteTotalAmount = useMemo(() => {
-    return Math.round((effectiveOffsiteBaseAmount + suggestedOffsitePlusAmount) * 100) / 100;
-  }, [effectiveOffsiteBaseAmount, suggestedOffsitePlusAmount]);
-
   const extraTipoLabel = useCallback((tipo: string) => {
     if (tipo === "FUERA_BASE") return t("dietas.offsiteWeeklyRestLabel");
     if (tipo.startsWith("FUERA_BASE_")) {
@@ -300,12 +246,6 @@ export default function DietasScreen() {
     }
     return t(`common.dayFlag.${tipo}`);
   }, [t]);
-
-  useEffect(() => {
-    if (!showOffsiteForm) return;
-    if (offsiteAmountTouched) return;
-    setOffsiteAmount(suggestedOffsiteBaseAmount.toFixed(2));
-  }, [showOffsiteForm, suggestedOffsiteBaseAmount, offsiteAmountTouched]);
 
   const upsertAllPendingSelections = useCallback(async (
     selectedItems: Array<string | DetectedMissingNaturalDay>,
@@ -826,213 +766,6 @@ export default function DietasScreen() {
           <Text style={styles.saveBtnText}>Estimación de nómina</Text>
         </Pressable>
 
-        {!isMoroccoMode && hasOffsiteDates && (
-          <View style={styles.refCard}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.saveBtn,
-                { opacity: pressed ? 0.85 : 1, marginTop: 4, backgroundColor: Colors.light.tint },
-                savingOffsite && styles.btnDisabled,
-              ]}
-              onPress={() => setShowOffsiteForm((p) => !p)}
-              disabled={savingOffsite}
-            >
-              <Ionicons name="add-circle-outline" size={18} color="#fff" />
-              <Text style={styles.saveBtnText}>{t("dietas.offsiteWeeklyRestButton")}</Text>
-            </Pressable>
-            <Text style={styles.refFooterText}>{t("dietas.offsiteWeeklyRestHint")}</Text>
-
-            {showOffsiteForm && (
-              <>
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestDate")}</Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    {(offsiteDatesQuery.data || []).length === 0 ? (
-                      <Text style={styles.refFooterText}>{t("dietas.offsiteWeeklyRestNoDates")}</Text>
-                    ) : (
-                      (offsiteDatesQuery.data || []).map((d) => {
-                        const active = offsiteDate === d;
-                        return (
-                          <Pressable
-                            key={d}
-                            style={({ pressed }) => [
-                              styles.chip,
-                              active && styles.chipActive,
-                              { opacity: pressed ? 0.85 : 1 },
-                            ]}
-                            onPress={() => {
-                              setOffsiteDate(d);
-                              setOffsiteAmountTouched(false);
-                              const isSunday = new Date(`${d}T00:00:00`).getDay() === 0;
-                              if (isSunday) setOffsitePlusSunday(true);
-                            }}
-                          >
-                            <Text style={[styles.chipText, active && styles.chipTextActive]}>{formatFecha(d)}</Text>
-                          </Pressable>
-                        );
-                      })
-                    )}
-                  </View>
-                </View>
-
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestType")}</Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    {(["WEEKLY_REDUCED", "WEEKLY_COMPLETE"] as const).map((rt) => (
-                      <Pressable
-                        key={rt}
-                        style={({ pressed }) => [
-                          styles.chip,
-                          offsiteRestType === rt && styles.chipActive,
-                          { opacity: pressed ? 0.85 : 1 },
-                        ]}
-                        onPress={() => { setOffsiteRestType(rt); setOffsiteAmountTouched(false); }}
-                      >
-                        <Text style={[styles.chipText, offsiteRestType === rt && styles.chipTextActive]}>
-                          {rt === "WEEKLY_REDUCED" ? t("dietas.offsiteWeeklyRestReduced") : t("dietas.offsiteWeeklyRestComplete")}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestBase")}</Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    {(["NACIONAL", "INTERNACIONAL"] as const).map((b) => (
-                      <Pressable
-                        key={b}
-                        style={({ pressed }) => [
-                          styles.chip,
-                          offsiteBase === b && styles.chipActive,
-                          { opacity: pressed ? 0.85 : 1 },
-                        ]}
-                        onPress={() => { setOffsiteBase(b); setOffsiteAmountTouched(false); }}
-                      >
-                        <Text style={[styles.chipText, offsiteBase === b && styles.chipTextActive]}>
-                          {b === "NACIONAL" ? t("common.nacional") : t("common.internacional")}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-
-                <View style={{ marginTop: 12 }}>
-                  <Pressable
-                    style={({ pressed }) => [{ flexDirection: "row", alignItems: "center", gap: 8, opacity: pressed ? 0.85 : 1 }]}
-                    onPress={() => { setOffsitePlusSunday((v) => !v); setOffsiteAmountTouched(false); }}
-                  >
-                    <Ionicons name={offsitePlusSunday ? "checkbox" : "square-outline"} size={18} color={Colors.light.tint} />
-                    <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestPlusSunday")}</Text>
-                  </Pressable>
-                  <View style={{ height: 8 }} />
-                  <Pressable
-                    style={({ pressed }) => [{ flexDirection: "row", alignItems: "center", gap: 8, opacity: pressed ? 0.85 : 1 }]}
-                    onPress={() => { setOffsitePlusHoliday((v) => !v); setOffsiteAmountTouched(false); }}
-                  >
-                    <Ionicons name={offsitePlusHoliday ? "checkbox" : "square-outline"} size={18} color={Colors.light.tint} />
-                    <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestPlusHoliday")}</Text>
-                  </Pressable>
-                </View>
-
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestAmount")}</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={offsiteAmount}
-                    onChangeText={(v) => { setOffsiteAmount(v); setOffsiteAmountTouched(true); }}
-                    keyboardType="decimal-pad"
-                    placeholder={suggestedOffsiteBaseAmount.toFixed(2)}
-                    placeholderTextColor="#9CA3AF"
-                  />
-                  <Text style={styles.refFooterText}>
-                    {t("dietas.offsiteWeeklyRestAutoHint")} {suggestedOffsiteBaseAmount.toFixed(2)} EUR
-                  </Text>
-                  <View style={{ marginTop: 8, gap: 4 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={styles.refFooterText}>Plus</Text>
-                      <Text style={[styles.refFooterText, { fontFamily: "Inter_600SemiBold", color: Colors.light.warning }]}>
-                        {suggestedOffsitePlusAmount.toFixed(2)} EUR
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={styles.refFooterText}>{t("common.total")}</Text>
-                      <Text style={[styles.refFooterText, { fontFamily: "Inter_700Bold", color: Colors.light.text }]}>
-                        {effectiveOffsiteTotalAmount.toFixed(2)} EUR
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.refLabel}>{t("dietas.offsiteWeeklyRestNote")}</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={offsiteNote}
-                    onChangeText={setOffsiteNote}
-                    placeholder={t("dietas.offsiteWeeklyRestNotePlaceholder")}
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.saveBtn,
-                    { opacity: pressed ? 0.85 : 1, marginTop: 12 },
-                    savingOffsite && styles.btnDisabled,
-                  ]}
-                  disabled={savingOffsite}
-                  onPress={async () => {
-                    if (!offsiteDate) {
-                      Alert.alert(t("common.error"), t("dietas.offsiteWeeklyRestPickDate"));
-                      return;
-                    }
-                    const amountParsed = offsiteAmount.trim() ? parseFloat(offsiteAmount) : null;
-                    if (amountParsed == null || !Number.isFinite(amountParsed) || amountParsed < 0) {
-                      Alert.alert(t("common.error"), t("usuario.ratesPositive"));
-                      return;
-                    }
-                    setSavingOffsite(true);
-                    try {
-                      await addOffsiteWeeklyRestEntry({
-                        date: offsiteDate,
-                        restType: offsiteRestType,
-                        base: offsiteBase,
-                        plusSunday: offsitePlusSunday,
-                        plusHoliday: offsitePlusHoliday,
-                        amount: amountParsed,
-                        note: offsiteNote.trim() || null,
-                      });
-                      setOffsiteDate("");
-                      setOffsiteNote("");
-                      setOffsitePlusSunday(false);
-                      setOffsitePlusHoliday(false);
-                      setOffsiteAmountTouched(false);
-                      setOffsiteAmount("");
-                      qc.invalidateQueries({ queryKey: ["day-extra-entries"] });
-                      qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
-                      qc.invalidateQueries({ queryKey: ["km-resumen"] });
-                      qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
-                      qc.invalidateQueries({ queryKey: ["offsite-weekly-rest-dates"] });
-                    } catch (e: any) {
-                      if (Platform.OS === "web") window.alert(e?.message || String(e));
-                      else Alert.alert(t("common.error"), e?.message || String(e));
-                    } finally {
-                      setSavingOffsite(false);
-                    }
-                  }}
-                >
-                  {savingOffsite ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                  )}
-                  <Text style={styles.saveBtnText}>{t("dietas.offsiteWeeklyRestSave")}</Text>
-                </Pressable>
-              </>
-            )}
-          </View>
-        )}
 
         {isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet" && moroccoQuery.data ? (
           <View style={styles.totalCard}>
@@ -1782,38 +1515,6 @@ const styles = StyleSheet.create({
     minWidth: 80,
     textAlign: "right" as const,
   },
-  input: {
-    marginTop: 6,
-    backgroundColor: Colors.light.background,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    fontFamily: "Inter_500Medium",
-    fontSize: 13,
-    color: Colors.light.text,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: Colors.light.border,
-    backgroundColor: Colors.light.background,
-  },
-  chipActive: {
-    borderColor: Colors.light.tint,
-    backgroundColor: Colors.light.accentLight,
-  },
-  chipText: {
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 12,
-    color: Colors.light.textSecondary,
-  },
-  chipTextActive: {
-    color: Colors.light.tint,
-  },
   saveBtn: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
@@ -1827,9 +1528,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontSize: 14,
     color: "#fff",
-  },
-  btnDisabled: {
-    opacity: 0.6,
   },
   plusCard: {
     backgroundColor: Colors.light.surface,
