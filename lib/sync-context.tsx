@@ -52,7 +52,7 @@ interface SyncContextValue {
   triggerSync: () => void;
   triggerDeleteSync: (jornadaId: string) => void;
   triggerDeleteDayExtraEntrySync: (entryId: string) => void;
-  triggerDeleteNaturalDayDietSync: (entryId: string) => void;
+  triggerDeleteNaturalDayDietSync: (entryId: string, entryDate?: string) => void;
   startRestore: () => void;
   dismissRecovery: () => void;
   dismissRestoreComplete: () => void;
@@ -194,11 +194,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     triggerSync();
   }, [getAccessToken, isAuthenticated, triggerSync]);
 
-  const triggerDeleteNaturalDayDietSync = useCallback(async (entryId: string) => {
+  const triggerDeleteNaturalDayDietSync = useCallback(async (entryId: string, entryDate?: string) => {
     if (!isAuthenticated) return;
-    await queueDeleteNaturalDayDietForSync(entryId);
+    await queueDeleteNaturalDayDietForSync(entryId, entryDate);
     try {
-      await deleteNaturalDayDietFromCloud(entryId, getAccessToken);
+      await deleteNaturalDayDietFromCloud(entryId, getAccessToken, entryDate);
     } catch {
       // La cola conserva el borrado y lo reintentará cuando haya conexión.
     }
