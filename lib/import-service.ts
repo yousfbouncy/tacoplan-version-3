@@ -1078,18 +1078,19 @@ function mergeJornadas(existing: Jornada[], imported: Jornada[], mode: ImportMod
     }
 
     if (byContentIndex != null) {
-      if (mode === "new_only") {
-        skipped++;
-        continue;
-      }
+      // Una jornada exactamente igual (mismo inicio/fin y lugares) nunca debe
+      // duplicarse, incluso en "import_all". Ese modo permite traer todo el
+      // archivo, no cobrar/mostrar dos veces el mismo registro.
       if (mode === "overwrite_matching") {
         const existingId = next[byContentIndex].id;
         next[byContentIndex] = cloneForPendingSync({ ...jornada, id: existingId });
         byId.set(existingId, byContentIndex);
         byComposite.set(compositeKey, byContentIndex);
         overwritten++;
-        continue;
+      } else {
+        skipped++;
       }
+      continue;
     }
 
     const index = next.length;
@@ -1130,18 +1131,18 @@ function mergeDayExtraEntries(existing: DayExtraEntry[], imported: DayExtraEntry
     }
 
     if (byContentIndex != null) {
-      if (mode === "new_only") {
-        skipped++;
-        continue;
-      }
+      // Los extras son conceptos económicos: un duplicado lógico no se añade
+      // nunca, aunque el usuario elija importar todo.
       if (mode === "overwrite_matching") {
         const existingId = next[byContentIndex].id;
         next[byContentIndex] = cloneForPendingSync({ ...entry, id: existingId });
         byId.set(existingId, byContentIndex);
         byComposite.set(compositeKey, byContentIndex);
         overwritten++;
-        continue;
+      } else {
+        skipped++;
       }
+      continue;
     }
 
     const index = next.length;
