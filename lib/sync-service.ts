@@ -15,7 +15,7 @@ type SyncAction =
   | { type: "push"; timestamp: number }
   | { type: "delete"; jornadaId: string; timestamp: number }
   | { type: "delete_day_extra"; entryId: string; timestamp: number }
-  | { type: "delete_natural_day"; entryId: string; timestamp: number };
+  | { type: "delete_natural_day"; entryId: string; entryDate?: string; timestamp: number };
 
 let onlineOverride: boolean | null = null;
 
@@ -469,7 +469,9 @@ async function addToOfflineQueue(action: SyncAction): Promise<void> {
     if (action.type === "push") return existing.type === "push";
     if (action.type === "delete" && existing.type === "delete") return existing.jornadaId === action.jornadaId;
     if (action.type === "delete_day_extra" && existing.type === "delete_day_extra") return existing.entryId === action.entryId;
-    if (action.type === "delete_natural_day" && existing.type === "delete_natural_day") return existing.entryId === action.entryId;
+    if (action.type === "delete_natural_day" && existing.type === "delete_natural_day") {
+      return existing.entryId === action.entryId || (!!action.entryDate && existing.entryDate === action.entryDate);
+    }
     return false;
   };
   if (!queue.some(sameAction)) queue.push(action);
@@ -1622,7 +1624,7 @@ export async function syncAll(
     }
     for (const action of deleteNaturalDays) {
       try {
-        await deleteNaturalDayDietFromCloud(action.entryId, getAccessToken);
+        await deleteNaturalDayDietFromCloud(action.entryId, getAccessToken, action.entryDate);
       } catch {
         allDeletesOk = false;
         failedDeletes.push(action);
@@ -1767,14 +1769,29 @@ export async function deleteFromCloud(
 export async function deleteNaturalDayDietFromCloud(
   entryId: string,
   getAccessToken: () => Promise<string | null>,
+  entryDate?: string,
 ): Promise<void> {
   void getAccessToken;
   const auth = await getAuthenticatedUserOrThrow();
-  const { error } = await supabase
+  const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entryId);
+  let query = supabase
     .from("user_natural_day_diets")
     .delete()
-    .eq("id", entryId)
     .eq("user_id", auth.user.id);
+
+  // Los registros locales antiguos podían tener IDs no UUID. En ese caso la
+  // clave estable en nube es user_id + date.
+  if (uuidLike) {
+    query = query.eq("id", entryId);
+  } else if (entryDate && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
+    query = query.eq("date", entryDate);
+  } else {
+    // Un id no UUID nunca puede existir en esta tabla. No dejamos un borrado
+    // imposible atascado para siempre en la cola offline.
+    return;
+  }
+
+  const { error } = await query;
   if (error) throw error;
 }
 
@@ -1849,8 +1866,8 @@ export async function queueDeleteDayExtraEntryForSync(entryId: string): Promise<
   await addToOfflineQueue({ type: "delete_day_extra", entryId, timestamp: Date.now() });
 }
 
-export async function queueDeleteNaturalDayDietForSync(entryId: string): Promise<void> {
-  await addToOfflineQueue({ type: "delete_natural_day", entryId, timestamp: Date.now() });
+export async function queueDeleteNaturalDayDietForSync(entryId: string, entryDate?: string): Promise<void> {
+  await addToOfflineQueue({ type: "delete_natural_day", entryId, entryDate, timestamp: Date.now() });
 }
 
 export async function restoreFromCloud(
