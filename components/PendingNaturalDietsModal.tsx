@@ -96,6 +96,14 @@ const fechaESplusHHMM = (iso?: string | null): string => {
   return (datePart ? normalizeFechaES(datePart) : "") + (hh ? ` a las ${hh}` : "");
 };
 
+const normalizePlusConcept = (value: unknown): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+
 const getTypePillStyle = (type: DietType) => {
   switch (type) {
     case "INTERNACIONAL":
@@ -179,9 +187,13 @@ function PendingNaturalDietsModal({
           }
           // Extraer pluses manuales que NO sean built-in y meterlos en manualPlusesByDate
           // para que se muestren en la sección "Añadir plus manual" (con 🗑️ editable).
-          const manuales = d.plusItems.filter((pl) =>
-            pl.id !== "auto_domingo" && pl.id !== "auto_festivo"
-          );
+          const manuales = d.plusItems.filter((pl) => {
+            const concept = normalizePlusConcept(pl.concepto);
+            // Domingo/Festivo pertenecen a los toggles built-in aunque vengan
+            // de registros antiguos con otro id (auto_YYYY-MM-DD_domingo, etc.).
+            if (concept === "domingo" || concept === "festivo") return false;
+            return pl.id !== "auto_domingo" && pl.id !== "auto_festivo";
+          });
           if (manuales.length > 0) mp.set(d.date, manuales);
         }
         if (d.isDomingo && sundayAmt > 0) ps.set(`${d.date}||auto_domingo`, true);
@@ -371,12 +383,25 @@ function PendingNaturalDietsModal({
     const sourcePlus = Array.isArray(item.plusItems) ? item.plusItems : [];
     const manualIds = new Set(manual.map(p => p.id));
     const builtinIds = new Set(builtin.map(p => p.id));
-    const fromSource = sourcePlus.filter(pl => !manualIds.has(pl.id) && !builtinIds.has(pl.id));
+    const builtinConcepts = new Set(builtin.map(p => normalizePlusConcept(p.concepto)));
+    const fromSource = sourcePlus.filter((pl) => {
+      if (manualIds.has(pl.id) || builtinIds.has(pl.id)) return false;
+      // Evita que un Domingo/Festivo heredado con id antiguo conviva con el
+      // built-in equivalente y se cobre dos veces.
+      if (builtinConcepts.has(normalizePlusConcept(pl.concepto))) return false;
+      return true;
+    });
     const merged: PlusItemUi[] = [];
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
+    const seenConcepts = new Set<string>();
     for (const pl of [...manual, ...builtin, ...fromSource]) {
-      if (seen.has(pl.id)) continue;
-      seen.add(pl.id);
+      const conceptKey = normalizePlusConcept(pl.concepto);
+      if (seenIds.has(pl.id)) continue;
+      // Un mismo concepto no debe aparecer dos veces por tener IDs distintos.
+      // Esto corrige especialmente Formación, Domingo y Festivo heredados.
+      if (conceptKey && seenConcepts.has(conceptKey)) continue;
+      seenIds.add(pl.id);
+      if (conceptKey) seenConcepts.add(conceptKey);
       merged.push(pl);
     }
     return merged;
@@ -461,10 +486,14 @@ function PendingNaturalDietsModal({
           selected: true,
         }));
       const finalPluses: PlusItemUi[] = [];
-      const finalSeenPluses = new Set<string>();
+      const finalSeenIds = new Set<string>();
+      const finalSeenConcepts = new Set<string>();
       for (const pl of finalPlusesPre) {
-        if (finalSeenPluses.has(pl.id)) continue;
-        finalSeenPluses.add(pl.id);
+        const conceptKey = normalizePlusConcept(pl.concepto);
+        if (finalSeenIds.has(pl.id)) continue;
+        if (conceptKey && finalSeenConcepts.has(conceptKey)) continue;
+        finalSeenIds.add(pl.id);
+        if (conceptKey) finalSeenConcepts.add(conceptKey);
         finalPluses.push(pl);
       }
       finalItems.push({
