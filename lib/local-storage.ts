@@ -3491,7 +3491,7 @@ export async function getResumenDietas(
       }
       if (!desglose[key]) desglose[key] = { cantidad: 0, total: 0 };
       desglose[key].cantidad++;
-      desglose[key].total = Math.round((desglose[key].total + (importe - dayExtraInDieta)) * 100) / 100;
+      desglose[key].total = Math.round((desglose[key].total + Math.max(0, importe - dayExtraInDieta)) * 100) / 100;
     }
   }
 
