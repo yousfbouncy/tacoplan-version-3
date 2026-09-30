@@ -2483,7 +2483,7 @@ export default function HistorialScreen() {
                         onPress={() => {
                           const doDelete = async () => {
                             await deleteNaturalDayDiet(ndd.id);
-                            triggerDeleteNaturalDayDietSync(ndd.id);
+                            triggerDeleteNaturalDayDietSync(ndd.id, ndd.date);
                             qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
                             qc.invalidateQueries({ queryKey: ["km-resumen"] });
                             qc.invalidateQueries({ queryKey: ["viaje-resumen"] });
