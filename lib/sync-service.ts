@@ -1358,7 +1358,11 @@ export async function syncAll(
           } catch {}
           for (const n of pendingLocal) {
             const row: Record<string, any> = {
-              id: n.id,
+              // user_natural_day_diets.id es UUID en Supabase. Muchos registros
+              // locales históricos usan IDs legibles/no-UUID. No enviamos el id:
+              // UNIQUE(user_id,date) identifica el registro y Supabase conserva o
+              // genera el UUID correcto. En el pull posterior ese UUID reemplaza
+              // al id local por fecha.
               user_id: authUser.id,
               date: n.date,
               type: n.type,
@@ -1393,10 +1397,29 @@ export async function syncAll(
             if (natCols.has("is_festivo")) {
               row.is_festivo = typeof n.isFestivo === "boolean" ? n.isFestivo : false;
             }
-            const { error } = await supabase
+            let naturalUpsert = await supabase
               .from("user_natural_day_diets")
               .upsert(row, { onConflict: "user_id,date" });
-            if (error) throw error;
+
+            // Compatibilidad con instalaciones que aún no hayan aplicado las
+            // columnas opcionales de septiembre. No perdemos la dieta base por
+            // culpa de pluses_json/is_domingo/is_festivo; se sincronizarán cuando
+            // el esquema esté actualizado.
+            if (naturalUpsert.error && (
+              Object.prototype.hasOwnProperty.call(row, "pluses_json") ||
+              Object.prototype.hasOwnProperty.call(row, "is_domingo") ||
+              Object.prototype.hasOwnProperty.call(row, "is_festivo")
+            )) {
+              const fallbackRow = { ...row };
+              delete fallbackRow.pluses_json;
+              delete fallbackRow.is_domingo;
+              delete fallbackRow.is_festivo;
+              naturalUpsert = await supabase
+                .from("user_natural_day_diets")
+                .upsert(fallbackRow, { onConflict: "user_id,date" });
+            }
+
+            if (naturalUpsert.error) throw naturalUpsert.error;
             natPushed += 1;
           }
           if (natPushed > 0) {
