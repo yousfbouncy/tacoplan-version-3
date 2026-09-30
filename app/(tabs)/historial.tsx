@@ -84,6 +84,7 @@ import {
 } from "@/lib/legalEngine";
 import { useSync } from "@/lib/sync-context";
 import { userScopedKey } from "@/lib/user-scope";
+import { getCalendarDietLabel, journeyTouchesCalendarDate } from "@/lib/history-calendar";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import {
@@ -1125,6 +1126,31 @@ export default function HistorialScreen() {
     queryFn: () => listarJornadas(periodo.from, periodo.to),
   });
 
+  const calendarJourneysQuery = useQuery<Jornada[]>({
+    queryKey: ["calendar-jornadas-all", syncVersion],
+    queryFn: () => listarJornadas(),
+    enabled: calendarVisible,
+  });
+
+  const calendarRange = useMemo(() => {
+    const year = calendarCursor.getFullYear();
+    const month = calendarCursor.getMonth();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return {
+      from: `${year}-${pad(month + 1)}-01`,
+      to: `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`,
+    };
+  }, [calendarCursor]);
+
+  const calendarMissingDietsQuery = useQuery<DetectedMissingNaturalDay[]>({
+    queryKey: ["calendar-missing-natural-days", calendarRange.from, calendarRange.to, syncVersion],
+    queryFn: () => detectMissingOutOfBaseDietDays({
+      fromDate: calendarRange.from,
+      toDate: calendarRange.to,
+    }),
+    enabled: calendarVisible,
+  });
+
   const compsQuery = useQuery<Compensacion[]>({
     queryKey: ["compensaciones", syncVersion],
     queryFn: () => listarCompensaciones(),
@@ -1851,38 +1877,44 @@ export default function HistorialScreen() {
       date: string | null;
       journey: Jornada | null;
       natural: NaturalDayDietEntry | null;
+      pendingNatural: DetectedMissingNaturalDay | null;
       plusCount: number;
     }> = [];
 
     for (let i = 0; i < leading; i++) {
-      cells.push({ key: `blank-${i}`, day: null, date: null, journey: null, natural: null, plusCount: 0 });
+      cells.push({ key: `blank-${i}`, day: null, date: null, journey: null, natural: null, pendingNatural: null, plusCount: 0 });
     }
 
     const pad = (v: number) => String(v).padStart(2, "0");
+    const calendarJourneys = calendarJourneysQuery.data || [];
+    const pendingNaturalDays = calendarMissingDietsQuery.data || [];
     for (let day = 1; day <= daysInMonth; day++) {
       const date = `${year}-${pad(month + 1)}-${pad(day)}`;
-      const dayJourneys = jornadasData.filter((j) => j.fechaInicio === date);
+      const startingJourneys = calendarJourneys.filter((j) => j.fechaInicio === date);
+      const touchingJourneys = calendarJourneys.filter((j) => journeyTouchesCalendarDate(j, date));
+      const dayJourneys = startingJourneys.length > 0 ? startingJourneys : touchingJourneys;
       const journey = dayJourneys.find((j) =>
         j.tipoRuta === "INTERNACIONAL" || j.tipoRuta === "REGIONAL_INTL" || j.tipoRuta === "NAC_INTL"
       ) || dayJourneys[0] || null;
       const natural = naturalDayDiets.find(
         (n) => n.date === date && n.confirmedByUser && !n.dismissedAt
       ) || null;
+      const pendingNatural = pendingNaturalDays.find((n) => n.date === date) || null;
       const plusCount =
-        dayJourneys.reduce((sum, j) => sum + (Array.isArray(j.plusItems) ? j.plusItems.length : 0), 0) +
+        startingJourneys.reduce((sum, j) => sum + (Array.isArray(j.plusItems) ? j.plusItems.length : 0), 0) +
         (natural?.plusItems?.length || 0);
-      cells.push({ key: date, day, date, journey, natural, plusCount });
+      cells.push({ key: date, day, date, journey, natural, pendingNatural, plusCount });
     }
 
     while (cells.length % 7 !== 0) {
-      cells.push({ key: `tail-${cells.length}`, day: null, date: null, journey: null, natural: null, plusCount: 0 });
+      cells.push({ key: `tail-${cells.length}`, day: null, date: null, journey: null, natural: null, pendingNatural: null, plusCount: 0 });
     }
 
     return {
       title: calendarCursor.toLocaleDateString("es-ES", { month: "long", year: "numeric" }),
       cells,
     };
-  }, [calendarCursor, jornadasData, naturalDayDiets]);
+  }, [calendarCursor, calendarJourneysQuery.data, calendarMissingDietsQuery.data, naturalDayDiets]);
 
   const totalFerryExtras = useMemo(() => {
     let total = 0;
@@ -2135,20 +2167,13 @@ export default function HistorialScreen() {
                   return <View key={cell.key} style={styles.calendarCell} />;
                 }
                 const natural = !!cell.natural;
-                const route = cell.journey?.tipoRuta || "";
-                const label = natural
-                  ? "FUERA"
-                  : route === "INTERNACIONAL" || route === "REGIONAL_INTL" || route === "NAC_INTL"
-                    ? "INT"
-                    : route === "REGIONAL"
-                      ? "REG"
-                      : cell.journey
-                        ? "NAC"
-                        : "";
+                const pendingNatural = !!cell.pendingNatural;
+                const naturalType = cell.natural?.type || cell.pendingNatural?.type || null;
+                const label = getCalendarDietLabel(naturalType, cell.journey?.tipoRuta || null);
                 return (
-                  <View key={cell.key} style={[styles.calendarCell, (cell.journey || natural) && styles.calendarCellActive]}>
+                  <View key={cell.key} style={[styles.calendarCell, (cell.journey || natural || pendingNatural) && styles.calendarCellActive]}>
                     <Text style={styles.calendarDay}>{cell.day}</Text>
-                    {label ? <Text style={[styles.calendarTag, natural && { color: Colors.light.warning }]}>{label}</Text> : null}
+                    {label ? <Text style={[styles.calendarTag, (natural || pendingNatural) && { color: Colors.light.warning }]}>{label}</Text> : null}
                     {cell.plusCount > 0 ? (
                       <Text style={styles.calendarPlus}>+{cell.plusCount}</Text>
                     ) : null}
@@ -2156,7 +2181,7 @@ export default function HistorialScreen() {
                 );
               })}
             </View>
-            <Text style={styles.calendarLegend}>INT internacional · NAC nacional · REG regional · FUERA jornada fuera de base · +N pluses</Text>
+            <Text style={styles.calendarLegend}>INT internacional · NAC nacional · REG regional · +N pluses</Text>
           </View>
         </View>
       </Modal>
