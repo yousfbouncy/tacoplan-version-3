@@ -36,7 +36,10 @@
         "BLUETOOTH_CONNECT",
         "BLUETOOTH_ADVERTISE",
         "BLUETOOTH",
-        "BLUETOOTH_ADMIN"
+        "BLUETOOTH_ADMIN",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#0F4C75",
@@ -58,7 +61,17 @@
       "expo-font",
       "expo-web-browser",
       "expo-updates",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Tacoplan utiliza la ubicación también en segundo plano para detectar posibles inicios de jornada al circular.",
+          "locationWhenInUsePermission": "Tacoplan utiliza la ubicación para registrar lugares y detectar movimiento.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
     ],
     "updates": {
       "enabled": true,
