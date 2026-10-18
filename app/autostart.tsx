@@ -45,7 +45,7 @@ export default function AutoStartScreen() {
   };
   return <ScrollView contentContainerStyle={styles.container}>
     <Text style={styles.heading}>Tacoplan AutoStart</Text>
-    <Text style={styles.body}>Detecta un posible inicio tras 3 minutos de movimiento a 12 km/h o más. No crea jornadas legales automáticamente.</Text>
+    <Text style={styles.body}>Detecta un posible inicio tras al menos 2 segundos de movimiento a 2 km/h o más. No crea jornadas legales automáticamente.</Text>
     <Pressable disabled={busy || Platform.OS === "web"} onPress={toggle} style={styles.button}>
       <Text style={styles.buttonText}>{busy ? "Procesando..." : enabled ? "Desactivar AutoStart" : "Activar AutoStart"}</Text>
     </Pressable>
