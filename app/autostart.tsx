@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "@/lib/auth-context";
 import { enableAutoStart, disableAutoStart, syncAutoStartProposals } from "@/lib/autostart/service";
-import { readAutoStartState, type Proposal } from "@/lib/autostart/task";
+import { readAutoStartState, setAutoStartState, type Proposal } from "@/lib/autostart/task";
 import { supabase } from "@/lib/supabase";
 
 export default function AutoStartScreen() {
@@ -35,6 +35,8 @@ export default function AutoStartScreen() {
     if (!user?.id) return;
     const { error } = await supabase.from("autostart_proposals").update({ status: "dismissed" }).eq("id", id).eq("user_id", user.id);
     if (error) { Alert.alert("AutoStart", error.message); return; }
+    const state = await readAutoStartState();
+    await setAutoStartState({ ...state, proposals: state.proposals.filter(p => p.id !== id) });
     await refresh();
   };
   return <ScrollView contentContainerStyle={styles.container}>
