@@ -78,7 +78,8 @@
     "tsx": "^4.20.6",
     "ws": "^8.18.0",
     "zod": "^3.24.2",
-    "zod-validation-error": "^3.4.0"
+    "zod-validation-error": "^3.4.0",
+    "expo-task-manager": "~14.0.8"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
