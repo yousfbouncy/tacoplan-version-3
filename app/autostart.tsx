@@ -17,7 +17,11 @@ export default function AutoStartScreen() {
     if (user?.id) {
       try { await syncAutoStartProposals(user.id); } catch {}
       const r = await supabase.from("autostart_proposals").select("id,detected_at,status").eq("user_id", user.id).eq("status", "pending").order("detected_at", { ascending: false });
-      if (!r.error && r.data) setProposals(r.data.map(p => ({ id: p.id, userId: user.id, detectedAt: p.detected_at, createdAt: p.detected_at, status: "pending", source: "location" })));
+      if (!r.error && r.data) {
+        const local = (await readAutoStartState()).proposals.filter(p => p.userId === user.id);
+        const remote = r.data.map(p => ({ id: p.id, userId: user.id, detectedAt: p.detected_at, createdAt: p.detected_at, status: "pending" as const, source: "location" as const }));
+        setProposals([...remote, ...local.filter(p => !remote.some(r => r.id === p.id))]);
+      }
     }
   }, [user?.id]);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
@@ -34,7 +38,7 @@ export default function AutoStartScreen() {
   const dismiss = async (id: string) => {
     if (!user?.id) return;
     const { error } = await supabase.from("autostart_proposals").update({ status: "dismissed" }).eq("id", id).eq("user_id", user.id);
-    if (error) { Alert.alert("AutoStart", error.message); return; }
+    if (error) { Alert.alert("AutoStart", "No se ha podido descartar en la nube: " + error.message); return; }
     const state = await readAutoStartState();
     await setAutoStartState({ ...state, proposals: state.proposals.filter(p => p.id !== id) });
     await refresh();
