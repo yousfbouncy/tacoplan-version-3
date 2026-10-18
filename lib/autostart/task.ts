@@ -38,7 +38,7 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
     await setAutoStartState(state);
     try {
       await Notifications.scheduleNotificationAsync({
-        content: { title: "Tacoplan · Inicio detectado", body: "Movimiento de 3 minutos detectado. Confirma si has empezado a trabajar.", data: { target: "jornada", autostartProposalId: proposal.id } },
+        content: { title: "Tacoplan · Inicio detectado", body: "Movimiento de al menos 2 segundos detectado. Confirma si has empezado a trabajar.", data: { target: "jornada", autostartProposalId: proposal.id } },
         trigger: null,
       });
     } catch {}
