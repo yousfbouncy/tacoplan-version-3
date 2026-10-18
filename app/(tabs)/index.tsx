@@ -112,6 +112,13 @@ import {
   type UserNotificationRow,
 } from "@/lib/user-cloud";
 
+
+// Inserta ":" automáticamente al escribir HHMM, manteniendo la edición y el borrado.
+function formatHourInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  return digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
+}
+
 const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
 const SUPPORT_WHATSAPP_URL = "https://wa.me/34656365216";
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
@@ -2364,7 +2371,9 @@ export default function DashboardScreen() {
                   <TextInput
                     style={styles.input}
                     value={inicioHora}
-                    onChangeText={setInicioHora}
+                    onChangeText={(value) => setInicioHora(formatHourInput(value))}
+                    keyboardType="number-pad"
+                    maxLength={5}
                     placeholder="HH:MM"
                     placeholderTextColor="#9CA3AF"
                   />
@@ -2869,7 +2878,9 @@ export default function DashboardScreen() {
                 <TextInput
                   style={styles.input}
                   value={finHora}
-                  onChangeText={setFinHora}
+                  onChangeText={(value) => setFinHora(formatHourInput(value))}
+                  keyboardType="number-pad"
+                  maxLength={5}
                   placeholder="HH:MM"
                   placeholderTextColor="#9CA3AF"
                 />
