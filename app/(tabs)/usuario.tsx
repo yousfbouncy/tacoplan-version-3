@@ -1890,6 +1890,7 @@ export default function UsuarioScreen() {
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         nestedScrollEnabled
       >
+        <Pressable onPress={() => router.push("/autostart" as any)} style={{ backgroundColor: "#0F4C75", padding: 14, margin: 12, borderRadius: 12 }}><Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>AutoStart · Detección automática de jornada</Text></Pressable>
         {!showOnlySection ? (
           <>
             <View style={styles.card}>
