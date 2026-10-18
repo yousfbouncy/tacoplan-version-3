@@ -1,5 +1,5 @@
-export const MIN_SPEED_MPS = 12 / 3.6;
-export const MIN_DURATION_MS = 3 * 60 * 1000;
+export const MIN_SPEED_MPS = 2 / 3.6;
+export const MIN_DURATION_MS = 2 * 1000;
 export const MAX_SAMPLE_GAP_MS = 90 * 1000;
 export const MAX_ACCURACY_METERS = 75;
 export type Fix = { timestamp: number; coords: { speed: number | null; accuracy: number | null } };
