@@ -1,3 +1,4 @@
+import "@/lib/autostart/task";
 import "react-native-url-polyfill/auto";
 import "@/lib/suppress-font-errors";
 import { QueryClientProvider } from "@tanstack/react-query";
