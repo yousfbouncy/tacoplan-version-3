@@ -22,41 +22,47 @@ export function advanceCandidate(current: Candidate, fix: Fix): { candidate: Can
   return { candidate };
 }
 
-// Tras la primera propuesta sin respuesta se conservan los movimientos válidos.
-// Tres tramos detectados dentro de 20 minutos + movimiento continuo de 60 s
-// autorizan una confirmación automática, con hora del PRIMER tramo válido.
+// Señales de tramos SEPARADOS (no muestras repetidas del mismo desplazamiento).
+// Primera detección >=15 s: propuesta manual. Si no se confirma, tras al menos
+// tres tramos separados, el último continuo >=60 s, se permite autoconfirmar.
+// Conservamos el inicio del primer tramo que cumpla la velocidad mínima.
 export type AutoStartEvidence = {
   firstMovementAt: number;
-  confirmedMovements: number[];
-  continuousStartAt: number | null;
+  segments: number[];
+  segmentStartAt: number | null;
   lastFixAt: number | null;
   autoConfirmed: boolean;
 } | null;
+
 export function advanceAutoStartEvidence(state: AutoStartEvidence, fix: Fix): {
-  state: AutoStartEvidence; shouldAutoConfirm: boolean; startAt?: number;
+  state: AutoStartEvidence; shouldAutoConfirm: boolean; shouldPrompt: boolean; startAt?: number;
 } {
-  const { speed, accuracy } = fix.coords;
-  const valid = Number.isFinite(fix.timestamp) &&
-    typeof speed === "number" && Number.isFinite(speed) && speed > MIN_SPEED_MPS &&
-    typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy <= MAX_ACCURACY_METERS;
-  if (!valid) return { state: state ? { ...state, continuousStartAt: null, lastFixAt: fix.timestamp } : null, shouldAutoConfirm: false };
-  if (state?.autoConfirmed || (state?.lastFixAt != null && fix.timestamp <= state.lastFixAt))
-    return { state, shouldAutoConfirm: false };
-  const fresh = !state || fix.timestamp - state.firstMovementAt > AUTO_CONFIRM_WINDOW_MS;
-  const firstMovementAt = fresh ? fix.timestamp : state.firstMovementAt;
-  const confirmedMovements = fresh ? [] : state.confirmedMovements.filter(t => t >= fix.timestamp - AUTO_CONFIRM_WINDOW_MS);
-  const continuousStartAt = fresh || state?.continuousStartAt == null ||
-    state.lastFixAt == null || fix.timestamp - state.lastFixAt > MAX_SAMPLE_GAP_MS
-    ? fix.timestamp : state.continuousStartAt;
-  const elapsed = fix.timestamp - continuousStartAt;
-  // Cada 15 s de continuidad aporta una prueba; no supone que sean viajes distintos.
-  const nextCount = Math.max(confirmedMovements.length, Math.floor(elapsed / MIN_DURATION_MS));
-  while (confirmedMovements.length < nextCount) confirmedMovements.push(continuousStartAt + (confirmedMovements.length + 1) * MIN_DURATION_MS);
-  const shouldAutoConfirm = confirmedMovements.length >= AUTO_CONFIRM_BURSTS &&
+  if (!Number.isFinite(fix.timestamp)) return { state, shouldAutoConfirm: false, shouldPrompt: false };
+  if (state?.lastFixAt != null && fix.timestamp <= state.lastFixAt)
+    return { state, shouldAutoConfirm: false, shouldPrompt: false };
+  const valid = typeof fix.coords.speed === "number" && Number.isFinite(fix.coords.speed) &&
+    fix.coords.speed > MIN_SPEED_MPS && typeof fix.coords.accuracy === "number" &&
+    Number.isFinite(fix.coords.accuracy) && fix.coords.accuracy <= MAX_ACCURACY_METERS;
+  const expired = state != null && fix.timestamp - state.firstMovementAt > AUTO_CONFIRM_WINDOW_MS;
+  const base = !state || expired ? {
+    firstMovementAt: fix.timestamp, segments: [] as number[],
+    segmentStartAt: null as number | null, lastFixAt: null as number | null, autoConfirmed: false,
+  } : { ...state, segments: [...state.segments] };
+  if (base.autoConfirmed) return { state: base, shouldAutoConfirm: false, shouldPrompt: false };
+  const interrupted = base.lastFixAt != null && fix.timestamp - base.lastFixAt > MAX_SAMPLE_GAP_MS;
+  if (!valid) {
+    return { state: { ...base, segmentStartAt: null, lastFixAt: fix.timestamp }, shouldAutoConfirm: false, shouldPrompt: false };
+  }
+  const segmentStartAt = base.segmentStartAt == null || interrupted ? fix.timestamp : base.segmentStartAt;
+  const elapsed = fix.timestamp - segmentStartAt;
+  const isNewSegment = !base.segments.includes(segmentStartAt) && elapsed >= MIN_DURATION_MS;
+  const segments = isNewSegment ? [...base.segments, segmentStartAt] : base.segments;
+  const shouldPrompt = segments.length === 1 && isNewSegment;
+  const shouldAutoConfirm = segments.length >= AUTO_CONFIRM_BURSTS &&
     elapsed >= AUTO_CONFIRM_LONG_MOVEMENT_MS;
+  const firstMovementAt = segments[0] ?? base.firstMovementAt;
   return {
-    state: { firstMovementAt, confirmedMovements, continuousStartAt, lastFixAt: fix.timestamp, autoConfirmed: shouldAutoConfirm },
-    shouldAutoConfirm,
-    startAt: shouldAutoConfirm ? firstMovementAt : undefined,
+    state: { firstMovementAt, segments, segmentStartAt, lastFixAt: fix.timestamp, autoConfirmed: shouldAutoConfirm },
+    shouldAutoConfirm, shouldPrompt, startAt: shouldAutoConfirm ? firstMovementAt : undefined,
   };
 }
