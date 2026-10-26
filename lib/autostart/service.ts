@@ -21,7 +21,7 @@ export async function enableAutoStart(userId: string): Promise<void> {
   if (!(await Location.hasStartedLocationUpdatesAsync(AUTOSTART_TASK))) {
     try {
       await Location.startLocationUpdatesAsync(AUTOSTART_TASK, {
-        accuracy: Location.Accuracy.High, timeInterval: 15000, distanceInterval: 15,
+        accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 0,
         pausesUpdatesAutomatically: false, activityType: Location.ActivityType.AutomotiveNavigation,
         foregroundService: { notificationTitle: "Tacoplan AutoStart activo", notificationBody: "Detectando movimiento del vehículo" },
         showsBackgroundLocationIndicator: true,
@@ -37,7 +37,7 @@ export async function disableAutoStart(): Promise<void> {
     await Location.stopLocationUpdatesAsync(AUTOSTART_TASK);
   }
   const state = await readAutoStartState();
-  await setAutoStartState({ ...state, enabled: false, candidate: null, userId: null });
+  await setAutoStartState({ ...state, enabled: false, candidate: null, userId: null, movementSegments: [], firstMovementAt: null });
 }
 export async function syncAutoStartProposals(userId: string): Promise<void> {
   const state = await readAutoStartState();
@@ -48,5 +48,4 @@ export async function syncAutoStartProposals(userId: string): Promise<void> {
     }, { onConflict: "id", ignoreDuplicates: true });
     if (error) throw error;
   }
-  await setAutoStartState({ ...state, proposals: state.proposals.filter(p => p.userId !== userId) });
 }

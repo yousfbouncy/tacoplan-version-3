@@ -13,6 +13,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
@@ -26,6 +27,7 @@ import { useSync } from "@/lib/sync-context";
 import { useFerry } from "@/lib/ferry-context";
 import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
+import { supabase } from "@/lib/supabase";
 
 type ResumenDietas = {
   total: number;
@@ -49,6 +51,20 @@ export default function DietasScreen() {
   const { user } = useAuth();
   const { syncVersion } = useSync();
   const { config: ferryConfig, isMoroccoMode } = useFerry();
+  const payrollSetupQuery = useQuery({
+    queryKey: ["payroll-setup", user?.id, syncVersion],
+    enabled: Boolean(user?.id),
+    queryFn: async () => {
+      if (!user?.id) return false;
+      const cacheKey = await userScopedKey("tacoplan_payroll_config", user.id);
+      let config: Record<string, unknown> = {};
+      try { config = JSON.parse((await AsyncStorage.getItem(cacheKey)) || "{}"); } catch {}
+      const { data } = await supabase.from("profiles").select("payroll_config").eq("id", user.id).maybeSingle();
+      config = { ...config, ...((data as any)?.payroll_config || {}) };
+      return ["salario_base_bruto", "plus_convenio", "complemento", "pagas_prorrateadas", "productividad_fija", "otros_conceptos_fijos"]
+        .some((key) => Number(String(config[key] ?? "0").replace(",", ".")) > 0);
+    },
+  });
   const [periodoIdx, setPeriodoIdx] = useState(0);
   const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
   const [dayExtras, setDayExtras] = useState<UserDayExtras>({
@@ -740,11 +756,11 @@ export default function DietasScreen() {
         )}
 
         <View style={styles.periodoNav}>
-          <Pressable onPress={() => setPeriodoIdx((p) => p + 1)}>
+          <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
             <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
           </Pressable>
           <Text style={styles.periodoText}>{periodo.label}</Text>
-          <Pressable onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))}>
+          <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))} hitSlop={6}>
             <Ionicons
               name="chevron-forward"
               size={22}
@@ -765,6 +781,24 @@ export default function DietasScreen() {
           <Ionicons name="calculator-outline" size={18} color="#fff" />
           <Text style={styles.saveBtnText}>Estimación de nómina</Text>
         </Pressable>
+
+        {payrollSetupQuery.data === false && (
+          <View style={styles.payrollHintCard}>
+            <Ionicons name="information-circle-outline" size={20} color={Colors.light.tint} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.payrollHintTitle}>Completa tu nómina para ver una estimación</Text>
+              <Text style={styles.payrollHintText}>Configura salario y conceptos fijos; la estimación seguirá siendo orientativa.</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push({ pathname: "/usuario", params: { section: "config_nomina" } } as any)}
+                style={styles.payrollSetupButton}
+              >
+                <Text style={styles.payrollSetupButtonText}>Configurar mi nómina</Text>
+                <Ionicons name="arrow-forward" size={15} color={Colors.light.tint} />
+              </Pressable>
+            </View>
+          </View>
+        )}
 
 
         {isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet" && moroccoQuery.data ? (
@@ -1035,28 +1069,28 @@ export default function DietasScreen() {
           ) : data ? (
             <>
               {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
-                <View style={styles.totalCard}>
+                <LinearGradient colors={["#1678C8", "#082F63"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.totalCard, styles.totalCardPremium]}>
                   <View style={styles.totalIcon}>
-                    <Ionicons name="wallet" size={32} color={Colors.light.accent} />
+                    <Ionicons name="wallet" size={30} color="#fff" />
                   </View>
-                  <Text style={styles.totalLabel}>{t("dietas.summary")}</Text>
-                  <Text style={styles.totalValue}>{grandTotal.toFixed(2)} EUR</Text>
+                  <Text style={[styles.totalLabel, styles.totalLabelPremium]}>{t("dietas.summary")}</Text>
+                  <Text style={[styles.totalValue, styles.totalValuePremium]}>{grandTotal.toFixed(2)} EUR</Text>
                   <View style={styles.summaryRow}>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>{t("dietas.totalDiets")}</Text>
-                      <Text style={styles.summaryValue}>{data.total.toFixed(2)} €</Text>
+                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
+                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalDiets")}</Text>
+                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{data.total.toFixed(2)} €</Text>
                     </View>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>{t("dietas.totalExtras")}</Text>
-                      <Text style={styles.summaryValue}>{totalExtras.toFixed(2)} €</Text>
+                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
+                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalExtras")}</Text>
+                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{totalExtras.toFixed(2)} €</Text>
                     </View>
-                    <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>{t("dietas.totalPlus")}</Text>
-                      <Text style={styles.summaryValue}>{totalPlus.toFixed(2)} €</Text>
+                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
+                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalPlus")}</Text>
+                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{totalPlus.toFixed(2)} €</Text>
                     </View>
                   </View>
-                  <Text style={styles.totalSub}>{t("dietas.periodLabel")} {periodo.label}</Text>
-                </View>
+                  <Text style={[styles.totalSub, styles.totalSubPremium]}>{t("dietas.periodLabel")} {periodo.label}</Text>
+                </LinearGradient>
               )}
 
               {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
@@ -1281,14 +1315,26 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.tint,
+    color: "#153B5B",
   },
   periodoNav: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    gap: 16,
-    paddingVertical: 10,
+    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 8,
+    marginBottom: 12,
+    borderRadius: 15,
+    backgroundColor: Colors.light.surface,
+    borderWidth: 1,
+    borderColor: "#E7EDF3",
+    shadowColor: "#123B5D",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   periodoText: {
     fontSize: 15,
@@ -1296,6 +1342,14 @@ const styles = StyleSheet.create({
     color: Colors.light.text,
     minWidth: 130,
     textAlign: "center" as const,
+  },
+  periodArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: "#EDF6FE",
   },
   loadingWrap: {
     paddingTop: 80,
@@ -1313,6 +1367,18 @@ const styles = StyleSheet.create({
     elevation: 2,
     marginBottom: 16,
   },
+  totalCardPremium: {
+    borderRadius: 20,
+    padding: 20,
+    alignItems: "stretch" as const,
+    overflow: "hidden" as const,
+  },
+  totalLabelPremium: { color: "#D6E9F8" },
+  totalValuePremium: { color: "#fff", fontSize: 34 },
+  totalSubPremium: { color: "#C8D9E8", alignSelf: "center" as const },
+  summaryItemPremium: { backgroundColor: "rgba(255,255,255,0.13)" },
+  summaryLabelPremium: { color: "#D6E9F8" },
+  summaryValuePremium: { color: "#fff" },
   totalIcon: {
     width: 60,
     height: 60,
@@ -1536,5 +1602,41 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderLeftWidth: 3,
     borderLeftColor: Colors.light.tint,
+  },
+  payrollHintCard: {
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    gap: 10,
+    padding: 14,
+    marginTop: 10,
+    marginBottom: 12,
+    borderRadius: 14,
+    backgroundColor: "#EAF4FF",
+    borderWidth: 1,
+    borderColor: "#C9E3FA",
+  },
+  payrollHintTitle: {
+    color: Colors.light.text,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 4,
+  },
+  payrollHintText: {
+    color: Colors.light.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: "Inter_400Regular",
+  },
+  payrollSetupButton: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 5,
+    alignSelf: "flex-start" as const,
+    marginTop: 8,
+  },
+  payrollSetupButtonText: {
+    color: Colors.light.tint,
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
   },
 });

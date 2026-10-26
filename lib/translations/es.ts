@@ -128,6 +128,7 @@ const es: Record<string, string> = {
   "tabs.dietas": "Dietas",
   "tabs.viajes": "Viajes",
   "tabs.settings": "Config",
+  "tabs.more": "Más",
 
   "tacho.title": "Tacógrafo",
   "tacho.live": "En vivo",

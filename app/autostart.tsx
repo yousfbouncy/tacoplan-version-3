@@ -40,12 +40,18 @@ export default function AutoStartScreen() {
     const { error } = await supabase.from("autostart_proposals").update({ status: "dismissed" }).eq("id", id).eq("user_id", user.id);
     if (error) { Alert.alert("AutoStart", "No se ha podido descartar en la nube: " + error.message); return; }
     const state = await readAutoStartState();
-    await setAutoStartState({ ...state, proposals: state.proposals.filter(p => p.id !== id) });
+    await setAutoStartState({
+      ...state,
+      proposals: state.proposals.filter(p => p.id !== id),
+      candidate: null,
+      firstMovementAt: null,
+      movementSegments: [],
+    });
     await refresh();
   };
   return <ScrollView contentContainerStyle={styles.container}>
     <Text style={styles.heading}>Tacoplan AutoStart</Text>
-    <Text style={styles.body}>Detecta un posible inicio tras al menos 2 segundos de movimiento a 2 km/h o más. No crea jornadas legales automáticamente.</Text>
+    <Text style={styles.body}>Detecta movimiento desde 2 km/h. Si no confirmas el aviso, inicia la jornada automáticamente al detectar 3 tramos en 20 minutos, con al menos uno de 60 segundos. Guarda como inicio la hora del primer movimiento. La conducción sigue siendo manual.</Text>
     <Pressable disabled={busy || Platform.OS === "web"} onPress={toggle} style={styles.button}>
       <Text style={styles.buttonText}>{busy ? "Procesando..." : enabled ? "Desactivar AutoStart" : "Activar AutoStart"}</Text>
     </Pressable>
@@ -54,7 +60,7 @@ export default function AutoStartScreen() {
     <Pressable onPress={refresh} style={styles.secondary}><Text>Actualizar propuestas</Text></Pressable>
     {proposals.length === 0 ? <Text style={styles.body}>Sin propuestas pendientes en este dispositivo.</Text> : proposals.map(p => <View key={p.id} style={styles.card}>
       <Text>{new Date(p.detectedAt).toLocaleString("es-ES")}</Text>
-      <Text style={styles.body}>Propuesta provisional. Confirma manualmente la jornada en la pantalla principal.</Text>
+      <Text style={styles.body}>Inicio provisional detectado. Puedes confirmarlo ahora; si no, AutoStart seguirá observando para confirmar la jornada automáticamente.</Text>
       <Pressable onPress={() => dismiss(p.id)} style={styles.secondary}><Text>Descartar propuesta</Text></Pressable>
     </View>)}
     <Text style={styles.body}>La ubicación funciona en segundo plano solo donde Android/iOS lo permitan. Las propuestas no modifican dietas, descansos ni nóminas.</Text>

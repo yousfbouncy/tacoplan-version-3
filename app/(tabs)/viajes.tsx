@@ -478,7 +478,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.tint,
+    color: "#153B5B",
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -515,9 +515,11 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 17,
+    padding: 15,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E9EEF3",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,

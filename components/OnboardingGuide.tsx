@@ -6,6 +6,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  type ScrollViewInstance,
   StyleSheet,
   Text,
   View,
@@ -315,7 +316,7 @@ function renderPreview(step: Step) {
 
 export default function OnboardingGuide({ visible, onClose }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance | null>(null);
 
   const step = STEPS[currentStep];
   const isLast = currentStep === STEPS.length - 1;

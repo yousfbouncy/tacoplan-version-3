@@ -101,6 +101,9 @@ import { useSync } from "@/lib/sync-context";
 import { useTachograph } from "@/lib/tachograph/tachograph-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { userScopedKey } from "@/lib/user-scope";
+import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
+import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
+import { supabase } from "@/lib/supabase";
 import {
   fetchDayExtras,
   fetchDietRates,
@@ -724,6 +727,34 @@ export default function DashboardScreen() {
     queryKey: ["estado-legal", syncVersion],
     queryFn: () => getEstadoLegal(),
   });
+
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    const syncAlarms = async () => {
+      try {
+        const prefKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, user?.id);
+        const localEnabled = (await AsyncStorage.getItem(prefKey)) !== "false";
+        let masterEnabled = true;
+        if (user?.id) {
+          const { data } = await supabase.from("profiles").select("notifications_enabled").eq("id", user.id).maybeSingle();
+          masterEnabled = (data as any)?.notifications_enabled !== false;
+        }
+        if (cancelled) return;
+        if (abiertaQuery.isLoading || estadoQuery.isLoading) return;
+        const shift = abiertaQuery.data;
+        await syncAvailabilityAlarms(
+          shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio } : null,
+          estadoQuery.data?.disponibilidadMin,
+          localEnabled && masterEnabled,
+        );
+        await syncJornadaWidget(shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio } : null, estadoQuery.data?.disponibilidadMin);
+      } catch (error) {
+        console.warn("[AVAILABILITY-ALARMS] No se pudieron sincronizar los avisos", error);
+      }
+    };
+    syncAlarms();
+    return () => { cancelled = true; };
+  }, [abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.isLoading, user?.id]));
 
   const legalPreviewQuery = useQuery<LegalPreview>({
     queryKey: ["legal-preview", syncVersion],
@@ -4527,7 +4558,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.tint,
+    color: "#153B5B",
   },
   headerSubtitle: {
     fontSize: 12,
@@ -4850,8 +4881,10 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
+    borderWidth: 1,
+    borderColor: "#E9EEF3",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,

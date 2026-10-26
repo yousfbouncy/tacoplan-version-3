@@ -9,6 +9,7 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  type ScrollViewInstance,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,6 +31,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } from "@/lib/user-cloud";
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
+import { AVAILABILITY_ALARMS_KEY } from "@/lib/availability-alarms";
 
 function safeHaptic() {
   if (Platform.OS !== "web") {
@@ -734,7 +736,7 @@ export default function UsuarioScreen() {
   const userId = user?.id ?? null;
   const { getPeriod, config: periodConfig } = usePeriod();
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance | null>(null);
   const sectionYs = useRef<Record<string, number>>({});
 
   const normalizeSectionKey = useCallback((key?: string) => {
@@ -874,6 +876,7 @@ export default function UsuarioScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [pushRemindersEnabled, setPushRemindersEnabled] = useState(true);
   const [payrollNotificationsEnabled, setPayrollNotificationsEnabled] = useState(true);
+  const [availabilityAlarmsEnabled, setAvailabilityAlarmsEnabled] = useState(true);
   const [savingNotifPrefs, setSavingNotifPrefs] = useState(false);
   const [pushPermissionStatus, setPushPermissionStatus] = useState<string>("unknown");
   const [pushToken, setPushToken] = useState<string | null>(null);
@@ -981,6 +984,8 @@ export default function UsuarioScreen() {
   const loadNotifPrefs = useCallback(async () => {
     if (!userId) return;
     try {
+      const alarmKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, userId);
+      setAvailabilityAlarmsEnabled((await AsyncStorage.getItem(alarmKey)) !== "false");
       const res = await supabase
         .from("profiles")
         .select("notifications_enabled,push_reminders_enabled,payroll_notifications_enabled")
@@ -1891,6 +1896,7 @@ export default function UsuarioScreen() {
         nestedScrollEnabled
       >
         <Pressable onPress={() => router.push("/autostart" as any)} style={{ backgroundColor: "#0F4C75", padding: 14, margin: 12, borderRadius: 12 }}><Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>AutoStart · Detección automática de jornada</Text></Pressable>
+        <Pressable onPress={() => router.push("/(tabs)/tacografo" as any)} style={{ backgroundColor: "#FFFFFF", padding: 14, marginHorizontal: 12, marginBottom: 8, borderRadius: 12, borderWidth: 1, borderColor: "#D8E4EF" }}><Text style={{ color: "#0F4C75", fontWeight: "700", textAlign: "center" }}>Abrir tacógrafo</Text></Pressable>
         {!showOnlySection ? (
           <>
             <View style={styles.card}>
@@ -2972,6 +2978,48 @@ export default function UsuarioScreen() {
               <Pressable
                 style={styles.ferryToggleRow}
                 disabled={!notificationsEnabled || savingNotifPrefs}
+                onPress={async () => {
+                  if (!notificationsEnabled || savingNotifPrefs || !userId) return;
+                  const next = !availabilityAlarmsEnabled;
+                  if (next && Platform.OS !== "web") {
+                    try {
+                      const Notifications = await import("expo-notifications");
+                      const current = await Notifications.getPermissionsAsync();
+                      const permission = current.status === "granted" ? current : await Notifications.requestPermissionsAsync();
+                      if (permission.status !== "granted") {
+                        Alert.alert("Permiso necesario", "Activa las notificaciones del dispositivo para recibir los avisos de disponibilidad.");
+                        return;
+                      }
+                    } catch (error: any) {
+                      Alert.alert("Error", error?.message || "No se pudo comprobar el permiso de notificaciones.");
+                      return;
+                    }
+                  }
+                  try {
+                    const alarmKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, userId);
+                    await AsyncStorage.setItem(alarmKey, String(next));
+                    setAvailabilityAlarmsEnabled(next);
+                    safeHaptic();
+                  } catch (error: any) {
+                    Alert.alert("Error", error?.message || "No se pudo guardar la preferencia.");
+                  }
+                }}
+              >
+                <View style={styles.ferryToggleLabel}>
+                  <Ionicons name="time-outline" size={18} color={Colors.light.tint} />
+                  <Text style={styles.ferryToggleText}>Alarmas de disponibilidad (13 h / 15 h)</Text>
+                </View>
+                <View style={[styles.toggleTrack, availabilityAlarmsEnabled && notificationsEnabled && styles.toggleTrackOn]}>
+                  <View style={[styles.toggleThumb, availabilityAlarmsEnabled && notificationsEnabled && styles.toggleThumbOn]} />
+                </View>
+              </Pressable>
+              <Text style={styles.ferryHint}>Aviso local cinco minutos antes del límite aplicable. Solo se programa con una jornada abierta y permisos concedidos.</Text>
+
+              <View style={styles.subsectionDivider} />
+
+              <Pressable
+                style={styles.ferryToggleRow}
+                disabled={!notificationsEnabled || savingNotifPrefs}
                 onPress={() => {
                   if (!notificationsEnabled) return;
                   const next = !payrollNotificationsEnabled;
@@ -3116,7 +3164,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.tint,
+    color: "#153B5B",
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -3129,8 +3177,10 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 14,
+    borderRadius: 17,
     padding: 16,
+    borderWidth: 1,
+    borderColor: "#E9EEF3",
     marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },

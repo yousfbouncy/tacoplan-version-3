@@ -2027,11 +2027,11 @@ export default function HistorialScreen() {
         </View>
       </View>
       <View style={styles.periodoNav}>
-        <Pressable onPress={() => setPeriodoIdx((p) => p + 1)}>
+        <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
           <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
         </Pressable>
         <Text style={styles.periodoText}>{periodo.label}</Text>
-        <Pressable onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))}>
+        <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))} hitSlop={6}>
           <Ionicons
             name="chevron-forward"
             size={22}
@@ -3351,7 +3351,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.tint,
+    color: "#153B5B",
   },
   reportBtn: {
     flexDirection: "row" as const,
@@ -3371,8 +3371,21 @@ const styles = StyleSheet.create({
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    gap: 16,
-    paddingVertical: 10,
+    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 12,
+    borderRadius: 15,
+    backgroundColor: Colors.light.surface,
+    borderWidth: 1,
+    borderColor: "#E7EDF3",
+    shadowColor: "#123B5D",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   periodoText: {
     fontSize: 15,
@@ -3380,6 +3393,14 @@ const styles = StyleSheet.create({
     color: Colors.light.text,
     minWidth: 130,
     textAlign: "center" as const,
+  },
+  periodArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: "#EDF6FE",
   },
   periodToolsRow: {
     flexDirection: "row" as const,
@@ -3568,9 +3589,11 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 17,
+    padding: 15,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E9EEF3",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,

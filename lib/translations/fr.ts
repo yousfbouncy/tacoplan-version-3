@@ -128,6 +128,7 @@ const fr: Record<string, string> = {
   "tabs.dietas": "Indemnités",
   "tabs.viajes": "Trajets",
   "tabs.settings": "Paramètres",
+  "tabs.more": "Plus",
 
   "tacho.title": "Tachygraphe",
   "tacho.live": "En direct",

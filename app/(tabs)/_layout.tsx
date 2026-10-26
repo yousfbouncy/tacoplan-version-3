@@ -26,11 +26,13 @@ export default function TabLayout() {
         },
         tabBarStyle: {
           position: "absolute" as const,
-          backgroundColor: isIOS ? "transparent" : isDark ? "#000" : "#fff",
+          backgroundColor: isIOS ? "transparent" : "#fff",
           borderTopWidth: isWeb ? 1 : 0,
-          borderTopColor: isDark ? "#333" : "#E5E7EB",
-          elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
+          borderTopColor: "#E5EAF0",
+          elevation: 8,
+          height: isWeb ? 84 : 76,
+          paddingTop: 7,
+          paddingBottom: isWeb ? 12 : 8,
         },
         tabBarBackground: () =>
           isIOS ? (
@@ -43,7 +45,7 @@ export default function TabLayout() {
             <View
               style={[
                 StyleSheet.absoluteFill,
-                { backgroundColor: isDark ? "#000" : "#fff" },
+              { backgroundColor: "#fff" },
               ]}
             />
           ) : null,
@@ -53,8 +55,8 @@ export default function TabLayout() {
         name="index"
         options={{
           title: t("tabs.dashboard"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="speedometer-outline" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name="home-outline" size={size} color={focused ? "#fff" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
           ),
         }}
       />
@@ -62,8 +64,8 @@ export default function TabLayout() {
         name="historial"
         options={{
           title: t("tabs.historial"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="list-outline" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name="list-outline" size={size} color={focused ? "#fff" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
           ),
         }}
       />
@@ -71,8 +73,8 @@ export default function TabLayout() {
         name="dietas"
         options={{
           title: t("tabs.dietas"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cash-outline" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name="server-outline" size={size} color={focused ? "#fff" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
           ),
         }}
       />
@@ -80,8 +82,17 @@ export default function TabLayout() {
         name="viajes"
         options={{
           title: t("tabs.viajes"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cube-outline" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name="cube-outline" size={size} color={focused ? "#fff" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="usuario"
+        options={{
+          title: t("tabs.more"),
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name="ellipsis-horizontal" size={size} color={focused ? "#fff" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
           ),
         }}
       />
@@ -89,21 +100,17 @@ export default function TabLayout() {
         name="tacografo"
         options={{
           title: t("tabs.tacografo"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="speedometer" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="usuario"
-        options={{
-          title: t("tabs.settings"),
           href: null,
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-outline" size={size} color={color} />
+            <Ionicons name="speedometer" size={size} color={typeof color === "string" ? color : Colors.light.tint} />
           ),
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  iconWrap: { width: 40, height: 30, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  iconWrapActive: { backgroundColor: "#1478D4" },
+});

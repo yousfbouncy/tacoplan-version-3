@@ -128,6 +128,7 @@ const ar: Record<string, string> = {
   "tabs.dietas": "البدلات",
   "tabs.viajes": "الرحلات",
   "tabs.settings": "الإعدادات",
+  "tabs.more": "المزيد",
 
   "tacho.title": "التاكوجراف",
   "tacho.live": "مباشر",

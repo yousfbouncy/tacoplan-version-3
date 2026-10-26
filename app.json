@@ -7,12 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "tacoplan",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/images/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0F4C75"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tacoplan",
@@ -59,9 +53,46 @@
         }
       ],
       "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0F4C75"
+        }
+      ],
       "expo-web-browser",
       "expo-updates",
       "expo-notifications",
+      "./plugins/withWidgetRefreshPeriod",
+      [
+        "expo-widgets",
+        {
+          "enableAndroid": true,
+          "widgets": [
+            {
+              "name": "JornadaStatus",
+              "displayName": "Jornada Tacoplan",
+              "description": "Disponibilidad y tiempo restante hasta los límites de jornada de 13 y 15 horas.",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "accessoryRectangular",
+                  "accessoryInline"
+                ]
+              },
+              "android": {
+                "minWidth": 250,
+                "minHeight": 120,
+                "targetCellWidth": 4,
+                "targetCellHeight": 2,
+                "resizeMode": "horizontal"
+              }
+            }
+          ]
+        }
+      ],
       [
         "expo-location",
         {
