@@ -1895,8 +1895,34 @@ export default function UsuarioScreen() {
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         nestedScrollEnabled
       >
-        <Pressable onPress={() => router.push("/autostart" as any)} style={{ backgroundColor: "#0F4C75", padding: 14, margin: 12, borderRadius: 12 }}><Text style={{ color: "white", fontWeight: "700", textAlign: "center" }}>AutoStart · Detección automática de jornada</Text></Pressable>
-        <Pressable onPress={() => router.push("/(tabs)/tacografo" as any)} style={{ backgroundColor: "#FFFFFF", padding: 14, marginHorizontal: 12, marginBottom: 8, borderRadius: 12, borderWidth: 1, borderColor: "#D8E4EF" }}><Text style={{ color: "#0F4C75", fontWeight: "700", textAlign: "center" }}>Abrir tacógrafo</Text></Pressable>
+        {!showOnlySection && (
+          <View style={styles.card}>
+            <SectionHeader title="Accesos rápidos" icon="apps-outline" />
+            <Pressable
+              onPress={() => router.push("/autostart" as any)}
+              style={({ pressed }) => [styles.quickActionRow, { opacity: pressed ? 0.78 : 1 }]}
+            >
+              <View style={styles.quickActionIcon}><Ionicons name="play-circle-outline" size={22} color={Colors.light.tint} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.quickActionTitle}>AutoStart</Text>
+                <Text style={styles.quickActionSubtitle}>Detección y confirmación de inicio de jornada</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+            </Pressable>
+            <View style={styles.subsectionDivider} />
+            <Pressable
+              onPress={() => router.push("/(tabs)/tacografo" as any)}
+              style={({ pressed }) => [styles.quickActionRow, { opacity: pressed ? 0.78 : 1 }]}
+            >
+              <View style={styles.quickActionIcon}><Ionicons name="speedometer-outline" size={22} color={Colors.light.tint} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.quickActionTitle}>Tacógrafo</Text>
+                <Text style={styles.quickActionSubtitle}>Conducción y disponibilidad registradas manualmente</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+            </Pressable>
+          </View>
+        )}
         {!showOnlySection ? (
           <>
             <View style={styles.card}>
@@ -3157,6 +3183,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   header: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center" as const,
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 4,
@@ -3191,6 +3220,10 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 1,
   },
+  quickActionRow: { minHeight: 58, flexDirection: "row" as const, alignItems: "center" as const, gap: 11, paddingVertical: 7 },
+  quickActionIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#EAF4FC", alignItems: "center" as const, justifyContent: "center" as const },
+  quickActionTitle: { color: Colors.light.text, fontSize: 14, fontFamily: "Inter_700Bold" },
+  quickActionSubtitle: { color: Colors.light.textSecondary, fontSize: 11, lineHeight: 15, fontFamily: "Inter_400Regular", marginTop: 2 },
   sectionHeader: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
