@@ -549,13 +549,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!code && !err && !errCode) return;
 
-      console.error("[OAUTH] web callback detected", {
-        href: url.toString(),
-        codePresent: !!code,
-        error: err,
-        errorCode: errCode,
-      });
-
       const clean = () => {
         try {
           window.history.replaceState(null, "", url.pathname || "/");
@@ -578,7 +571,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      console.error("[OAUTH] web exchanging code for session");
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) {
         console.error("[OAUTH] web exchangeCodeForSession error", { message: error.message });
@@ -586,7 +578,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      console.error("[OAUTH] web exchange success", { userId: data.user?.id });
       if (data.user?.id) {
         prevUserIdRef.current = String(data.user.id);
         upsertDevicePresence(String(data.user.id)).catch(() => {});
