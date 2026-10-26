@@ -131,6 +131,18 @@ function formatElapsedClock(totalSeconds: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatShiftDeadline(fecha: string, hora: string, durationHours: number): string {
+  const start = new Date(`${fecha}T${String(hora || "00:00").slice(0, 5)}:00`);
+  if (!Number.isFinite(start.getTime())) return "";
+  const end = new Date(start.getTime() + durationHours * 60 * 60 * 1000);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const dateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const endKey = dateKey(end);
+  const dayLabel = endKey === dateKey(today) ? "Hoy" : endKey === dateKey(tomorrow) ? "Mañana" : formatFecha(endKey);
+  return `${dayLabel} a las ${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+}
+
 const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
 const SUPPORT_WHATSAPP_URL = "https://wa.me/34656365216";
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
@@ -955,7 +967,15 @@ export default function DashboardScreen() {
     const limitMin = estado?.disponibilidadMin === 15 * 60 ? 15 * 60 : 13 * 60;
     const remainingMin = Math.max(0, limitMin - elapsedMin);
     const elapsedSeconds = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 1000)) : 0;
-    return { elapsedMin, elapsedSeconds, limitMin, remainingMin, progress: Math.min(elapsedMin / limitMin, 1) };
+    return {
+      elapsedMin,
+      elapsedSeconds,
+      limitMin,
+      remainingMin,
+      remaining13Min: Math.max(0, 13 * 60 - elapsedMin),
+      remaining15Min: Math.max(0, 15 * 60 - elapsedMin),
+      progress: Math.min(elapsedMin / limitMin, 1),
+    };
   }, [abierta?.fechaInicio, abierta?.horaInicio, countdownNow, estado?.disponibilidadMin]);
 
   const [ferryTransitDiet, setFerryTransitDiet] = useState(0);
@@ -2856,6 +2876,8 @@ export default function DashboardScreen() {
                   <View style={styles.shiftLimitTrack}>
                     <View style={[styles.shiftLimitFill, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (13 * 60), 1) * 100}%` }]} />
                   </View>
+                  <Text style={styles.shiftLimitDetail}>Quedan {formatMinutosHoras(activeShiftMetrics?.remaining13Min || 0)}</Text>
+                  <Text style={styles.shiftLimitDeadline}>{formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 13)}</Text>
                 </View>
                 <View style={styles.shiftLimitDivider} />
                 <View style={styles.shiftLimitItem}>
@@ -2866,6 +2888,8 @@ export default function DashboardScreen() {
                   <View style={styles.shiftLimitTrack}>
                     <View style={[styles.shiftLimitFillExtended, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (15 * 60), 1) * 100}%`, opacity: estado?.disponibilidadMin === 15 * 60 ? 1 : 0.3 }]} />
                   </View>
+                  <Text style={styles.shiftLimitDetail}>{estado?.disponibilidadMin === 15 * 60 ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}` : "No disponible hoy"}</Text>
+                  <Text style={styles.shiftLimitDeadline}>{estado?.disponibilidadMin === 15 * 60 ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
                 </View>
               </View>
 
@@ -4647,7 +4671,7 @@ const styles = StyleSheet.create({
   activeShiftTimerValue: { color: "#FFFFFF", fontSize: 52, lineHeight: 60, fontFamily: "Inter_700Bold", fontVariant: ["tabular-nums"] as any, marginTop: 3 },
   activeShiftRemaining: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
   shiftLimitsRow: { flexDirection: "row" as const, alignItems: "center" as const, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 15, paddingHorizontal: 12, paddingVertical: 14 },
-  shiftLimitItem: { flex: 1 },
+  shiftLimitItem: { flex: 1, minWidth: 0 },
   shiftLimitTop: { flexDirection: "row" as const, alignItems: "baseline" as const, justifyContent: "space-between" as const, gap: 6 },
   shiftLimitNumber: { color: "#FFFFFF", fontSize: 18, fontFamily: "Inter_700Bold" },
   shiftLimitTag: { color: "#B9D5EA", fontSize: 8, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
@@ -4655,6 +4679,8 @@ const styles = StyleSheet.create({
   shiftLimitFill: { height: 4, backgroundColor: "#5ED9AC", borderRadius: 2 },
   shiftLimitFillExtended: { height: 4, backgroundColor: "#87C7FF", borderRadius: 2 },
   shiftLimitDivider: { width: 1, height: 34, backgroundColor: "rgba(255,255,255,0.18)", marginHorizontal: 14 },
+  shiftLimitDetail: { color: "#FFFFFF", fontSize: 11, fontFamily: "Inter_600SemiBold", marginTop: 7 },
+  shiftLimitDeadline: { color: "#B9D5EA", fontSize: 10, fontFamily: "Inter_500Medium", marginTop: 2 },
   activeShiftCloseButton: { minHeight: 52, backgroundColor: "#E84A4A", borderRadius: 15, marginTop: 16, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 9 },
   activeShiftCloseText: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_700Bold" },
   activeShiftManualNote: { color: "#B9D5EA", fontSize: 11, fontFamily: "Inter_500Medium", textAlign: "center" as const, marginTop: 10 },
