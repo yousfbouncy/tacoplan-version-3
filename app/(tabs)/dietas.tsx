@@ -1302,6 +1302,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   scrollContent: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center" as const,
     paddingHorizontal: 16,
     paddingBottom: Platform.OS === "web" ? 34 : 0,
   },
