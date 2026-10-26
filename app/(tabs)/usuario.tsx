@@ -3167,6 +3167,9 @@ const styles = StyleSheet.create({
     color: "#153B5B",
   },
   scrollContent: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center" as const,
     paddingHorizontal: 16,
     paddingTop: 8,
     flexGrow: 1,
