@@ -2918,29 +2918,6 @@ export default function DashboardScreen() {
                 )}
               </View>
             )}
-            <Pressable
-              style={({ pressed }) => [styles.bigActionBtn, styles.bigActionBtnStop, { opacity: pressed ? 0.9 : 1 }]}
-              onPress={() => {
-                if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                const d = todayStr();
-                setFinFecha(d);
-                setFinFechaInput(formatDateForDisplay(d));
-                setFinHora(nowTimeStr());
-                setFinLugar("");
-                setFinLugarTouched(false);
-                setShowFinForm(true);
-                resolveFinLugarFromGps();
-              }}
-            >
-              <View style={[styles.bigActionIcon, { backgroundColor: Colors.light.danger + "15" }]}>
-                <Ionicons name="stop" size={22} color={Colors.light.danger} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.bigActionTitle}>{t("dashboard.closeJornada")}</Text>
-                <Text style={styles.bigActionSub}>{t("dashboard.tapToEnd")}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={Colors.light.textSecondary} />
-            </Pressable>
           </View>
         ) : (
           <View style={styles.card}>
@@ -4638,6 +4615,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   activeShiftCard: {
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center" as const,
     backgroundColor: "#123B5C",
     borderRadius: 24,
     padding: 20,
