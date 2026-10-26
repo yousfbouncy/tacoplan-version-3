@@ -123,6 +123,11 @@ function formatHourInput(value: string): string {
   return digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
 }
 
+function formatElapsedClock(totalMinutes: number): string {
+  const safeMinutes = Math.max(0, totalMinutes);
+  return `${String(Math.floor(safeMinutes / 60)).padStart(2, "0")}:${String(safeMinutes % 60).padStart(2, "0")}`;
+}
+
 const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
 const SUPPORT_WHATSAPP_URL = "https://wa.me/34656365216";
 type TipoRuta = "NACIONAL" | "INTERNACIONAL" | "REGIONAL_INTL" | "NAC_INTL" | "NAC_REGIONAL" | "NINGUNO" | "REGIONAL";
@@ -933,12 +938,21 @@ export default function DashboardScreen() {
 
   const [countdownNow, setCountdownNow] = useState(Date.now());
   useEffect(() => {
-    const needsCountdown = (lastClosed?.plannedRestMin && lastClosed?.endAt) || shouldShowFerryPanel;
+    const needsCountdown = !!abierta || (lastClosed?.plannedRestMin && lastClosed?.endAt) || shouldShowFerryPanel;
     if (!needsCountdown) return;
-    const tickMs = shouldShowFerryPanel ? 1000 : 30000;
+    const tickMs = abierta || shouldShowFerryPanel ? 1000 : 30000;
     const interval = setInterval(() => setCountdownNow(Date.now()), tickMs);
     return () => clearInterval(interval);
-  }, [lastClosed?.plannedRestMin, lastClosed?.endAt, shouldShowFerryPanel]);
+  }, [abierta?.id, lastClosed?.plannedRestMin, lastClosed?.endAt, shouldShowFerryPanel]);
+
+  const activeShiftMetrics = useMemo(() => {
+    if (!abierta) return null;
+    const start = new Date(`${abierta.fechaInicio}T${String(abierta.horaInicio || "00:00").slice(0, 5)}:00`).getTime();
+    const elapsedMin = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 60000)) : 0;
+    const limitMin = estado?.disponibilidadMin === 15 * 60 ? 15 * 60 : 13 * 60;
+    const remainingMin = Math.max(0, limitMin - elapsedMin);
+    return { elapsedMin, limitMin, remainingMin, progress: Math.min(elapsedMin / limitMin, 1) };
+  }, [abierta?.fechaInicio, abierta?.horaInicio, countdownNow, estado?.disponibilidadMin]);
 
   const [ferryTransitDiet, setFerryTransitDiet] = useState(0);
   const [ferryCabinOvernight, setFerryCabinOvernight] = useState(0);
@@ -2350,7 +2364,7 @@ export default function DashboardScreen() {
           <>
           {!showInicioForm ? (
             <Pressable
-              style={({ pressed }) => [styles.bigActionBtn, styles.bigActionBtnStart, { opacity: pressed ? 0.9 : 1 }]}
+              style={({ pressed }) => [styles.idleShiftCard, { opacity: pressed ? 0.9 : 1 }]}
               onPress={() => {
                 if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 const d = todayStr();
@@ -2360,14 +2374,17 @@ export default function DashboardScreen() {
                 setShowInicioForm(true);
               }}
             >
-              <View style={styles.bigActionIcon}>
-                <Ionicons name="play" size={22} color={Colors.light.success} />
+              <View style={styles.idleShiftIcon}>
+                <Ionicons name="play" size={19} color="#FFFFFF" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.bigActionTitle}>{t("dashboard.startJornada")}</Text>
-                <Text style={styles.bigActionSub}>{t("dashboard.tapToStart")}</Text>
+                <Text style={styles.idleShiftTitle}>Sin jornada activa</Text>
+                <Text style={styles.idleShiftSub}>{t("dashboard.tapToStart")}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={Colors.light.textSecondary} />
+              <View style={styles.idleShiftAction}>
+                <Text style={styles.idleShiftActionText}>{t("dashboard.startJornada")}</Text>
+                <Ionicons name="arrow-forward" size={16} color="#123B5C" />
+              </View>
             </Pressable>
           ) : (
             <View style={styles.card}>
@@ -2807,11 +2824,65 @@ export default function DashboardScreen() {
           </>
         ) : !showFinForm ? (
           <View>
-            <View style={styles.openInfo}>
-              <Ionicons name="radio-button-on" size={12} color={Colors.light.success} />
-              <Text style={styles.openInfoText}>
-                {t("dashboard.openJornada")}: {formatFecha(abierta.fechaInicio)} {abierta.horaInicio} - {abierta.lugarInicio}
-              </Text>
+            <View style={styles.activeShiftCard}>
+              <View style={styles.activeShiftHeader}>
+                <View style={styles.activeShiftStatus}>
+                  <View style={styles.activeShiftDot} />
+                  <Text style={styles.activeShiftStatusText}>JORNADA ACTIVA</Text>
+                </View>
+                <Ionicons name="ellipsis-horizontal" size={20} color="#B9D5EA" />
+              </View>
+              <Text style={styles.activeShiftPlace} numberOfLines={1}>{abierta.lugarInicio || "Ubicación sin indicar"}</Text>
+              <Text style={styles.activeShiftStarted}>Inicio · {formatFecha(abierta.fechaInicio)} · {abierta.horaInicio}</Text>
+
+              <View style={styles.activeShiftTimerBlock}>
+                <Text style={styles.activeShiftTimerLabel}>TIEMPO DE JORNADA</Text>
+                <Text style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedMin) : "—"}</Text>
+                <Text style={styles.activeShiftRemaining}>
+                  {activeShiftMetrics ? `${formatMinutosHoras(activeShiftMetrics.remainingMin)} hasta el límite de ${activeShiftMetrics.limitMin / 60} h` : "Calculando límite de jornada"}
+                </Text>
+              </View>
+
+              <View style={styles.shiftLimitsRow}>
+                <View style={styles.shiftLimitItem}>
+                  <View style={styles.shiftLimitTop}>
+                    <Text style={styles.shiftLimitNumber}>13 h</Text>
+                    <Text style={styles.shiftLimitTag}>LÍMITE</Text>
+                  </View>
+                  <View style={styles.shiftLimitTrack}>
+                    <View style={[styles.shiftLimitFill, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (13 * 60), 1) * 100}%` }]} />
+                  </View>
+                </View>
+                <View style={styles.shiftLimitDivider} />
+                <View style={styles.shiftLimitItem}>
+                  <View style={styles.shiftLimitTop}>
+                    <Text style={[styles.shiftLimitNumber, { color: estado?.disponibilidadMin === 15 * 60 ? "#FFFFFF" : "#A8B8C7" }]}>15 h</Text>
+                    <Text style={styles.shiftLimitTag}>{estado?.disponibilidadMin === 15 * 60 ? "AMPLIACIÓN" : "NO DISPONIBLE"}</Text>
+                  </View>
+                  <View style={styles.shiftLimitTrack}>
+                    <View style={[styles.shiftLimitFillExtended, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (15 * 60), 1) * 100}%`, opacity: estado?.disponibilidadMin === 15 * 60 ? 1 : 0.3 }]} />
+                  </View>
+                </View>
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [styles.activeShiftCloseButton, { opacity: pressed ? 0.88 : 1 }]}
+                onPress={() => {
+                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  const d = todayStr();
+                  setFinFecha(d);
+                  setFinFechaInput(formatDateForDisplay(d));
+                  setFinHora(nowTimeStr());
+                  setFinLugar("");
+                  setFinLugarTouched(false);
+                  setShowFinForm(true);
+                  resolveFinLugarFromGps();
+                }}
+              >
+                <Ionicons name="stop" size={18} color="#FFFFFF" />
+                <Text style={styles.activeShiftCloseText}>Cerrar jornada</Text>
+              </Pressable>
+              <Text style={styles.activeShiftManualNote}>La conducción se registra manualmente</Text>
             </View>
             {abierta.descansoAnteriorMin != null && (
               <View style={{
@@ -4566,6 +4637,46 @@ const styles = StyleSheet.create({
     color: Colors.light.textSecondary,
     marginTop: 2,
   },
+  activeShiftCard: {
+    backgroundColor: "#123B5C",
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 16,
+    overflow: "hidden",
+    shadowColor: "#0B2942",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 5,
+  },
+  activeShiftHeader: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
+  activeShiftStatus: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+  activeShiftDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#56D6A1" },
+  activeShiftStatusText: { color: "#B7D1E3", fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 1.1 },
+  activeShiftPlace: { color: "#FFFFFF", fontSize: 19, fontFamily: "Inter_700Bold", marginTop: 18 },
+  activeShiftStarted: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 5 },
+  activeShiftTimerBlock: { alignItems: "center" as const, paddingVertical: 22, marginTop: 8 },
+  activeShiftTimerLabel: { color: "#B9D5EA", fontSize: 10, fontFamily: "Inter_700Bold", letterSpacing: 1.2 },
+  activeShiftTimerValue: { color: "#FFFFFF", fontSize: 52, lineHeight: 60, fontFamily: "Inter_700Bold", fontVariant: ["tabular-nums"] as any, marginTop: 3 },
+  activeShiftRemaining: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
+  shiftLimitsRow: { flexDirection: "row" as const, alignItems: "center" as const, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 15, paddingHorizontal: 12, paddingVertical: 14 },
+  shiftLimitItem: { flex: 1 },
+  shiftLimitTop: { flexDirection: "row" as const, alignItems: "baseline" as const, justifyContent: "space-between" as const, gap: 6 },
+  shiftLimitNumber: { color: "#FFFFFF", fontSize: 18, fontFamily: "Inter_700Bold" },
+  shiftLimitTag: { color: "#B9D5EA", fontSize: 8, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
+  shiftLimitTrack: { height: 4, backgroundColor: "rgba(255,255,255,0.16)", borderRadius: 2, marginTop: 9, overflow: "hidden" as const },
+  shiftLimitFill: { height: 4, backgroundColor: "#5ED9AC", borderRadius: 2 },
+  shiftLimitFillExtended: { height: 4, backgroundColor: "#87C7FF", borderRadius: 2 },
+  shiftLimitDivider: { width: 1, height: 34, backgroundColor: "rgba(255,255,255,0.18)", marginHorizontal: 14 },
+  activeShiftCloseButton: { minHeight: 52, backgroundColor: "#E84A4A", borderRadius: 15, marginTop: 16, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 9 },
+  activeShiftCloseText: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_700Bold" },
+  activeShiftManualNote: { color: "#B9D5EA", fontSize: 11, fontFamily: "Inter_500Medium", textAlign: "center" as const, marginTop: 10 },
+  idleShiftCard: { minHeight: 114, backgroundColor: "#123B5C", borderRadius: 22, padding: 18, marginBottom: 16, flexDirection: "row" as const, alignItems: "center" as const, gap: 13 },
+  idleShiftIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center" as const, justifyContent: "center" as const },
+  idleShiftTitle: { color: "#FFFFFF", fontSize: 17, fontFamily: "Inter_700Bold" },
+  idleShiftSub: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 5 },
+  idleShiftAction: { backgroundColor: "#FFFFFF", borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+  idleShiftActionText: { color: "#123B5C", fontSize: 11, fontFamily: "Inter_700Bold" },
   menuOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
