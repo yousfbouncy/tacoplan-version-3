@@ -123,9 +123,12 @@ function formatHourInput(value: string): string {
   return digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
 }
 
-function formatElapsedClock(totalMinutes: number): string {
-  const safeMinutes = Math.max(0, totalMinutes);
-  return `${String(Math.floor(safeMinutes / 60)).padStart(2, "0")}:${String(safeMinutes % 60).padStart(2, "0")}`;
+function formatElapsedClock(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, totalSeconds);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 const TUTORIAL_COMPLETED_KEY = "tacoplan_tutorial_completed";
@@ -951,7 +954,8 @@ export default function DashboardScreen() {
     const elapsedMin = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 60000)) : 0;
     const limitMin = estado?.disponibilidadMin === 15 * 60 ? 15 * 60 : 13 * 60;
     const remainingMin = Math.max(0, limitMin - elapsedMin);
-    return { elapsedMin, limitMin, remainingMin, progress: Math.min(elapsedMin / limitMin, 1) };
+    const elapsedSeconds = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 1000)) : 0;
+    return { elapsedMin, elapsedSeconds, limitMin, remainingMin, progress: Math.min(elapsedMin / limitMin, 1) };
   }, [abierta?.fechaInicio, abierta?.horaInicio, countdownNow, estado?.disponibilidadMin]);
 
   const [ferryTransitDiet, setFerryTransitDiet] = useState(0);
@@ -2837,7 +2841,7 @@ export default function DashboardScreen() {
 
               <View style={styles.activeShiftTimerBlock}>
                 <Text style={styles.activeShiftTimerLabel}>TIEMPO DE JORNADA</Text>
-                <Text style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedMin) : "—"}</Text>
+                <Text style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedSeconds) : "—"}</Text>
                 <Text style={styles.activeShiftRemaining}>
                   {activeShiftMetrics ? `${formatMinutosHoras(activeShiftMetrics.remainingMin)} hasta el límite de ${activeShiftMetrics.limitMin / 60} h` : "Calculando límite de jornada"}
                 </Text>
@@ -4581,6 +4585,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   scrollContent: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center" as const,
     paddingHorizontal: 16,
     paddingBottom: Platform.OS === "web" ? 34 : 0,
   },
