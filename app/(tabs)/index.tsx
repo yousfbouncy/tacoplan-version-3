@@ -27,6 +27,7 @@ import NotificationDetailModal from "@/components/notifications/NotificationDeta
 import { useI18n } from "@/lib/i18n-context";
 import { getNotificationAction } from "@/lib/notification-links";
 import OnboardingGuide from "@/components/OnboardingGuide";
+import SoporteFlotante from "@/components/SoporteFlotante";
 import DebugSimulator from "@/components/DebugSimulator";
 import PendingNaturalDietsModal, { type DetectedDiet, type PlusItemUi } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
@@ -4485,6 +4486,8 @@ export default function DashboardScreen() {
       />
 
       <OnboardingGuide visible={showGuide} onClose={closeTutorial} />
+
+      <SoporteFlotante />
 
       {user?.email === "yosf.bouncy@gmail.com" && (
         <DebugSimulator onDataChanged={invalidateAll} />
