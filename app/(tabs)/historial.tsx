@@ -3340,6 +3340,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   header: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center" as const,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
