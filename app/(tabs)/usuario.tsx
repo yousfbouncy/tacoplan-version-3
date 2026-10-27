@@ -828,9 +828,18 @@ export default function UsuarioScreen() {
   }, [normalizeSectionKey]);
 
   const closeSection = useCallback(() => {
+    if (activeSection === "estimacion_nomina" && fromParam && toParam) {
+      setSelectedSection(null);
+      router.replace("/(tabs)/dietas" as any);
+      return;
+    }
+    if (activeSection === "config_nomina" && fromParam && toParam) {
+      setSelectedSection("estimacion_nomina");
+      return;
+    }
     setSelectedSection(null);
     scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, []);
+  }, [activeSection, fromParam, toParam]);
 
   // Returning to Más must never reopen the last visited subsection.
   useEffect(() => {
