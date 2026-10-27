@@ -2043,15 +2043,35 @@ export default function UsuarioScreen() {
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.ferryToggleRow, { opacity: pressed ? 0.85 : 1 }]}
-              onPress={async () => {
-                setDeletingAccount(true);
-                try {
-                  await deleteAccount();
-                } catch (e: any) {
-                  Alert.alert("Error", e?.message || String(e));
-                } finally {
-                  setDeletingAccount(false);
+              onPress={() => {
+                // Account deletion must never run from a single accidental tap.
+                if (Platform.OS === "web") {
+                  if (!window.confirm("¿Quieres iniciar la eliminación definitiva de tu cuenta?")) return;
+                  if (!window.confirm("CONFIRMACIÓN FINAL: se eliminará tu cuenta y podrías perder tus datos. ¿Continuar?")) return;
+                  void (async () => {
+                    setDeletingAccount(true);
+                    try { await deleteAccount(); }
+                    catch (e: any) { Alert.alert("Error", e?.message || String(e)); }
+                    finally { setDeletingAccount(false); }
+                  })();
+                  return;
                 }
+                Alert.alert("Eliminar cuenta", "Esta acción es irreversible y puede eliminar tus jornadas y demás datos. ¿Quieres continuar?", [
+                  { text: "Cancelar", style: "cancel" },
+                  { text: "Continuar", style: "destructive", onPress: () => {
+                    Alert.alert("Confirmación final", "¿Eliminar definitivamente la cuenta y sus datos?", [
+                      { text: "Cancelar", style: "cancel" },
+                      { text: "Eliminar definitivamente", style: "destructive", onPress: () => {
+                        void (async () => {
+                          setDeletingAccount(true);
+                          try { await deleteAccount(); }
+                          catch (e: any) { Alert.alert("Error", e?.message || String(e)); }
+                          finally { setDeletingAccount(false); }
+                        })();
+                      }},
+                    ]);
+                  }},
+                ]);
               }}
               disabled={deletingAccount}
             >
