@@ -13,11 +13,12 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  BackHandler,
   type ScrollViewInstance,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect, router, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, router, useLocalSearchParams, useNavigation } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Sharing from "expo-sharing";
@@ -729,6 +730,8 @@ function FerrySettingsCard() {
 export default function UsuarioScreen() {
   const { t } = useI18n();
   const params = useLocalSearchParams<{ section?: string; from?: string; to?: string }>();
+  const navigation = useNavigation();
+  const [selectedSection, setSelectedSection] = useState<string | null | undefined>(undefined);
   const sectionParam = typeof params.section === "string" ? params.section : undefined;
   const fromParam = typeof params.from === "string" ? params.from : undefined;
   const toParam = typeof params.to === "string" ? params.to : undefined;
@@ -781,7 +784,7 @@ export default function UsuarioScreen() {
     return map[key] || key;
   }, []);
 
-  const activeSection = normalizeSectionKey(sectionParam);
+  const activeSection = selectedSection === undefined ? normalizeSectionKey(sectionParam) : selectedSection;
   const showOnlySection = !!activeSection;
   const shouldShowSection = useCallback((key: string) => {
     if (!showOnlySection) return true;
@@ -818,9 +821,32 @@ export default function UsuarioScreen() {
     }
   }, [activeSection, showOnlySection, t]);
 
+  // Keep settings subsections inside this tab instead of pushing a duplicate tab route.
   const openSection = useCallback((section: string) => {
-    router.push({ pathname: "/usuario", params: { section } } as any);
+    setSelectedSection(normalizeSectionKey(section));
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [normalizeSectionKey]);
+
+  const closeSection = useCallback(() => {
+    setSelectedSection(null);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
   }, []);
+
+  // Returning to Más must never reopen the last visited subsection.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("blur", () => setSelectedSection(null));
+    return unsubscribe;
+  }, [navigation]);
+
+  // Android system back behaves exactly like the in-screen back arrow.
+  useFocusEffect(useCallback(() => {
+    if (!activeSection) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      closeSection();
+      return true;
+    });
+    return () => sub.remove();
+  }, [activeSection, closeSection]));
 
   const rootCategories = useMemo(
     () => [
@@ -1937,7 +1963,7 @@ export default function UsuarioScreen() {
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           {showOnlySection && (
             <Pressable
-              onPress={() => router.back()}
+              onPress={closeSection}
               hitSlop={10}
               style={{ marginRight: 10, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: Colors.light.tint + "10" }}
             >
@@ -3052,7 +3078,7 @@ export default function UsuarioScreen() {
 
               <View style={styles.subsectionDivider} />
 
-              <Pressable style={styles.ferryToggleRow} accessibilityRole="button" onPress={() => router.push("/(tabs)/usuario" as any)}>
+              <Pressable style={styles.ferryToggleRow} accessibilityRole="button" onPress={() => { closeSection(); }}>
                 <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Gestionar alarmas de disponibilidad</Text></View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
               </Pressable>
