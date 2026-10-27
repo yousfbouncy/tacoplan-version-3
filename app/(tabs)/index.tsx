@@ -1,3 +1,4 @@
+import { dashboardQueryKey, restCountdown } from "@/lib/dashboard-state";
 import { suggestClosingDiet, applyClosingDietSuggestion } from "@/lib/automatic-diet-selection";
 import type { BaseLocationConfig } from "@/lib/base-location";
 import { LinearGradient } from "expo-linear-gradient";
@@ -754,8 +755,14 @@ export default function DashboardScreen() {
     return { dietBase, extraTotal, total: dietBase + extraTotal };
   }, [isMoroccoMode, ferryConfig.paymentMode, moroccoRouteType, moroccoPernocta, moroccoDayExtras, customRates, dayExtras]);
 
+  useEffect(() => {
+    for (const name of ["jornada-abierta", "estado-legal", "legal-preview", "last-closed"]) {
+      void qc.invalidateQueries({ queryKey: dashboardQueryKey(name, user?.id) });
+    }
+  }, [syncVersion, user?.id, qc]);
+
   const abiertaQuery = useQuery<Jornada | null>({
-    queryKey: ["jornada-abierta", syncVersion],
+    queryKey: dashboardQueryKey("jornada-abierta", user?.id),
     queryFn: () => getJornadaAbierta(),
   });
 
@@ -791,7 +798,7 @@ export default function DashboardScreen() {
     abiertaQuery.data?.lugarInicio, abiertaQuery.data?.tachoCountries, dietManual, tipoRuta, pernocta, dietaPercent]);
 
   const estadoQuery = useQuery<EstadoLegal>({
-    queryKey: ["estado-legal", syncVersion],
+    queryKey: dashboardQueryKey("estado-legal", user?.id),
     queryFn: () => getEstadoLegal(),
   });
 
@@ -824,7 +831,7 @@ export default function DashboardScreen() {
   }, [abiertaQuery.data?.startAt, abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.isLoading, estadoQuery.isError, estadoQuery.data?.availabilityContext, user?.id]));
 
   const legalPreviewQuery = useQuery<LegalPreview>({
-    queryKey: ["legal-preview", syncVersion],
+    queryKey: dashboardQueryKey("legal-preview", user?.id),
     queryFn: async () => {
       const allJ = await listarJornadas();
       const allC = await listarCompensaciones();
@@ -946,7 +953,7 @@ export default function DashboardScreen() {
   }, [conduccionParsed.minutes, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, isCrossSundayMonday, estado, t]);
 
   const lastClosedQuery = useQuery<Jornada | null>({
-    queryKey: ["last-closed", syncVersion],
+    queryKey: dashboardQueryKey("last-closed", user?.id),
     queryFn: async () => {
       const allJ = await listarJornadas();
       const closed = allJ.filter(j => j.fechaFin && j.endAt);
@@ -1000,7 +1007,7 @@ export default function DashboardScreen() {
 
   const [countdownNow, setCountdownNow] = useState(Date.now());
   useEffect(() => {
-    const needsCountdown = !!abierta || (lastClosed?.plannedRestMin && lastClosed?.endAt) || shouldShowFerryPanel;
+    const needsCountdown = !!abierta || lastClosed?.endAt || shouldShowFerryPanel;
     if (!needsCountdown) return;
     const tickMs = abierta || shouldShowFerryPanel ? 1000 : 30000;
     const interval = setInterval(() => setCountdownNow(Date.now()), tickMs);
@@ -1088,6 +1095,8 @@ export default function DashboardScreen() {
     },
     onSuccess: async (newJornada: Jornada) => {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setShowInicioForm(false);
+      qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), newJornada);
       setFerryJustClosed(null);
       setInicioLugar("");
       setKmInicio("");
@@ -1111,85 +1120,93 @@ export default function DashboardScreen() {
     },
   });
 
+  const startingRef = useRef(false);
   const handleSaveInicio = useCallback(async (skipPendingCheck?: boolean, overrideParams?: {
     lugarInicio?: string; fechaInicio?: string; horaInicio?: string; kmInicio?: number|null;
   }) => {
-    const resolvedFecha = overrideParams?.fechaInicio ?? parseDisplayDateToISO(inicioFechaInput);
-    if (!resolvedFecha) { Alert.alert(t("common.error"), t("common.invalidDate")); return; }
-    const lugar = overrideParams?.lugarInicio ?? inicioLugar;
-    const hora = overrideParams?.horaInicio ?? inicioHora;
-    const kmRaw = overrideParams?.kmInicio != null ? overrideParams.kmInicio : parseFloat(kmInicio);
-    const kmStart = Number.isFinite(kmRaw as number) ? (kmRaw as number) : undefined;
+    if (startingRef.current) return;
+    startingRef.current = true;
+    try {
+      const resolvedFecha = overrideParams?.fechaInicio ?? parseDisplayDateToISO(inicioFechaInput);
+      if (!resolvedFecha) { Alert.alert(t("common.error"), t("common.invalidDate")); return; }
+      const lugar = overrideParams?.lugarInicio ?? inicioLugar;
+      const hora = overrideParams?.horaInicio ?? inicioHora;
+      const kmRaw = overrideParams?.kmInicio != null ? overrideParams.kmInicio : parseFloat(kmInicio);
+      const kmStart = Number.isFinite(kmRaw as number) ? (kmRaw as number) : undefined;
 
-    if (!skipPendingCheck) {
-      try {
-        const hhmm = (hora || "00:00").toString().padStart(5, "0").slice(0, 5);
-        const todasJornadas = await listarJornadas();
-        const ultimaCerrada = todasJornadas != null && Array.isArray(todasJornadas)
-          ? todasJornadas
-              .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
-              .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
-          : null;
-        const ultimaFinStr = ultimaCerrada
-          ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || resolvedFecha))
-          : null;
-        const gapFrom = ultimaFinStr ? addDays(ultimaFinStr, -1) : null;
-        const resolvedFechaMinus45 = addDays(resolvedFecha, -45);
-        const triggerAFrom = gapFrom && gapFrom > resolvedFechaMinus45 ? gapFrom : resolvedFechaMinus45;
-        const triggerATo = addDays(resolvedFecha, -1);
-        // En el inicio normal NO olvidamos días descartados manualmente.
-        // El botón Re-evaluar es el único que recupera esos descartados.
-        const detectados = await detectMissingOutOfBaseDietDays({
-          extraPendingJourney: {
-            startAt: `${resolvedFecha}T${hhmm}:00`,
-            fechaInicio: resolvedFecha,
-            lugarInicio: lugar || null,
-            tipoRuta: (tipoRuta as any) || null,
-          },
-          fromDate: triggerAFrom,
-          toDate: triggerATo,
-        });
-
-        const detectedSafe = Array.isArray(detectados) ? detectados : [];
-        const autoDays = detectedSafe.filter((item) => item.isBaseArrivalDay !== true);
-        const manualDays = detectedSafe.filter((item) => item.isBaseArrivalDay === true);
-
-        console.log(
-          `[TRIGGER_A pendingCount=${detectedSafe.length} auto=${autoDays.length} manual=${manualDays.length} from=${triggerAFrom} to=${triggerATo}]`,
-        );
-
-        // Los días completos intermedios fuera de base son inequívocos:
-        // se registran automáticamente como Jornada fuera de base al 100%.
-        // Los días de llegada a base siguen requiriendo elección 100/60/30/sin dieta.
-        if (autoDays.length > 0) {
-          const created = await autoConfirmOutOfBaseDietDays(autoDays);
-          if (created.length > 0) {
-            await Promise.all([
-              qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
-              qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
-              qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
-            ]);
-          }
-        }
-
-        if (manualDays.length > 0) {
-          setPendingDiets(manualDays);
-          setDeferredStartJourney({
-            lugarInicio: lugar,
-            fechaInicio: resolvedFecha,
-            horaInicio: hora,
-            kmInicio: kmStart ?? null,
-            observaciones: null,
-            baseKm: undefined,
+      if (!skipPendingCheck) {
+        try {
+          const hhmm = (hora || "00:00").toString().padStart(5, "0").slice(0, 5);
+          const todasJornadas = await listarJornadas();
+          const ultimaCerrada = todasJornadas != null && Array.isArray(todasJornadas)
+            ? todasJornadas
+                .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
+                .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
+            : null;
+          const ultimaFinStr = ultimaCerrada
+            ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || resolvedFecha))
+            : null;
+          const gapFrom = ultimaFinStr ? addDays(ultimaFinStr, -1) : null;
+          const resolvedFechaMinus45 = addDays(resolvedFecha, -45);
+          const triggerAFrom = gapFrom && gapFrom > resolvedFechaMinus45 ? gapFrom : resolvedFechaMinus45;
+          const triggerATo = addDays(resolvedFecha, -1);
+          // En el inicio normal NO olvidamos días descartados manualmente.
+          // El botón Re-evaluar es el único que recupera esos descartados.
+          const detectados = await detectMissingOutOfBaseDietDays({
+            extraPendingJourney: {
+              startAt: `${resolvedFecha}T${hhmm}:00`,
+              fechaInicio: resolvedFecha,
+              lugarInicio: lugar || null,
+              tipoRuta: (tipoRuta as any) || null,
+            },
+            fromDate: triggerAFrom,
+            toDate: triggerATo,
           });
-          setPendingDietsVisible(true);
-          return;
-        }
-      } catch {}
-    }
 
-    inicioMutation.mutate(overrideParams ?? undefined);
-    setShowInicioForm(false);
+          const detectedSafe = Array.isArray(detectados) ? detectados : [];
+          const autoDays = detectedSafe.filter((item) => item.isBaseArrivalDay !== true);
+          const manualDays = detectedSafe.filter((item) => item.isBaseArrivalDay === true);
+
+          console.log(
+            `[TRIGGER_A pendingCount=${detectedSafe.length} auto=${autoDays.length} manual=${manualDays.length} from=${triggerAFrom} to=${triggerATo}]`,
+          );
+
+          // Los días completos intermedios fuera de base son inequívocos:
+          // se registran automáticamente como Jornada fuera de base al 100%.
+          // Los días de llegada a base siguen requiriendo elección 100/60/30/sin dieta.
+          if (autoDays.length > 0) {
+            const created = await autoConfirmOutOfBaseDietDays(autoDays);
+            if (created.length > 0) {
+              await Promise.all([
+                qc.refetchQueries({ queryKey: ["dietas-resumen"] }).catch(() => {}),
+                qc.refetchQueries({ queryKey: ["km-resumen"] }).catch(() => {}),
+                qc.refetchQueries({ queryKey: ["viaje-resumen"] }).catch(() => {}),
+              ]);
+            }
+          }
+
+          if (manualDays.length > 0) {
+            setPendingDiets(manualDays);
+            setDeferredStartJourney({
+              lugarInicio: lugar,
+              fechaInicio: resolvedFecha,
+              horaInicio: hora,
+              kmInicio: kmStart ?? null,
+              observaciones: null,
+              baseKm: undefined,
+            });
+            setPendingDietsVisible(true);
+            return;
+          }
+        } catch {}
+      }
+
+      await inicioMutation.mutateAsync(overrideParams ?? undefined);
+    } catch {
+      // The mutation reports the error; retain the form and its entered values.
+    } finally {
+      startingRef.current = false;
+    }
   }, [inicioFechaInput, inicioLugar, inicioHora, kmInicio, t, inicioMutation, tipoRuta, qc]);
 
   const upsertAllPendingSelections = useCallback(async (
@@ -2824,21 +2841,19 @@ export default function DashboardScreen() {
             );
           })()}
 
-          {lastClosed?.plannedRestMin && lastClosed?.endAt && !lastClosed?.ferryPending && (() => {
-            const endMs = new Date(lastClosed.endAt!).getTime();
-            const totalMin = lastClosed.plannedRestMin;
-            const targetDate = new Date(endMs + totalMin * 60000);
-            const remainMs = targetDate.getTime() - countdownNow;
-            const isComplete = remainMs <= 0;
-            const remainMin = Math.max(0, Math.min(totalMin, Math.ceil(remainMs / 60000)));
-            const remainH = Math.floor(remainMin / 60);
-            const remainM = remainMin % 60;
-            const elapsedMin = totalMin - remainMin;
-            const progress = Math.min(1, Math.max(0, elapsedMin / totalMin));
-            const restTypeLabel = lastClosed.plannedRestType === "weekly"
-              ? `${t("dashboard.weeklyRest")} (${lastClosed.plannedRestMin / 60}h)`
-              : `${t("dashboard.dailyRest")} (${lastClosed.plannedRestMin / 60}h)`;
-            const targetLabel = formatDateTimeES(targetDate, locale);
+          {lastClosed && (() => {
+            const rest = restCountdown(lastClosed, !!abierta, countdownNow);
+            if (!rest) return null;
+            const totalMin = rest.totalMin;
+            const isComplete = rest.remainingMin === 0;
+            const displayMin = rest.remainingMin ?? rest.elapsedMin;
+            const remainH = Math.floor(displayMin / 60);
+            const remainM = displayMin % 60;
+            const progress = totalMin ? Math.min(1, rest.elapsedMin / totalMin) : 0;
+            const restTypeLabel = totalMin === null ? "Descanso en curso" : lastClosed.plannedRestType === "weekly"
+              ? `${t("dashboard.weeklyRest")} (${totalMin / 60}h)`
+              : `${t("dashboard.dailyRest")} (${totalMin / 60}h)`;
+            const targetLabel = rest.target === null ? null : formatDateTimeES(new Date(rest.target), locale);
             return (
               <View style={[styles.card, { marginBottom: 16 }]}>
                 <View style={styles.cardHeader}>
@@ -2854,29 +2869,29 @@ export default function DashboardScreen() {
                   </View>
                 ) : (
                   <>
-                    <View style={{ paddingVertical: 6, paddingHorizontal: 4 }}>
+                    {targetLabel && <View style={{ paddingVertical: 6, paddingHorizontal: 4 }}>
                       <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.light.textSecondary }}>
                         {t("dashboard.canStartAt")}
                       </Text>
                       <Text style={{ fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.light.tint, marginTop: 2 }}>
                         {targetLabel}
                       </Text>
-                    </View>
+                    </View>}
                     <View style={{ alignItems: "center" as const, paddingVertical: 10 }}>
                       <Text style={{ fontFamily: "Inter_700Bold", fontSize: 32, color: Colors.light.tint }}>
                         {remainH}h {remainM > 0 ? `${remainM}m` : ""}
                       </Text>
                       <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.light.textSecondary, marginTop: 2 }}>
-                        {t("dashboard.restRemaining")}
+                        {totalMin === null ? "descanso transcurrido · sin duración prevista" : t("dashboard.restRemaining")}
                       </Text>
                     </View>
-                    <View style={[styles.progressBg, { backgroundColor: Colors.light.border, height: 6 }]}>
+                    {totalMin !== null && <View style={[styles.progressBg, { backgroundColor: Colors.light.border, height: 6 }]}>
                       <View style={[styles.progressFill, {
                         width: `${progress * 100}%` as any,
                         backgroundColor: Colors.light.primary,
                         height: 6,
                       }]} />
-                    </View>
+                    </View>}
                   </>
                 )}
               </View>

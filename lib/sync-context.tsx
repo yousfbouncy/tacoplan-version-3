@@ -275,10 +275,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     })();
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    processOfflineQueue(getAccessToken, (status, result) => updateStatus(status as SyncStatus, result));
-  }, [getAccessToken, isAuthenticated, updateStatus]);
+  // The initial syncAll already drains the offline queue. Do not launch a
+  // second startup sync (and second UI refresh) from a separate effect.
 
   useEffect(() => {
     if (!isAuthenticated) return;

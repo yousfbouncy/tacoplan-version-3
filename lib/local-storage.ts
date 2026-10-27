@@ -1,3 +1,5 @@
+import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
+const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, type LegalSummary } from "./legalEngine";
@@ -2181,7 +2183,11 @@ export async function getJornadaAbierta(): Promise<Jornada | null> {
   return all.find((j) => !j.fechaFin) || null;
 }
 
-export async function crearJornadaInicio(data: {
+export function crearJornadaInicio(...args: Parameters<typeof crearJornadaInicioUnlocked>): ReturnType<typeof crearJornadaInicioUnlocked> {
+  return withJornadaWrite(() => crearJornadaInicioUnlocked(...args));
+}
+
+async function crearJornadaInicioUnlocked(data: {
   fechaInicio: string;
   horaInicio: string;
   lugarInicio: string;
@@ -2349,7 +2355,11 @@ export async function crearJornadaInicio(data: {
   return jornada;
 }
 
-export async function cerrarJornada(
+export function cerrarJornada(...args: Parameters<typeof cerrarJornadaUnlocked>): ReturnType<typeof cerrarJornadaUnlocked> {
+  return withJornadaWrite(() => cerrarJornadaUnlocked(...args));
+}
+
+async function cerrarJornadaUnlocked(
   id: string,
   data: {
     fechaFin: string;
@@ -2871,7 +2881,11 @@ export async function getJornadaById(id: string): Promise<Jornada | null> {
   return all.find((j) => j.id === id) || null;
 }
 
-export async function updateJornadaPlannedRest(
+export function updateJornadaPlannedRest(...args: Parameters<typeof updateJornadaPlannedRestUnlocked>): ReturnType<typeof updateJornadaPlannedRestUnlocked> {
+  return withJornadaWrite(() => updateJornadaPlannedRestUnlocked(...args));
+}
+
+async function updateJornadaPlannedRestUnlocked(
   id: string,
   plannedRestMin: number,
   plannedRestType: "daily" | "weekly",
@@ -4230,12 +4244,13 @@ export async function getPendingSyncData(): Promise<{
   };
 }
 
-export async function markAllSynced(): Promise<void> {
+export function markAllSynced(...args: Parameters<typeof markAllSyncedUnlocked>): ReturnType<typeof markAllSyncedUnlocked> {
+  return withJornadaWrite(() => markAllSyncedUnlocked(...args));
+}
+
+async function markAllSyncedUnlocked(confirmedJornadas: Jornada[]): Promise<void> {
   const jornadas = await getAllJornadas();
-  for (const j of jornadas) {
-    if (j.syncStatus !== "synced") j.syncStatus = "synced";
-  }
-  await saveAllJornadas(jornadas);
+  await saveAllJornadas(acknowledgeConfirmed(jornadas, confirmedJornadas));
 
   const comps = await getAllCompensaciones();
   for (const c of comps) {
@@ -4252,7 +4267,11 @@ export async function markAllSynced(): Promise<void> {
   await markNaturalDayDietsSynced();
 }
 
-export async function mergeFromCloud(cloudJornadas: Jornada[], cloudCompensaciones: Compensacion[], cloudDayExtraEntries: DayExtraEntry[] = []): Promise<void> {
+export function mergeFromCloud(...args: Parameters<typeof mergeFromCloudUnlocked>): ReturnType<typeof mergeFromCloudUnlocked> {
+  return withJornadaWrite(() => mergeFromCloudUnlocked(...args));
+}
+
+async function mergeFromCloudUnlocked(cloudJornadas: Jornada[], cloudCompensaciones: Compensacion[], cloudDayExtraEntries: DayExtraEntry[] = []): Promise<void> {
   const localJornadas = await getAllJornadas();
   const localComps = await getAllCompensaciones();
   const localExtraDays = await getAllDayExtraEntries();

@@ -1126,7 +1126,17 @@ async function collectLocalSettings(): Promise<{ profile: any; dietasRates: any[
   }
 }
 
-export async function syncAll(
+let activeSync: Promise<SyncResult> | null = null;
+export function syncAll(getAccessToken: () => Promise<string | null>): Promise<SyncResult> {
+  if (activeSync) return activeSync;
+  const pending = runSyncAll(getAccessToken);
+  activeSync = pending;
+  const clear = () => { if (activeSync === pending) activeSync = null; };
+  pending.then(clear, clear);
+  return pending;
+}
+
+async function runSyncAll(
   getAccessToken: () => Promise<string | null>,
 ): Promise<SyncResult> {
   void getAccessToken;
@@ -1773,9 +1783,9 @@ export async function syncAll(
     const dayExtraPushOk = (syncAll as any).__dayExtraPushOk !== false;
     const natPushOk = (syncAll as any).__natPushOk !== false;
     if (!hasPendingLocal) {
-      await markAllSynced();
+      await markAllSynced(cloudJ);
     } else if (pushed > 0 && dayExtraPushOk && natPushOk) {
-      await markAllSynced();
+      await markAllSynced(cloudJ);
     }
 
     if (allDeletesOk) {
@@ -2027,7 +2037,7 @@ export async function restoreFromCloud(
 
     await applyNaturalDayDietsLocally(cloudNaturalDayDiets);
 
-    await markAllSynced();
+    await markAllSynced(cloudJornadas);
     await saveLastSyncTime();
     await new Promise((r) => setTimeout(r, 300));
 
