@@ -1563,7 +1563,7 @@ export default function UsuarioScreen() {
         }
         const daysWorked = uniqueWorked.size;
 
-        const fixedTotal = getPayrollFixedTotal(payrollConfig, daysComputed, daysWorked, baseDays);
+        const fixedTotal = getPayrollFixedTotal(payrollConfig as unknown as Record<string, unknown>, daysComputed, daysWorked, baseDays);
 
         let baseVariable = 0;
         let dietasTotal = 0;
