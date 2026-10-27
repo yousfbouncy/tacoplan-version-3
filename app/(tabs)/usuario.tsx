@@ -37,6 +37,7 @@ import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } fro
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
+import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
 
 function safeHaptic() {
   if (Platform.OS !== "web") {
@@ -1562,30 +1563,7 @@ export default function UsuarioScreen() {
         }
         const daysWorked = uniqueWorked.size;
 
-        const fixedConceptKeys: Array<keyof PayrollConfig> = [
-          "salario_base_bruto",
-          "plus_convenio",
-          "complemento",
-          "pagas_prorrateadas",
-          "productividad_fija",
-          "otros_conceptos_fijos",
-        ];
-
-        let fixedTotalRaw = 0;
-        for (const k of fixedConceptKeys) {
-          const amount = pf((payrollConfig as any)[k]);
-          if (!Number.isFinite(amount) || amount <= 0) continue;
-
-          if (fixedUnit === "day") {
-            fixedTotalRaw += amount * daysWorked;
-            continue;
-          }
-
-          const priceDay = amount / Math.max(1, baseDays);
-          const multiplierDays = (k === "complemento" || k === "productividad_fija") ? daysWorked : daysComputed;
-          fixedTotalRaw += priceDay * multiplierDays;
-        }
-        const fixedTotal = round2(fixedTotalRaw);
+        const fixedTotal = getPayrollFixedTotal(payrollConfig, daysComputed, daysWorked, baseDays);
 
         let baseVariable = 0;
         let dietasTotal = 0;
