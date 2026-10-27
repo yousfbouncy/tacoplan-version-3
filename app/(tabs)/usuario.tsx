@@ -3080,7 +3080,7 @@ export default function UsuarioScreen() {
 
               <View style={styles.subsectionDivider} />
 
-              <Pressable style={styles.ferryToggleRow} accessibilityRole="switch" accessibilityState={{ checked: availabilityAlarmsEnabled && notificationsEnabled, disabled: !notificationsEnabled }} onPress={() => { void toggleAvailabilityAlarms(); }} disabled={!notificationsEnabled || savingNotifPrefs || !userId}>
+              <Pressable style={styles.ferryToggleRow} accessibilityRole="switch" accessibilityState={{ checked: availabilityAlarmsEnabled && notificationsEnabled, disabled: !notificationsEnabled }} disabled={!notificationsEnabled || savingNotifPrefs || !userId}>
                 <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Alarmas de disponibilidad (13 h / 15 h)</Text></View>
                 <Switch value={availabilityAlarmsEnabled && notificationsEnabled} onValueChange={() => { void toggleAvailabilityAlarms(); }} disabled={!notificationsEnabled || savingNotifPrefs || !userId} />
               </Pressable>
