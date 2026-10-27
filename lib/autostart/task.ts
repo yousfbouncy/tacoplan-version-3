@@ -10,6 +10,8 @@ import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
 export const AUTOSTART_TASK = "tacoplan-autostart-location-v1";
 const KEY = "@tacoplan/autostart/v1";
 const COOLDOWN_MS = 8 * 60 * 60 * 1000;
+// Una conducción continua también debe poder confirmar el inicio sin exigir paradas.
+const CONTINUOUS_AUTO_CONFIRM_MS = 3 * 60 * 1000;
 export type Proposal = { id: string; userId: string; detectedAt: string; createdAt: string; status: "pending"; source: "location" };
 export type State = { userId: string | null; enabled: boolean; candidate: Candidate; lastDetectedAt: number; proposals: Proposal[]; movementSegments: MovementSegment[]; firstMovementAt: number | null };
 const empty: State = { userId: null, enabled: false, candidate: null, lastDetectedAt: 0, proposals: [], movementSegments: [], firstMovementAt: null };
@@ -35,14 +37,16 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
     state.candidate = result.candidate;
     if (result.segment) state.movementSegments = [...state.movementSegments, result.segment]
       .filter((segment) => fix.timestamp - segment.startedAt <= 20 * 60 * 1000);
-    if (!result.segment) continue;
-    const firstMovementAt = state.firstMovementAt ?? result.segment.startedAt;
+    const continuousMovementConfirmed = state.candidate != null &&
+      fix.timestamp - state.candidate.startedAt >= CONTINUOUS_AUTO_CONFIRM_MS;
+    if (!result.segment && !continuousMovementConfirmed) continue;
+    const firstMovementAt = state.firstMovementAt ?? result.segment?.startedAt ?? state.candidate!.startedAt;
     if (fix.timestamp - firstMovementAt < 0 || fix.timestamp - firstMovementAt > 20 * 60 * 1000) {
-      state.firstMovementAt = result.segment.startedAt;
-      state.movementSegments = [result.segment];
+      state.firstMovementAt = result.segment?.startedAt ?? state.candidate!.startedAt;
+      state.movementSegments = result.segment ? [result.segment] : [];
     }
     if (fix.timestamp - state.lastDetectedAt < COOLDOWN_MS) continue;
-    if (state.firstMovementAt != null && shouldAutoConfirm(state.movementSegments, fix.timestamp)) {
+    if (state.firstMovementAt != null && (shouldAutoConfirm(state.movementSegments, fix.timestamp) || continuousMovementConfirmed)) {
       const open = await getJornadaAbierta();
       if (open) {
         const pending = state.proposals.find((p) => p.userId === state.userId && p.status === "pending");
@@ -55,7 +59,7 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
         state.movementSegments = [];
         continue;
       }
-      const startAt = new Date(state.firstMovementAt ?? result.segment.startedAt);
+      const startAt = new Date(state.firstMovementAt ?? result.segment?.startedAt ?? state.candidate!.startedAt);
       const fechaInicio = `${startAt.getFullYear()}-${String(startAt.getMonth() + 1).padStart(2, "0")}-${String(startAt.getDate()).padStart(2, "0")}`;
       const horaInicio = `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`;
       let lugarInicio = "Ubicación detectada automáticamente";
@@ -83,7 +87,7 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
       const proposalId = `${state.userId}:${state.firstMovementAt ?? result.segment.startedAt}`;
       const { error } = await (await import("@/lib/supabase")).supabase.from("autostart_proposals")
         .update({ status: "accepted" }).eq("id", proposalId).eq("user_id", state.userId);
-      if (error) throw error;
+      if (error) console.warn("[AUTOSTART] Jornada local iniciada; no se pudo sincronizar la propuesta:", error);
       state.proposals = state.proposals.filter((p) => p.id !== proposalId);
       state.lastDetectedAt = fix.timestamp;
       state.firstMovementAt = null;
