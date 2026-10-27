@@ -1118,28 +1118,6 @@ export default function DietasScreen() {
             </View>
           ) : data ? (
             <>
-              {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
-                <LinearGradient colors={["#078BDC", "#07477F", "#0B235C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.totalCard, styles.totalCardPremium]}>
-                  <Ionicons name="wallet-outline" size={26} color="#fff" style={{ alignSelf: "center", marginBottom: 8 }} />
-                  <Text style={[styles.totalLabel, styles.totalLabelPremium]}>Total del periodo</Text>
-                  <Text style={[styles.totalValue, styles.totalValuePremium]}>{grandTotal.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</Text>
-                  <View style={styles.summaryRow}>
-                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
-                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalDiets")}</Text>
-                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(data.total)}</Text>
-                    </View>
-                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
-                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalExtras")}</Text>
-                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(totalExtras)}</Text>
-                    </View>
-                    <View style={[styles.summaryItem, styles.summaryItemPremium]}>
-                      <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalPlus")}</Text>
-                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(totalPlus)}</Text>
-                    </View>
-                  </View>
-                  <Text style={[styles.totalSub, styles.totalSubPremium]}>{t("dietas.periodLabel")} {periodo.label}</Text>
-                </LinearGradient>
-              )}
 
               {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
                 data.desglose.length > 0 ? (
