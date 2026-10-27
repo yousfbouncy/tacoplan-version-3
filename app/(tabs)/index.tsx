@@ -1,3 +1,6 @@
+import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
+import ScreenBackdrop from "@/components/ScreenBackdrop";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -22,7 +25,7 @@ import { useFocusEffect } from "expo-router";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import NotificationDetailModal from "@/components/notifications/NotificationDetailModal";
 import { useI18n } from "@/lib/i18n-context";
 import { getNotificationAction } from "@/lib/notification-links";
@@ -340,6 +343,15 @@ export default function DashboardScreen() {
 
   const [showInicioForm, setShowInicioForm] = useState(false);
   const [showFinForm, setShowFinForm] = useState(false);
+  const [legalExpanded, setLegalExpanded] = useState(false);
+  useEffect(() => {
+    if (!showFinForm || !user?.id) return;
+    let cancelled = false;
+    userScopedKey("tacoplan_automatic_diets_v1", user.id).then(key => AsyncStorage.getItem(key))
+      .then(value => { if (!cancelled) setDietaModo(value === "false" ? "MANUAL" : "AUTO"); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [showFinForm, user?.id]);
+
   const [showTopMenu, setShowTopMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<UserNotificationRow[]>([]);
@@ -1769,6 +1781,7 @@ export default function DashboardScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <ScreenBackdrop />
       <Modal
         visible={showTopMenu}
         transparent
@@ -1784,6 +1797,95 @@ export default function DashboardScreen() {
                 <Ionicons name="close" size={18} color={Colors.light.textSecondary} />
               </Pressable>
             </View>
+
+                        {hasReEvalPending && (
+            <Pressable
+              onPress={async () => {
+                if (reEvalInicioLoading) return;
+                console.log("[RE-EVAL_INICIO] user pressed button");
+                try {
+                  setReEvalInicioLoading(true);
+                  const hoy = todayStr();
+                  const todasJ = await listarJornadas();
+                  const ultimaCerrada = todasJ != null && Array.isArray(todasJ)
+                    ? todasJ
+                        .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
+                        .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
+                    : null;
+                  const ultFinStr = ultimaCerrada
+                    ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || hoy))
+                    : null;
+                  const gapFrom = ultFinStr ? addDays(ultFinStr, -1) : null;
+                  const hoyMinus45 = addDays(hoy, -45);
+                  const rFrom = gapFrom && gapFrom > hoyMinus45 ? gapFrom : hoyMinus45;
+                  const rTo = hoy;
+                  console.log(`[RE-EVAL_INICIO] range ${rFrom} → ${rTo}`);
+                  await clearDismissedNaturalDayDietsInRange(rFrom, rTo);
+                  const fresh = await detectMissingOutOfBaseDietDays({
+                    fromDate: rFrom,
+                    toDate: rTo,
+                  });
+                  const count = Array.isArray(fresh) ? fresh.length : 0;
+                  setPendingDiets(Array.isArray(fresh) ? fresh : []);
+                  setHasReEvalPending(count > 0);
+                  console.log(`[RE-EVAL_INICIO] pendingCount=${count} from=${rFrom} to=${rTo}`);
+                  if (count > 0) {
+                    setPendingDietsVisible(true);
+                  } else {
+                    const fmt = (s: string) => s?.split("-").reverse().join("/") || s;
+                    Alert.alert(
+                      "Sin dietas pendientes",
+                      `No se detectaron dietas fuera de base pendientes en el rango evaluado (${fmt(rFrom)} → ${fmt(rTo)}).`,
+                      [{ text: "Aceptar" }],
+                    );
+                  }
+                  await invalidateAll();
+                } catch (e: any) {
+                  console.error("[RE-EVAL_INICIO] error:", e);
+                  Alert.alert(
+                    t("common.error"),
+                    e?.message || "No se pudo re-evaluar las dietas pendientes.",
+                    [{ text: "Aceptar" }],
+                  );
+                } finally {
+                  setReEvalInicioLoading(false);
+                }
+              }}
+              hitSlop={8}
+              style={({ pressed }) => [
+                {
+                  marginLeft: 8,
+                  backgroundColor: reEvalInicioLoading ? Colors.light.tint + "22" : Colors.light.surface,
+                  borderWidth: 1,
+                  borderColor: Colors.light.tint,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  paddingHorizontal: Platform.OS === "web" ? 12 : 0,
+                  paddingVertical: 8,
+                  height: Platform.OS === "web" ? 36 : 40,
+                  width: Platform.OS === "web" ? undefined : 40,
+                  minWidth: Platform.OS === "web" ? 96 : 40,
+                  borderRadius: 8,
+                  opacity: pressed ? 0.85 : 1,
+                  zIndex: 10,
+                  overflow: "visible",
+                },
+              ]}
+            >
+              {reEvalInicioLoading ? (
+                <ActivityIndicator size="small" color={Colors.light.tint} />
+              ) : (
+                <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
+              )}
+              {Platform.OS === "web" ? (
+                <Text style={{ color: Colors.light.tint, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                  Re-evaluar
+                </Text>
+              ) : null}
+            </Pressable>
+            )}
 
             <View style={styles.menuSection}>
               <Text style={styles.menuSectionTitle}>Accesos rápidos</Text>
@@ -2128,8 +2230,8 @@ export default function DashboardScreen() {
       >
         <View style={styles.header}>
           <View style={styles.headerRow}>
-            <MaterialCommunityIcons name="steering" size={28} color={Colors.light.tint} />
-            <Text style={styles.headerTitle}>Tacoplan</Text>
+            <MaterialCommunityIcons name="truck-outline" size={30} color="#FFFFFF" />
+            <Pressable accessibilityRole="button" accessibilityLabel="Tacoplan: abrir menú de cuenta" onPress={() => setShowTopMenu(true)} style={{ flexShrink: 1 }}><Text style={styles.headerTitle}>Tacoplan</Text></Pressable>
             <View style={{ flex: 1 }} />
             <Pressable
               onPress={() => triggerSync()}
@@ -2160,97 +2262,9 @@ export default function DashboardScreen() {
               ) : syncStatus === "offline" ? (
                 <Ionicons name="cloud-offline-outline" size={22} color={Colors.light.textSecondary} />
               ) : (
-                <Ionicons name="cloud-done-outline" size={22} color={Colors.light.tint} />
+                <Ionicons name="cloud-done-outline" size={22} color="#FFFFFF" />
               )}
             </Pressable>
-            {hasReEvalPending && (
-            <Pressable
-              onPress={async () => {
-                if (reEvalInicioLoading) return;
-                console.log("[RE-EVAL_INICIO] user pressed button");
-                try {
-                  setReEvalInicioLoading(true);
-                  const hoy = todayStr();
-                  const todasJ = await listarJornadas();
-                  const ultimaCerrada = todasJ != null && Array.isArray(todasJ)
-                    ? todasJ
-                        .filter((j: any) => j && !String(j.id || "").startsWith("__") && (j.fechaFin || j.endAt))
-                        .sort((a: any, b: any) => String(b.fechaFin || b.endAt).localeCompare(String(a.fechaFin || a.endAt)))[0]
-                    : null;
-                  const ultFinStr = ultimaCerrada
-                    ? extractYyyyMmDd(String(ultimaCerrada.fechaFin || ultimaCerrada.endAt || ultimaCerrada.startAt || hoy))
-                    : null;
-                  const gapFrom = ultFinStr ? addDays(ultFinStr, -1) : null;
-                  const hoyMinus45 = addDays(hoy, -45);
-                  const rFrom = gapFrom && gapFrom > hoyMinus45 ? gapFrom : hoyMinus45;
-                  const rTo = hoy;
-                  console.log(`[RE-EVAL_INICIO] range ${rFrom} → ${rTo}`);
-                  await clearDismissedNaturalDayDietsInRange(rFrom, rTo);
-                  const fresh = await detectMissingOutOfBaseDietDays({
-                    fromDate: rFrom,
-                    toDate: rTo,
-                  });
-                  const count = Array.isArray(fresh) ? fresh.length : 0;
-                  setPendingDiets(Array.isArray(fresh) ? fresh : []);
-                  setHasReEvalPending(count > 0);
-                  console.log(`[RE-EVAL_INICIO] pendingCount=${count} from=${rFrom} to=${rTo}`);
-                  if (count > 0) {
-                    setPendingDietsVisible(true);
-                  } else {
-                    const fmt = (s: string) => s?.split("-").reverse().join("/") || s;
-                    Alert.alert(
-                      "Sin dietas pendientes",
-                      `No se detectaron dietas fuera de base pendientes en el rango evaluado (${fmt(rFrom)} → ${fmt(rTo)}).`,
-                      [{ text: "Aceptar" }],
-                    );
-                  }
-                  await invalidateAll();
-                } catch (e: any) {
-                  console.error("[RE-EVAL_INICIO] error:", e);
-                  Alert.alert(
-                    t("common.error"),
-                    e?.message || "No se pudo re-evaluar las dietas pendientes.",
-                    [{ text: "Aceptar" }],
-                  );
-                } finally {
-                  setReEvalInicioLoading(false);
-                }
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [
-                {
-                  marginLeft: 8,
-                  backgroundColor: reEvalInicioLoading ? Colors.light.tint + "22" : Colors.light.surface,
-                  borderWidth: 1,
-                  borderColor: Colors.light.tint,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  paddingHorizontal: Platform.OS === "web" ? 12 : 0,
-                  paddingVertical: 8,
-                  height: Platform.OS === "web" ? 36 : 40,
-                  width: Platform.OS === "web" ? undefined : 40,
-                  minWidth: Platform.OS === "web" ? 96 : 40,
-                  borderRadius: 8,
-                  opacity: pressed ? 0.85 : 1,
-                  zIndex: 10,
-                  overflow: "visible",
-                },
-              ]}
-            >
-              {reEvalInicioLoading ? (
-                <ActivityIndicator size="small" color={Colors.light.tint} />
-              ) : (
-                <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
-              )}
-              {Platform.OS === "web" ? (
-                <Text style={{ color: Colors.light.tint, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
-                  Re-evaluar
-                </Text>
-              ) : null}
-            </Pressable>
-            )}
             <Pressable
               onPress={() => {
                 setShowNotifications(true);
@@ -2259,7 +2273,7 @@ export default function DashboardScreen() {
               hitSlop={8}
               style={[styles.headerActionButton, { marginLeft: 10 }]}
             >
-              <Ionicons name="notifications-outline" size={20} color={Colors.light.tint} />
+              <Ionicons name="notifications-outline" size={24} color="#FFFFFF" />
               {unreadCount > 0 && (
                 <View
                   style={{
@@ -2283,20 +2297,8 @@ export default function DashboardScreen() {
                 </View>
               )}
             </Pressable>
-            <Pressable
-              onPress={() => setShowTopMenu(true)}
-              hitSlop={8}
-              style={[styles.headerActionButton, { marginLeft: 10 }]}
-            >
-              <Ionicons name="ellipsis-horizontal" size={20} color={Colors.light.tint} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/usuario")}
-              hitSlop={8}
-              style={[styles.headerActionButton, { marginLeft: 10 }]}
-            >
-              <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
-            </Pressable>
+
+
           </View>
           <Text style={styles.headerSubtitle}>{t("login.appDesc")}</Text>
           {lastSyncTime && (
@@ -2407,7 +2409,7 @@ export default function DashboardScreen() {
               </View>
               <View style={styles.idleShiftAction}>
                 <Text style={styles.idleShiftActionText}>{t("dashboard.startJornada")}</Text>
-                <Ionicons name="arrow-forward" size={16} color="#123B5C" />
+                <Ionicons name="arrow-forward" size={16} color="#80BFFF" />
               </View>
             </Pressable>
           ) : (
@@ -2621,7 +2623,7 @@ export default function DashboardScreen() {
                   </Text>
                 </View>
                 <View style={[styles.progressBg, { backgroundColor: Colors.light.border, height: 6 }]}>
-                  <View style={[styles.progressFill, { width: `${progress * 100}%` as any, backgroundColor: ferryComplete ? Colors.light.success : (openInt ? Colors.light.warning : Colors.light.tint), height: 6 }]} />
+                  <View style={[styles.progressFill, { width: `${progress * 100}%` as any, backgroundColor: ferryComplete ? Colors.light.success : (openInt ? Colors.light.warning : Colors.light.primary), height: 6 }]} />
                 </View>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
                   <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>
@@ -2698,7 +2700,7 @@ export default function DashboardScreen() {
                         <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: Colors.light.text }}>-</Text>
                       </Pressable>
                       <Text style={{ fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.light.tint, minWidth: 20, textAlign: "center" as const }}>{ferryTransitDiet}</Text>
-                      <Pressable onPress={() => setFerryTransitDiet(v => v + 1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.light.tint, alignItems: "center" as const, justifyContent: "center" as const }}>
+                      <Pressable onPress={() => setFerryTransitDiet(v => v + 1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.light.primary, alignItems: "center" as const, justifyContent: "center" as const }}>
                         <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: "#fff" }}>+</Text>
                       </Pressable>
                     </View>
@@ -2714,7 +2716,7 @@ export default function DashboardScreen() {
                         <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: Colors.light.text }}>-</Text>
                       </Pressable>
                       <Text style={{ fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.light.tint, minWidth: 20, textAlign: "center" as const }}>{ferryCabinOvernight}</Text>
-                      <Pressable onPress={() => setFerryCabinOvernight(v => v + 1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.light.tint, alignItems: "center" as const, justifyContent: "center" as const }}>
+                      <Pressable onPress={() => setFerryCabinOvernight(v => v + 1)} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.light.primary, alignItems: "center" as const, justifyContent: "center" as const }}>
                         <Text style={{ fontSize: 16, fontFamily: "Inter_700Bold", color: "#fff" }}>+</Text>
                       </Pressable>
                     </View>
@@ -2764,7 +2766,7 @@ export default function DashboardScreen() {
                   })()}
 
                   <Pressable
-                    style={({ pressed }) => [{ flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 6, backgroundColor: Colors.light.tint, borderRadius: 8, paddingVertical: 10, marginTop: 4, opacity: pressed ? 0.85 : 1 }]}
+                    style={({ pressed }) => [{ flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 6, backgroundColor: Colors.light.primary, borderRadius: 8, paddingVertical: 10, marginTop: 4, opacity: pressed ? 0.85 : 1 }]}
                     onPress={async () => {
                       try {
                         const hasAnyExtras = ferryTransitDiet > 0 || ferryCabinOvernight > 0 || ferryCountryChange;
@@ -2836,7 +2838,7 @@ export default function DashboardScreen() {
                     <View style={[styles.progressBg, { backgroundColor: Colors.light.border, height: 6 }]}>
                       <View style={[styles.progressFill, {
                         width: `${progress * 100}%` as any,
-                        backgroundColor: Colors.light.tint,
+                        backgroundColor: Colors.light.primary,
                         height: 6,
                       }]} />
                     </View>
@@ -2848,33 +2850,32 @@ export default function DashboardScreen() {
           </>
         ) : !showFinForm ? (
           <View>
-            <View style={styles.activeShiftCard}>
+            <LinearGradient colors={["#087FC2", "#073D75", "#062957"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.activeShiftCard}>
+              <Image source={require("@/assets/images/dashboard-truck.png")} contentFit="contain" pointerEvents="none" style={{ position: "absolute", right: -22, top: 14, width: "44%", height: 180 }} />
               <View style={styles.activeShiftHeader}>
                 <View style={styles.activeShiftStatus}>
                   <View style={styles.activeShiftDot} />
-                  <Text style={styles.activeShiftStatusText}>JORNADA ACTIVA</Text>
+                  <Text style={styles.activeShiftStatusText}>Jornada abierta</Text>
                 </View>
-                <Ionicons name="ellipsis-horizontal" size={20} color="#B9D5EA" />
+
               </View>
               <Text style={styles.activeShiftPlace} numberOfLines={1}>{abierta.lugarInicio || "Ubicación sin indicar"}</Text>
               <Text style={styles.activeShiftStarted}>Inicio · {formatFecha(abierta.fechaInicio)} · {abierta.horaInicio}</Text>
 
               <View style={styles.activeShiftTimerBlock}>
                 <Text style={styles.activeShiftTimerLabel}>TIEMPO DE JORNADA</Text>
-                <Text style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedSeconds) : "—"}</Text>
+                <Text adjustsFontSizeToFit numberOfLines={1} style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedSeconds) : "—"}</Text>
                 <Text style={styles.activeShiftRemaining}>
                   {activeShiftMetrics ? `${formatMinutosHoras(activeShiftMetrics.remainingMin)} hasta el límite de ${activeShiftMetrics.limitMin / 60} h` : "Calculando límite de jornada"}
                 </Text>
               </View>
 
+              <View style={{ height: 7, backgroundColor: "#0877C7", borderRadius: 4, overflow: "hidden", marginBottom: 16 }}><View style={{ height: 7, backgroundColor: "#20D34B", borderRadius: 4, width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (activeShiftMetrics?.limitMin || 780), 1) * 100}%` }} /></View>
               <View style={styles.shiftLimitsRow}>
                 <View style={styles.shiftLimitItem}>
                   <View style={styles.shiftLimitTop}>
-                    <Text style={styles.shiftLimitNumber}>13 h</Text>
-                    <Text style={styles.shiftLimitTag}>LÍMITE</Text>
-                  </View>
-                  <View style={styles.shiftLimitTrack}>
-                    <View style={[styles.shiftLimitFill, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (13 * 60), 1) * 100}%` }]} />
+                    <Ionicons name="time-outline" size={22} color="#20D34B" /><Text style={styles.shiftLimitNumber}>Límite 13h</Text>
+
                   </View>
                   <Text style={styles.shiftLimitDetail}>Quedan {formatMinutosHoras(activeShiftMetrics?.remaining13Min || 0)}</Text>
                   <Text style={styles.shiftLimitDeadline}>{formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 13)}</Text>
@@ -2882,17 +2883,15 @@ export default function DashboardScreen() {
                 <View style={styles.shiftLimitDivider} />
                 <View style={styles.shiftLimitItem}>
                   <View style={styles.shiftLimitTop}>
-                    <Text style={[styles.shiftLimitNumber, { color: estado?.disponibilidadMin === 15 * 60 ? "#FFFFFF" : "#A8B8C7" }]}>15 h</Text>
-                    <Text style={styles.shiftLimitTag}>{estado?.disponibilidadMin === 15 * 60 ? "AMPLIACIÓN" : "NO DISPONIBLE"}</Text>
-                  </View>
-                  <View style={styles.shiftLimitTrack}>
-                    <View style={[styles.shiftLimitFillExtended, { width: `${Math.min((activeShiftMetrics?.elapsedMin || 0) / (15 * 60), 1) * 100}%`, opacity: estado?.disponibilidadMin === 15 * 60 ? 1 : 0.3 }]} />
+                    <Text style={[styles.shiftLimitNumber, { color: estado?.disponibilidadMin === 15 * 60 ? "#FFFFFF" : "#A8B8C7" }]}>Límite 15h</Text>
+                    <Ionicons name="time-outline" size={22} color="#FFB51A" />
                   </View>
                   <Text style={styles.shiftLimitDetail}>{estado?.disponibilidadMin === 15 * 60 ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}` : "No disponible hoy"}</Text>
                   <Text style={styles.shiftLimitDeadline}>{estado?.disponibilidadMin === 15 * 60 ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
                 </View>
               </View>
 
+            </LinearGradient>
               <Pressable
                 style={({ pressed }) => [styles.activeShiftCloseButton, { opacity: pressed ? 0.88 : 1 }]}
                 onPress={() => {
@@ -2910,12 +2909,11 @@ export default function DashboardScreen() {
                 <Ionicons name="stop" size={18} color="#FFFFFF" />
                 <Text style={styles.activeShiftCloseText}>Cerrar jornada</Text>
               </Pressable>
-              <Text style={styles.activeShiftManualNote}>La conducción se registra manualmente</Text>
-            </View>
+
             {abierta.descansoAnteriorMin != null && (
               <View style={{
-                backgroundColor: abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#FEE2E2" :
-                  abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? "#FEF3C7" : "#ECFDF5",
+                backgroundColor: abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#3C2331" :
+                  abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? "#352B19" : "#15372F",
                 padding: 10, borderRadius: 8, marginBottom: 8,
               }}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -3122,9 +3120,9 @@ export default function DashboardScreen() {
             )}
 
             {drivingWarningInfo && drivingWarningInfo.map((w, idx) => (
-              <View key={idx} style={{ flexDirection: "row", alignItems: "center", backgroundColor: w.type === "infraction" ? "#FEE2E2" : "#FEF3C7", padding: 8, borderRadius: 8, marginTop: 4, marginBottom: 4 }}>
+              <View key={idx} style={{ flexDirection: "row", alignItems: "center", backgroundColor: w.type === "infraction" ? "#3C2331" : "#352B19", padding: 8, borderRadius: 8, marginTop: 4, marginBottom: 4 }}>
                 <Ionicons name={w.type === "infraction" ? "alert-circle" : "warning"} size={16} color={w.type === "infraction" ? Colors.light.danger : Colors.light.warning} style={{ marginRight: 6 }} />
-                <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_600SemiBold", color: w.type === "infraction" ? Colors.light.danger : "#92400E" }}>{w.message}</Text>
+                <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_600SemiBold", color: w.type === "infraction" ? Colors.light.danger : "#FFBD8A" }}>{w.message}</Text>
               </View>
             ))}
 
@@ -3565,7 +3563,7 @@ export default function DashboardScreen() {
                 </View>
                 {ferryEmbarking && (
                   <View style={{ marginTop: 10 }}>
-                    <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 6, marginBottom: 8, backgroundColor: "#e0f2fe", borderRadius: 8, padding: 10 }}>
+                    <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 6, marginBottom: 8, backgroundColor: "#15372F", borderRadius: 8, padding: 10 }}>
                       <Ionicons name="time-outline" size={16} color="#0284c7" />
                       <Text style={{ fontSize: 13, fontFamily: "Inter_500Medium", color: "#0284c7" }}>
                         {t("ferry.restStarted") || "Inicio descanso"}: {finHora} ({finFecha})
@@ -3579,7 +3577,7 @@ export default function DashboardScreen() {
                       <Pressable
                         style={({ pressed }) => [{
                           flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" as const,
-                          backgroundColor: ferryRestTypeChoice === "9h" ? Colors.light.tint : Colors.light.surface,
+                          backgroundColor: ferryRestTypeChoice === "9h" ? Colors.light.primary : Colors.light.surface,
                           borderWidth: 1, borderColor: ferryRestTypeChoice === "9h" ? Colors.light.tint : Colors.light.border,
                           opacity: pressed ? 0.85 : 1,
                         }]}
@@ -3590,7 +3588,7 @@ export default function DashboardScreen() {
                       <Pressable
                         style={({ pressed }) => [{
                           flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" as const,
-                          backgroundColor: ferryRestTypeChoice === "11h" ? Colors.light.tint : Colors.light.surface,
+                          backgroundColor: ferryRestTypeChoice === "11h" ? Colors.light.primary : Colors.light.surface,
                           borderWidth: 1, borderColor: ferryRestTypeChoice === "11h" ? Colors.light.tint : Colors.light.border,
                           opacity: pressed ? 0.85 : 1,
                         }]}
@@ -3627,10 +3625,11 @@ export default function DashboardScreen() {
 
         {estado && (
           <View style={styles.legalPanel}>
-            <View style={styles.legalHeader}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Mostrar u ocultar detalles del estado legal" accessibilityState={{ expanded: legalExpanded }} onPress={() => setLegalExpanded(v => !v)} style={styles.legalHeader}>
               <Ionicons name="shield-checkmark" size={20} color={Colors.light.tint} />
-              <Text style={styles.legalTitle}>{t("dashboard.legalStatus")}</Text>
-            </View>
+              <Text style={[styles.legalTitle, { flex: 1 }]}>{t("dashboard.legalStatus")}</Text>
+              <Ionicons name={legalExpanded ? "chevron-up" : "chevron-down"} size={18} color={Colors.light.textSecondary} />
+            </Pressable>
 
             <View style={styles.kpiRow}>
               <View style={styles.kpiBox}>
@@ -3667,6 +3666,7 @@ export default function DashboardScreen() {
               </View>
             </View>
 
+            {legalExpanded && <>
             <View style={[styles.disponibilidadRow, isNarrowMobile && { gap: 6 }]}>
               <Ionicons
                 name="speedometer-outline"
@@ -3724,7 +3724,7 @@ export default function DashboardScreen() {
               </View>
             )}
             {estado.descansosReducidos >= estado.maxDescansosReducidos && (
-              <View style={[styles.recomendacionRow, { backgroundColor: "#FEE2E2" }, isNarrowMobile && { padding: 8, gap: 6 }]}>
+              <View style={[styles.recomendacionRow, { backgroundColor: "#3C2331" }, isNarrowMobile && { padding: 8, gap: 6 }]}>
                 <Ionicons name="warning-outline" size={16} color={Colors.light.danger} />
                 <Text style={[styles.recomendacionText, { color: Colors.light.danger }, isNarrowMobile && { fontSize: 11 }]}>
                   {t("dashboard.noReducedAvailable")}
@@ -3732,7 +3732,16 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {estado.compensacionAgregada && (
+            </>}
+            {estado.compensacionAgregada && !legalExpanded && (
+              <Pressable accessibilityRole="button" onPress={() => setLegalExpanded(true)} style={{ flexDirection: "row", alignItems: "center", gap: 7, backgroundColor: estado.compensacionAgregada.vencida ? "#3C2331" : "#352B19", padding: 10, borderRadius: 14 }}>
+                <Ionicons name="warning" size={18} color={estado.compensacionAgregada.vencida ? Colors.light.danger : "#D58B00"} />
+                <Text style={{ flex: 1, fontSize: 12, color: "#9A6400", fontFamily: "Inter_500Medium" }}>
+                  {estado.compensacionAgregada.vencida ? "Compensación vencida: " : "Compensar "}{formatMinutosHoras(Number(estado.compensacionAgregada.totalDeudaHoras || 0) * 60 + Number(estado.compensacionAgregada.totalDeudaMinutos || 0))} · {formatFecha(estado.compensacionAgregada.fechaLimite)}
+                </Text>
+              </Pressable>
+            )}
+            {estado.compensacionAgregada && legalExpanded && (
               <View style={[styles.compSection, estado.compensacionAgregada.vencida && styles.compSectionDanger]}>
                 <Text style={[
                   styles.compTitle,
@@ -3855,6 +3864,7 @@ export default function DashboardScreen() {
           </View>
         )}
 
+        <Text style={{ color: Colors.light.textSecondary, fontSize: 11, lineHeight: 16, marginBottom: 14 }}>Información orientativa. Prevalecen la normativa aplicable y los registros del tacógrafo.</Text>
         <Pressable
           style={({ pressed }) => [styles.btnOutline, { opacity: pressed ? 0.7 : 1 }]}
           onPress={() => {
@@ -4219,9 +4229,9 @@ export default function DashboardScreen() {
                         </>
                       )}
                       {opt.type === "weekly" && opt.generatesDebt && (
-                        <View style={{ backgroundColor: "#F59E0B" + "15", borderRadius: 8, padding: 8, marginTop: 4, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 }}>
+                        <View style={{ backgroundColor: "#352B19" + "15", borderRadius: 8, padding: 8, marginTop: 4, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 }}>
                           <Ionicons name="warning" size={14} color="#F59E0B" />
-                          <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: "#92400E" }}>
+                          <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: "#FFBD8A" }}>
                             {t("dashboard.generatesDebt")} {formatMinutosHoras(opt.debtMinutes || 0)}. {t("dashboard.mustCompensate3w")}
                           </Text>
                         </View>
@@ -4229,7 +4239,7 @@ export default function DashboardScreen() {
                       {opt.type === "weekly" && !opt.generatesDebt && (
                         <View style={{ backgroundColor: "#10B981" + "15", borderRadius: 8, padding: 8, marginTop: 4, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 }}>
                           <Ionicons name="checkmark-circle" size={14} color="#10B981" />
-                          <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: "#065F46" }}>
+                          <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: "#68DFAD" }}>
                             {t("dashboard.weeklyRestComplete")}
                           </Text>
                         </View>
@@ -4509,7 +4519,7 @@ export default function DashboardScreen() {
                       <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 14, color: Colors.light.textSecondary }}>{t("ferry.finishModal.cancel")}</Text>
                     </Pressable>
                     <Pressable
-                      style={({ pressed }) => [{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" as const, backgroundColor: isValidTime ? Colors.light.tint : Colors.light.border, opacity: pressed ? 0.85 : 1 }]}
+                      style={({ pressed }) => [{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" as const, backgroundColor: isValidTime ? Colors.light.primary : Colors.light.border, opacity: pressed ? 0.85 : 1 }]}
                       disabled={!isValidTime}
                       onPress={async () => {
                         try {
@@ -4613,10 +4623,12 @@ const styles = StyleSheet.create({
     maxWidth: 760,
     alignSelf: "center" as const,
     paddingHorizontal: 16,
-    paddingBottom: Platform.OS === "web" ? 34 : 0,
+    paddingBottom: 118,
   },
   header: {
     paddingVertical: 16,
+    paddingBottom: 20,
+    minHeight: 76,
   },
   headerRow: {
     flexDirection: "row" as const,
@@ -4629,20 +4641,21 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: 1,
     borderColor: Colors.light.border,
-    backgroundColor: Colors.light.surface,
+    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center" as const,
     justifyContent: "center" as const,
     flexShrink: 0,
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: "#153B5B",
+    color: "#FFFFFF",
+    flexShrink: 1,
   },
   headerSubtitle: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: Colors.light.textSecondary,
+    color: "#D3E7FA",
     marginTop: 2,
   },
   activeShiftCard: {
@@ -4651,45 +4664,47 @@ const styles = StyleSheet.create({
     alignSelf: "center" as const,
     backgroundColor: "#123B5C",
     borderRadius: 24,
-    padding: 20,
-    marginBottom: 16,
+    padding: 18,
+    marginBottom: 12,
     overflow: "hidden",
     shadowColor: "#0B2942",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
     shadowRadius: 16,
     elevation: 5,
+    borderWidth: 1,
+    borderColor: "#293D56",
   },
   activeShiftHeader: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
-  activeShiftStatus: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-  activeShiftDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#56D6A1" },
-  activeShiftStatusText: { color: "#B7D1E3", fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 1.1 },
-  activeShiftPlace: { color: "#FFFFFF", fontSize: 19, fontFamily: "Inter_700Bold", marginTop: 18 },
-  activeShiftStarted: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 5 },
-  activeShiftTimerBlock: { alignItems: "center" as const, paddingVertical: 22, marginTop: 8 },
+  activeShiftStatus: { backgroundColor: "#138838", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+  activeShiftDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#15372F" },
+  activeShiftStatusText: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_700Bold", letterSpacing: 1.1 },
+  activeShiftPlace: { color: "#FFFFFF", fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 16, maxWidth: "62%" },
+  activeShiftStarted: { maxWidth: "62%", color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 5 },
+  activeShiftTimerBlock: { alignItems: "flex-start" as const, paddingVertical: 20, marginTop: 8, width: "67%" },
   activeShiftTimerLabel: { color: "#B9D5EA", fontSize: 10, fontFamily: "Inter_700Bold", letterSpacing: 1.2 },
-  activeShiftTimerValue: { color: "#FFFFFF", fontSize: 52, lineHeight: 60, fontFamily: "Inter_700Bold", fontVariant: ["tabular-nums"] as any, marginTop: 3 },
+  activeShiftTimerValue: { color: "#FFFFFF", fontSize: 36, lineHeight: 44, fontFamily: "Inter_700Bold", fontVariant: ["tabular-nums"] as any, marginTop: 3 },
   activeShiftRemaining: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
-  shiftLimitsRow: { flexDirection: "row" as const, alignItems: "center" as const, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 15, paddingHorizontal: 12, paddingVertical: 14 },
+  shiftLimitsRow: { flexDirection: "row" as const, alignItems: "center" as const, borderRadius: 15, paddingHorizontal: 0, paddingVertical: 0 },
   shiftLimitItem: { flex: 1, minWidth: 0 },
-  shiftLimitTop: { flexDirection: "row" as const, alignItems: "baseline" as const, justifyContent: "space-between" as const, gap: 6 },
-  shiftLimitNumber: { color: "#FFFFFF", fontSize: 18, fontFamily: "Inter_700Bold" },
+  shiftLimitTop: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "flex-start" as const, gap: 6 },
+  shiftLimitNumber: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_700Bold" },
   shiftLimitTag: { color: "#B9D5EA", fontSize: 8, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   shiftLimitTrack: { height: 4, backgroundColor: "rgba(255,255,255,0.16)", borderRadius: 2, marginTop: 9, overflow: "hidden" as const },
-  shiftLimitFill: { height: 4, backgroundColor: "#5ED9AC", borderRadius: 2 },
-  shiftLimitFillExtended: { height: 4, backgroundColor: "#87C7FF", borderRadius: 2 },
+  shiftLimitFill: { height: 4, backgroundColor: "#15372F", borderRadius: 2 },
+  shiftLimitFillExtended: { height: 4, backgroundColor: "#15372F", borderRadius: 2 },
   shiftLimitDivider: { width: 1, height: 34, backgroundColor: "rgba(255,255,255,0.18)", marginHorizontal: 14 },
   shiftLimitDetail: { color: "#FFFFFF", fontSize: 11, fontFamily: "Inter_600SemiBold", marginTop: 7 },
   shiftLimitDeadline: { color: "#B9D5EA", fontSize: 10, fontFamily: "Inter_500Medium", marginTop: 2 },
-  activeShiftCloseButton: { minHeight: 52, backgroundColor: "#E84A4A", borderRadius: 15, marginTop: 16, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 9 },
+  activeShiftCloseButton: { minHeight: 52, backgroundColor: "#E82335", borderRadius: 24, marginBottom: 16, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "center" as const, gap: 9 },
   activeShiftCloseText: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_700Bold" },
   activeShiftManualNote: { color: "#B9D5EA", fontSize: 11, fontFamily: "Inter_500Medium", textAlign: "center" as const, marginTop: 10 },
   idleShiftCard: { minHeight: 114, backgroundColor: "#123B5C", borderRadius: 22, padding: 18, marginBottom: 16, flexDirection: "row" as const, alignItems: "center" as const, gap: 13 },
   idleShiftIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center" as const, justifyContent: "center" as const },
   idleShiftTitle: { color: "#FFFFFF", fontSize: 17, fontFamily: "Inter_700Bold" },
   idleShiftSub: { color: "#B9D5EA", fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 5 },
-  idleShiftAction: { backgroundColor: "#FFFFFF", borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
-  idleShiftActionText: { color: "#123B5C", fontSize: 11, fontFamily: "Inter_700Bold" },
+  idleShiftAction: { backgroundColor: "#11243B", borderRadius: 12, paddingHorizontal: 11, paddingVertical: 9, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+  idleShiftActionText: { color: "#80BFFF", fontSize: 11, fontFamily: "Inter_700Bold" },
   menuOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -4788,7 +4803,7 @@ const styles = StyleSheet.create({
   },
   legalPanel: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 16,
+    borderRadius: 22,
     padding: 16,
     marginBottom: 14,
     shadowColor: "#000",
@@ -4877,7 +4892,7 @@ const styles = StyleSheet.create({
   recomendacionRow: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#11243B",
     borderRadius: 8,
     padding: 10,
     gap: 8,
@@ -5008,7 +5023,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#E9EEF3",
+    borderColor: "#293D56",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -5105,7 +5120,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.light.border,
   },
   segmentActive: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderColor: Colors.light.tint,
   },
   segmentText: {
@@ -5173,7 +5188,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   btnDanger: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 12,
     paddingVertical: 14,
     flexDirection: "row" as const,
@@ -5208,12 +5223,12 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
   },
   onboardingCard: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#11243B",
     borderRadius: 14,
     padding: 16,
     gap: 8,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: "#293D56",
   },
   onboardingHeader: {
     flexDirection: "row" as const,
@@ -5237,7 +5252,7 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     justifyContent: "center" as const,
     gap: 6,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 8,
     paddingVertical: 10,
     marginTop: 4,
@@ -5299,7 +5314,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   modalBtnPrimary: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 12,
     paddingVertical: 14,
     flexDirection: "row",
@@ -5331,7 +5346,7 @@ const styles = StyleSheet.create({
   },
   restoreProgressFill: {
     height: "100%",
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 4,
   },
   restoreProgressLabel: {
@@ -5619,7 +5634,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   ferryDashBtn: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 8,
     paddingVertical: 10,
     flexDirection: "row" as const,

@@ -1,3 +1,4 @@
+import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -16,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
 import { getResumenDietas, getResumenKm, getResumenViaje, findRate, getMoroccoJornadaSummary, getFerryExtrasSummary, detectMissingOutOfBaseDietDays, dismissNaturalDayDiets, upsertNaturalDayDiets, clearDismissedNaturalDayDietsInRange, type UserDietRate, type UserDayExtras, type DetectedMissingNaturalDay, type NaturalDayDietEntry } from "@/lib/local-storage";
@@ -42,6 +43,8 @@ type MoroccoSummary = {
   totalDieta: number;
   totalExtras: number;
 };
+
+const euro = (value: number) => value.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
 export default function DietasScreen() {
   const { t } = useI18n();
@@ -76,7 +79,6 @@ export default function DietasScreen() {
     offsite_weekly_complete_nacional: 0,
     offsite_weekly_complete_internacional: 0,
   });
-  const [showReferencePrices, setShowReferencePrices] = useState(false);
   const [paymentMode, setPaymentMode] = useState<"dietas" | "km" | "viaje">("dietas");
   const [pendingDietsVisible, setPendingDietsVisible] = useState(false);
   const [pendingDietsBannerVisible, setPendingDietsBannerVisible] = useState(false);
@@ -563,6 +565,7 @@ export default function DietasScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <ScreenBackdrop />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -581,7 +584,7 @@ export default function DietasScreen() {
         }
       >
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t("dietas.title")}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}><Ionicons name="server-outline" size={28} color="#FFFFFF" /><Text style={styles.headerTitle}>{t("dietas.title")}</Text></View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Pressable
               onPress={async () => {
@@ -600,6 +603,8 @@ export default function DietasScreen() {
                   }
                 } catch {}
               }}
+              accessibilityLabel="Actualizar dietas"
+              accessibilityRole="button"
               hitSlop={8}
               style={({ pressed }) => [
                 {
@@ -608,7 +613,7 @@ export default function DietasScreen() {
                   height: 44,
                   paddingHorizontal: 14,
                   borderRadius: 22,
-                  backgroundColor: "#fff",
+                  backgroundColor: "#11243B",
                   borderWidth: 1,
                   borderColor: Colors.light.tint,
                   opacity: pressed ? 0.9 : 1,
@@ -616,29 +621,9 @@ export default function DietasScreen() {
               ]}
             >
               <Ionicons name="refresh-outline" size={18} color={Colors.light.tint} />
-              <Text style={{ color: Colors.light.tint, fontSize: 13, fontWeight: "600", marginLeft: 6 }}>
-                Re-evaluar
-              </Text>
+
             </Pressable>
-            <Pressable
-              onPress={() => router.push("/usuario")}
-              hitSlop={8}
-              style={({ pressed }) => [
-                {
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  borderWidth: 1,
-                  borderColor: Colors.light.border,
-                  backgroundColor: Colors.light.surface,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: pressed ? 0.9 : 1,
-                },
-              ]}
-            >
-              <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
-            </Pressable>
+
           </View>
         </View>
 
@@ -687,7 +672,7 @@ export default function DietasScreen() {
                 <Pressable
                   style={({ pressed }) => ({
                     alignSelf: "flex-start",
-                    backgroundColor: Colors.light.tint,
+                    backgroundColor: Colors.light.primary,
                     paddingVertical: 8,
                     paddingHorizontal: 16,
                     borderRadius: 8,
@@ -711,7 +696,7 @@ export default function DietasScreen() {
                 <Pressable
                   style={({ pressed }) => ({
                     alignSelf: "flex-start",
-                    backgroundColor: "#fff",
+                    backgroundColor: "#11243B",
                     borderWidth: 1,
                     borderColor: Colors.light.tint,
                     paddingVertical: 8,
@@ -759,6 +744,7 @@ export default function DietasScreen() {
           <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
             <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
           </Pressable>
+          <Ionicons name="calendar-outline" size={19} color={Colors.light.text} />
           <Text style={styles.periodoText}>{periodo.label}</Text>
           <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))} hitSlop={6}>
             <Ionicons
@@ -769,18 +755,7 @@ export default function DietasScreen() {
           </Pressable>
         </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.saveBtn,
-            { opacity: pressed ? 0.85 : 1, marginTop: 8, backgroundColor: Colors.light.tint },
-          ]}
-          onPress={() => {
-            router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any);
-          }}
-        >
-          <Ionicons name="calculator-outline" size={18} color="#fff" />
-          <Text style={styles.saveBtnText}>Estimación de nómina</Text>
-        </Pressable>
+
 
         {payrollSetupQuery.data === false && (
           <View style={styles.payrollHintCard}>
@@ -837,8 +812,8 @@ export default function DietasScreen() {
                 <View style={styles.totalIcon}>
                   <Ionicons name="wallet" size={32} color={Colors.light.accent} />
                 </View>
-                <Text style={styles.totalLabel}>{t("dietas.summary")}</Text>
-                <Text style={styles.totalValue}>{grandTotal.toFixed(2)} EUR</Text>
+                <Text style={styles.totalLabel}>Total del periodo</Text>
+                <Text style={styles.totalValue}>{grandTotal.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</Text>
                 <View style={[styles.summaryRow, { flexWrap: "wrap" }]}>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalKm")}</Text>
@@ -854,11 +829,11 @@ export default function DietasScreen() {
                   </View>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalExtras")}</Text>
-                    <Text style={styles.summaryValue}>{totalExtras.toFixed(2)} €</Text>
+                    <Text style={styles.summaryValue}>{euro(totalExtras)}</Text>
                   </View>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalPlus")}</Text>
-                    <Text style={styles.summaryValue}>{totalPlus.toFixed(2)} €</Text>
+                    <Text style={styles.summaryValue}>{euro(totalPlus)}</Text>
                   </View>
                 </View>
                 <Text style={styles.totalSub}>
@@ -926,7 +901,7 @@ export default function DietasScreen() {
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
-                    <Text style={styles.extrasTitle}>{t("dietas.accumulatedExtras")}</Text>
+                    <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
                       {((kmData.extras?.totalExtras || 0) + (kmData.plus?.totalPlus || 0)).toFixed(2)} EUR
                     </Text>
@@ -935,14 +910,14 @@ export default function DietasScreen() {
                     <View key={`day-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{extraTipoLabel(e.tipo)}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                   {kmData.plus && kmData.plus.desglose.map((e: any) => (
                     <View key={`plus-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{e.tipo}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                 </View>
@@ -960,8 +935,8 @@ export default function DietasScreen() {
                 <View style={styles.totalIcon}>
                   <Ionicons name="wallet" size={32} color={Colors.light.accent} />
                 </View>
-                <Text style={styles.totalLabel}>{t("dietas.summary")}</Text>
-                <Text style={styles.totalValue}>{grandTotal.toFixed(2)} EUR</Text>
+                <Text style={styles.totalLabel}>Total del periodo</Text>
+                <Text style={styles.totalValue}>{grandTotal.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</Text>
                 <View style={[styles.summaryRow, { flexWrap: "wrap" }]}>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalTrips")}</Text>
@@ -977,11 +952,11 @@ export default function DietasScreen() {
                   </View>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalExtras")}</Text>
-                    <Text style={styles.summaryValue}>{totalExtras.toFixed(2)} €</Text>
+                    <Text style={styles.summaryValue}>{euro(totalExtras)}</Text>
                   </View>
                   <View style={[styles.summaryItem, { flexBasis: "48%" }]}>
                     <Text style={styles.summaryLabel}>{t("dietas.totalPlus")}</Text>
-                    <Text style={styles.summaryValue}>{totalPlus.toFixed(2)} €</Text>
+                    <Text style={styles.summaryValue}>{euro(totalPlus)}</Text>
                   </View>
                 </View>
                 <Text style={styles.totalSub}>
@@ -1038,7 +1013,7 @@ export default function DietasScreen() {
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
-                    <Text style={styles.extrasTitle}>{t("dietas.accumulatedExtras")}</Text>
+                    <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
                       {((viajeData.extras?.totalExtras || 0) + (viajeData.plus?.totalPlus || 0)).toFixed(2)} EUR
                     </Text>
@@ -1047,14 +1022,14 @@ export default function DietasScreen() {
                     <View key={`day-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{extraTipoLabel(e.tipo)}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                   {viajeData.plus && viajeData.plus.desglose.map((e: any) => (
                     <View key={`plus-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{e.tipo}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                 </View>
@@ -1069,24 +1044,22 @@ export default function DietasScreen() {
           ) : data ? (
             <>
               {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
-                <LinearGradient colors={["#1678C8", "#082F63"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.totalCard, styles.totalCardPremium]}>
-                  <View style={styles.totalIcon}>
-                    <Ionicons name="wallet" size={30} color="#fff" />
-                  </View>
-                  <Text style={[styles.totalLabel, styles.totalLabelPremium]}>{t("dietas.summary")}</Text>
-                  <Text style={[styles.totalValue, styles.totalValuePremium]}>{grandTotal.toFixed(2)} EUR</Text>
+                <LinearGradient colors={["#078BDC", "#07477F", "#0B235C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.totalCard, styles.totalCardPremium]}>
+                  <Ionicons name="wallet-outline" size={26} color="#fff" style={{ alignSelf: "center", marginBottom: 8 }} />
+                  <Text style={[styles.totalLabel, styles.totalLabelPremium]}>Total del periodo</Text>
+                  <Text style={[styles.totalValue, styles.totalValuePremium]}>{grandTotal.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</Text>
                   <View style={styles.summaryRow}>
                     <View style={[styles.summaryItem, styles.summaryItemPremium]}>
                       <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalDiets")}</Text>
-                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{data.total.toFixed(2)} €</Text>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(data.total)}</Text>
                     </View>
                     <View style={[styles.summaryItem, styles.summaryItemPremium]}>
                       <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalExtras")}</Text>
-                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{totalExtras.toFixed(2)} €</Text>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(totalExtras)}</Text>
                     </View>
                     <View style={[styles.summaryItem, styles.summaryItemPremium]}>
                       <Text style={[styles.summaryLabel, styles.summaryLabelPremium]}>{t("dietas.totalPlus")}</Text>
-                      <Text style={[styles.summaryValue, styles.summaryValuePremium]}>{totalPlus.toFixed(2)} €</Text>
+                      <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, styles.summaryValuePremium]}>{euro(totalPlus)}</Text>
                     </View>
                   </View>
                   <Text style={[styles.totalSub, styles.totalSubPremium]}>{t("dietas.periodLabel")} {periodo.label}</Text>
@@ -1096,6 +1069,7 @@ export default function DietasScreen() {
               {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && paymentMode === "dietas" && (
                 data.desglose.length > 0 ? (
                   <View style={styles.tableCard}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: 14 }}><Ionicons name="server" size={22} color={Colors.light.tint} /><Text style={styles.extrasTitle}>Detalle de dietas</Text></View>
                     <View style={styles.tableHeader}>
                       <Text style={[styles.tableCell, styles.tableCellType]}>{t("dietas.type")}</Text>
                       <Text style={[styles.tableCell, styles.tableCellQty]}>{t("dietas.qty")}</Text>
@@ -1108,7 +1082,7 @@ export default function DietasScreen() {
                         </Text>
                         <Text style={[styles.tableCell, styles.tableCellQty]}>{d.cantidad}</Text>
                         <Text style={[styles.tableCell, styles.tableCellTotal]}>
-                          {d.total.toFixed(2)} EUR
+                          {euro(d.total)}
                         </Text>
                       </View>
                     ))}
@@ -1125,7 +1099,7 @@ export default function DietasScreen() {
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
-                    <Text style={styles.extrasTitle}>{t("dietas.accumulatedExtras")}</Text>
+                    <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
                       {((data.extras?.totalExtras || 0) + (data.plus?.totalPlus || 0)).toFixed(2)} EUR
                     </Text>
@@ -1134,14 +1108,14 @@ export default function DietasScreen() {
                     <View key={`day-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{extraTipoLabel(e.tipo)}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                   {data.plus && data.plus.desglose.map((e) => (
                     <View key={`plus-${e.tipo}`} style={styles.extrasRow}>
                       <Text style={styles.extrasType}>{e.tipo}</Text>
                       <Text style={styles.extrasQty}>{e.cantidad}x</Text>
-                      <Text style={styles.extrasAmount}>{e.total.toFixed(2)} EUR</Text>
+                      <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
                 </View>
@@ -1150,21 +1124,18 @@ export default function DietasScreen() {
           ) : null
         )}
 
-            <View style={styles.refCard}>
-              <Text style={styles.refTitle}>{t("dietas.dayExtraRates")}</Text>
-              <View style={styles.refRow}>
-                <Text style={styles.refLabel}>{t("usuario.saturday")}</Text>
-                <Text style={styles.refValue}>{dayExtras.extra_saturday.toFixed(2)} EUR</Text>
-              </View>
-              <View style={styles.refRow}>
-                <Text style={styles.refLabel}>{t("usuario.sunday")}</Text>
-                <Text style={styles.refValue}>{dayExtras.extra_sunday.toFixed(2)} EUR</Text>
-              </View>
-              <View style={styles.refRow}>
-                <Text style={styles.refLabel}>{t("usuario.holiday")}</Text>
-                <Text style={styles.refValue}>{dayExtras.extra_holiday.toFixed(2)} EUR</Text>
-              </View>
-            </View>
+        <Pressable
+          style={({ pressed }) => [
+            styles.saveBtn,
+            { opacity: pressed ? 0.85 : 1, marginTop: 8, backgroundColor: Colors.light.primary },
+          ]}
+          onPress={() => {
+            router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any);
+          }}
+        >
+          <Ionicons name="calculator-outline" size={18} color="#fff" />
+          <Text style={styles.saveBtnText}>Estimación de nómina</Text>
+        </Pressable>
 
             {ferryExtras && ferryExtras.count > 0 && (ferryExtras.totalTransitDiet > 0 || ferryExtras.totalCabinOvernight > 0 || ferryExtras.totalCountryChange > 0) && (
               <View style={styles.extrasCard}>
@@ -1204,72 +1175,11 @@ export default function DietasScreen() {
               </View>
             )}
 
-            {!(isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet") && (
-              <View style={styles.refCard}>
-                <Pressable
-                  style={({ pressed }) => [styles.refToggleRow, { opacity: pressed ? 0.85 : 1 }]}
-                  onPress={() => setShowReferencePrices((prev) => !prev)}
-                >
-                  <Text style={styles.refTitle}>{t("dietas.toggleReferencePrices")}</Text>
-                  <Ionicons
-                    name={showReferencePrices ? "chevron-up" : "chevron-down"}
-                    size={18}
-                    color={Colors.light.textSecondary}
-                  />
-                </Pressable>
-
-                {showReferencePrices && (
-                  <>
-                    {customRates && customRates.length > 0 && (
-                      <View style={styles.refCustomBadge}>
-                        <Ionicons name="checkmark-circle" size={14} color={Colors.light.accent} />
-                        <Text style={styles.refCustomText}>{t("dietas.customRates")}</Text>
-                      </View>
-                    )}
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.intl100")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "INTERNACIONAL", 100).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.intl60")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "INTERNACIONAL", 60).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.intl30")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "INTERNACIONAL", 30).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={[styles.refRow, { marginTop: 8 }]}>
-                      <Text style={styles.refLabel}>{t("dietas.nac100")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "NACIONAL", 100).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.nac60")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "NACIONAL", 60).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.nac30")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "NACIONAL", 30).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={[styles.refRow, { marginTop: 8 }]}>
-                      <Text style={styles.refLabel}>{t("dietas.reg100")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "REGIONAL", 100).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.reg60")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "REGIONAL", 60).toFixed(2)} EUR</Text>
-                    </View>
-                    <View style={styles.refRow}>
-                      <Text style={styles.refLabel}>{t("dietas.reg30")}</Text>
-                      <Text style={styles.refValue}>{findRate(customRates, "REGIONAL", 30).toFixed(2)} EUR</Text>
-                    </View>
-
-                    <Text style={styles.refFooterText}>{t("dietas.referencePricesConfigHint")}</Text>
-                    <Text style={styles.refFooterText}>{t("dietas.referencePricesDisclaimer")}</Text>
-                  </>
-                )}
-              </View>
-            )}
-
+        <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/usuario", params: { section: "precios_ref" } } as any)} style={{ padding: 16, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Ionicons name="pricetag-outline" size={20} color={Colors.light.tint} />
+          <Text style={{ color: Colors.light.textSecondary, flex: 1 }}>Precios de referencia</Text>
+          <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+        </Pressable>
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -1313,12 +1223,14 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     justifyContent: "space-between" as const,
     paddingTop: 16,
-    paddingBottom: 4,
+    paddingBottom: 20,
+    minHeight: 76,
   },
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: "#153B5B",
+    color: "#FFFFFF",
+    flexShrink: 1,
   },
   periodoNav: {
     flexDirection: "row" as const,
@@ -1326,13 +1238,13 @@ const styles = StyleSheet.create({
     justifyContent: "center" as const,
     gap: 12,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 8,
     marginTop: 8,
     marginBottom: 12,
-    borderRadius: 15,
+    borderRadius: 20,
     backgroundColor: Colors.light.surface,
     borderWidth: 1,
-    borderColor: "#E7EDF3",
+    borderColor: "#293D56",
     shadowColor: "#123B5D",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
@@ -1340,11 +1252,12 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   periodoText: {
-    fontSize: 15,
+    fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.text,
     minWidth: 130,
     textAlign: "center" as const,
+    flexShrink: 1,
   },
   periodArrow: {
     width: 36,
@@ -1352,7 +1265,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    backgroundColor: "#EDF6FE",
+    backgroundColor: "#11243B",
   },
   loadingWrap: {
     paddingTop: 80,
@@ -1371,15 +1284,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   totalCardPremium: {
-    borderRadius: 20,
+    borderRadius: 24,
     padding: 20,
     alignItems: "stretch" as const,
     overflow: "hidden" as const,
+    borderWidth: 1,
+    borderColor: "#293D56",
   },
-  totalLabelPremium: { color: "#D6E9F8" },
-  totalValuePremium: { color: "#fff", fontSize: 34 },
+  totalLabelPremium: { color: "#FFFFFF", textAlign: "center", textTransform: "none", letterSpacing: 0, fontSize: 16 },
+  totalValuePremium: { color: "#fff", fontSize: 36, textAlign: "center" },
   totalSubPremium: { color: "#C8D9E8", alignSelf: "center" as const },
-  summaryItemPremium: { backgroundColor: "rgba(255,255,255,0.13)" },
+  summaryItemPremium: { backgroundColor: "rgba(255,255,255,0.13)", paddingHorizontal: 6, alignItems: "center" },
   summaryLabelPremium: { color: "#D6E9F8" },
   summaryValuePremium: { color: "#fff" },
   totalIcon: {
@@ -1443,7 +1358,7 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     flexDirection: "row" as const,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
@@ -1589,7 +1504,7 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     justifyContent: "center" as const,
     gap: 8,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 12,
     paddingVertical: 12,
   },
@@ -1614,9 +1529,9 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 12,
     borderRadius: 14,
-    backgroundColor: "#EAF4FF",
+    backgroundColor: "#11243B",
     borderWidth: 1,
-    borderColor: "#C9E3FA",
+    borderColor: "#293D56",
   },
   payrollHintTitle: {
     color: Colors.light.text,

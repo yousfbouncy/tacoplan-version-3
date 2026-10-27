@@ -1,3 +1,4 @@
+import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useCallback, useMemo } from "react";
 import {
   StyleSheet,
@@ -18,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import { todayStr, nowTimeStr, formatFecha } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n-context";
 import {
@@ -322,8 +323,9 @@ export default function ViajesScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <ScreenBackdrop />
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{t("viajes.title")}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}><Ionicons name="cube-outline" size={28} color="#FFFFFF" /><Text style={styles.headerTitle}>{t("viajes.title")}</Text></View>
         <Pressable
           onPress={() => router.push("/usuario")}
           hitSlop={8}
@@ -473,12 +475,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 4,
+    paddingBottom: 20,
+    minHeight: 76,
   },
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: "#153B5B",
+    color: "#FFFFFF",
+    flexShrink: 1,
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -493,7 +497,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 14,
     paddingVertical: 16,
     marginVertical: 12,
@@ -519,7 +523,7 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E9EEF3",
+    borderColor: "#293D56",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
@@ -766,7 +770,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
   },
   submitBtn: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",

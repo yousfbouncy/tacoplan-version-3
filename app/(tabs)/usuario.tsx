@@ -1,9 +1,13 @@
+import { enableAutoStart, disableAutoStart } from "@/lib/autostart/service";
+import { readAutoStartState } from "@/lib/autostart/task";
+import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
+  Switch,
   Pressable,
   TextInput,
   Alert,
@@ -19,7 +23,7 @@ import Constants from "expo-constants";
 import * as Sharing from "expo-sharing";
 import * as Haptics from "expo-haptics";
 import { useQueryClient } from "@tanstack/react-query";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import { registerPushToken, useAuth } from "@/lib/auth-context";
 import OnboardingGuide from "@/components/OnboardingGuide";
 import { useFerry, type RouteMode, type PaymentMode } from "@/lib/ferry-context";
@@ -382,7 +386,7 @@ function ImportExportCard() {
           <Text style={styles.saveBtnText}>Importar PDF/JSON</Text>
         </Pressable>
         <Pressable
-          style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, flex: 1, backgroundColor: Colors.light.tint }]}
+          style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, flex: 1, backgroundColor: Colors.light.primary }]}
           onPress={exportBackup}
         >
           <Ionicons name="cloud-download-outline" size={18} color="#fff" />
@@ -785,7 +789,7 @@ export default function UsuarioScreen() {
   }, [activeSection, showOnlySection]);
 
   const headerTitle = useMemo(() => {
-    if (!showOnlySection) return t("usuario.title");
+    if (!showOnlySection) return "Configuración";
     switch (activeSection) {
       case "cuenta": return "Cuenta";
       case "perfil": return t("usuario.profile");
@@ -827,6 +831,7 @@ export default function UsuarioScreen() {
       { key: "cobro_nomina", label: "Cobro y nómina", icon: "wallet-outline" as const },
       { key: "periodos", label: "Periodos", icon: "calendar-outline" as const },
       { key: "perfil_conductor", label: "Perfil del conductor", icon: "car-outline" as const },
+      { key: "tacografo", label: "Tacógrafo", icon: "speedometer-outline" as const },
       { key: "festivos", label: "Festivos", icon: "flag-outline" as const },
       { key: "notificaciones", label: "Notificaciones", icon: "notifications-outline" as const },
       ...(isAdmin ? [{ key: "admin", label: "Admin", icon: "lock-closed-outline" as const }] : []),
@@ -845,7 +850,7 @@ export default function UsuarioScreen() {
               styles.ferryToggleRow,
               { opacity: pressed ? 0.85 : 1 },
             ]}
-            onPress={() => openSection(it.key)}
+            onPress={() => it.key === "tacografo" ? router.push("/(tabs)/tacografo" as any) : openSection(it.key)}
           >
             <View style={styles.ferryToggleLabel}>
               <Ionicons name={it.icon} size={18} color={Colors.light.tint} />
@@ -877,6 +882,34 @@ export default function UsuarioScreen() {
   const [pushRemindersEnabled, setPushRemindersEnabled] = useState(true);
   const [payrollNotificationsEnabled, setPayrollNotificationsEnabled] = useState(true);
   const [availabilityAlarmsEnabled, setAvailabilityAlarmsEnabled] = useState(true);
+  const [autoStartEnabled, setAutoStartEnabled] = useState(false);
+  const [autoStartBusy, setAutoStartBusy] = useState(false);
+  const [automaticDiets, setAutomaticDiets] = useState(true);
+  const [dietPreferenceBusy, setDietPreferenceBusy] = useState(false);
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    Promise.all([readAutoStartState(), userScopedKey("tacoplan_automatic_diets_v1", userId).then(key => AsyncStorage.getItem(key))])
+      .then(([state, diets]) => { if (!cancelled) { setAutoStartEnabled(state.enabled && state.userId === userId); setAutomaticDiets(diets !== "false"); } }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [userId]));
+  const toggleAutoStart = async () => {
+    if (!userId || autoStartBusy) return;
+    setAutoStartBusy(true);
+    try {
+      if (autoStartEnabled) await disableAutoStart(); else await enableAutoStart(userId);
+      const state = await readAutoStartState();
+      setAutoStartEnabled(state.enabled && state.userId === userId);
+    } catch (e: any) { Alert.alert("AutoStart", e?.message || "No se pudo cambiar AutoStart."); }
+    finally { setAutoStartBusy(false); }
+  };
+  const toggleAutomaticDiets = async (next: boolean) => {
+    if (!userId || dietPreferenceBusy) return;
+    setDietPreferenceBusy(true);
+    try { await AsyncStorage.setItem(await userScopedKey("tacoplan_automatic_diets_v1", userId), String(next)); setAutomaticDiets(next); }
+    catch { Alert.alert("Dietas", "No se pudo guardar la preferencia."); }
+    finally { setDietPreferenceBusy(false); }
+  };
+
   const [savingNotifPrefs, setSavingNotifPrefs] = useState(false);
   const [pushPermissionStatus, setPushPermissionStatus] = useState<string>("unknown");
   const [pushToken, setPushToken] = useState<string | null>(null);
@@ -1870,8 +1903,36 @@ export default function UsuarioScreen() {
     ]);
   };
 
+  const toggleAvailabilityAlarms = async () => {
+    if (!notificationsEnabled || savingNotifPrefs || !userId) return;
+    const next = !availabilityAlarmsEnabled;
+    if (next && Platform.OS !== "web") {
+      try {
+        const Notifications = await import("expo-notifications");
+        const current = await Notifications.getPermissionsAsync();
+        const permission = current.status === "granted" ? current : await Notifications.requestPermissionsAsync();
+        if (permission.status !== "granted") {
+          Alert.alert("Permiso necesario", "Activa las notificaciones del dispositivo para recibir los avisos de disponibilidad.");
+          return;
+        }
+      } catch (error: any) {
+        Alert.alert("Error", error?.message || "No se pudo comprobar el permiso de notificaciones.");
+        return;
+      }
+    }
+    try {
+      const alarmKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, userId);
+      await AsyncStorage.setItem(alarmKey, String(next));
+      setAvailabilityAlarmsEnabled(next);
+      safeHaptic();
+    } catch (error: any) {
+      Alert.alert("Error", error?.message || "No se pudo guardar la preferencia.");
+    }
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <ScreenBackdrop />
       <View style={styles.header}>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           {showOnlySection && (
@@ -1883,6 +1944,7 @@ export default function UsuarioScreen() {
               <Ionicons name="chevron-back" size={20} color={Colors.light.tint} />
             </Pressable>
           )}
+          {!showOnlySection && <Ionicons name="settings-outline" size={28} color="#FFFFFF" style={{ marginRight: 10 }} />}
           <Text style={styles.headerTitle}>{headerTitle}</Text>
         </View>
       </View>
@@ -1897,56 +1959,45 @@ export default function UsuarioScreen() {
       >
         {!showOnlySection && (
           <View style={styles.card}>
-            <SectionHeader title="Accesos rápidos" icon="apps-outline" />
-            <Pressable
-              onPress={() => router.push("/autostart" as any)}
-              style={({ pressed }) => [styles.quickActionRow, { opacity: pressed ? 0.78 : 1 }]}
-            >
-              <View style={styles.quickActionIcon}><Ionicons name="play-circle-outline" size={22} color={Colors.light.tint} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.quickActionTitle}>AutoStart</Text>
-                <Text style={styles.quickActionSubtitle}>Detección y confirmación de inicio de jornada</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
-            </Pressable>
-            <View style={styles.subsectionDivider} />
-            <Pressable
-              onPress={() => router.push("/(tabs)/tacografo" as any)}
-              style={({ pressed }) => [styles.quickActionRow, { opacity: pressed ? 0.78 : 1 }]}
-            >
-              <View style={styles.quickActionIcon}><Ionicons name="speedometer-outline" size={22} color={Colors.light.tint} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.quickActionTitle}>Tacógrafo</Text>
-                <Text style={styles.quickActionSubtitle}>Conducción y disponibilidad registradas manualmente</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
-            </Pressable>
+            <View style={styles.quickActionRow}>
+              <View style={styles.quickActionIcon}><Ionicons name="play-circle" size={24} color={Colors.light.tint} /></View>
+              <Pressable accessibilityRole="button" onPress={() => router.push("/autostart" as any)} style={{ flex: 1 }}>
+                <Text style={styles.quickActionTitle}>AutoStart (inicio automático)</Text>
+                <Text style={styles.quickActionSubtitle}>{Platform.OS === "web" ? "Disponible en la aplicación Android / iOS" : "Detecta el movimiento y propone el inicio de jornada"}</Text>
+              </Pressable>
+              <Switch accessibilityLabel="AutoStart" value={autoStartEnabled} onValueChange={toggleAutoStart} disabled={autoStartBusy || Platform.OS === "web" || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
+            </View>
+            <View style={styles.preferenceDivider} />
+            <View style={styles.quickActionRow}>
+              <View style={styles.quickActionIcon}><Ionicons name="server-outline" size={24} color={Colors.light.tint} /></View>
+              <View style={{ flex: 1 }}><Text style={styles.quickActionTitle}>Cálculo automático de dietas</Text><Text style={styles.quickActionSubtitle}>Modo inicial al cerrar jornada en este dispositivo</Text></View>
+              <Switch accessibilityLabel="Cálculo automático de dietas" value={automaticDiets} onValueChange={toggleAutomaticDiets} disabled={dietPreferenceBusy || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
+            </View>
+            <View style={styles.preferenceDivider} />
+            <View style={styles.quickActionRow}>
+              <View style={styles.quickActionIcon}><Ionicons name="notifications-outline" size={24} color={Colors.light.tint} /></View>
+              <Pressable accessibilityRole="button" onPress={() => openSection("notificaciones")} style={{ flex: 1 }}><Text style={styles.quickActionTitle}>Alarmas de disponibilidad</Text><Text style={styles.quickActionSubtitle}>{notificationsEnabled ? "Avisos antes del límite de 13 h / 15 h" : "Activa primero las notificaciones"}</Text></Pressable>
+              <Switch accessibilityLabel="Alarmas de disponibilidad" value={availabilityAlarmsEnabled && notificationsEnabled} onValueChange={toggleAvailabilityAlarms} disabled={!notificationsEnabled || savingNotifPrefs || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
+            </View>
           </View>
         )}
         {!showOnlySection ? (
           <>
-            <View style={styles.card}>
-              <SectionHeader title="Ajustes" icon="settings-outline" />
-              <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.light.textSecondary, marginBottom: 10 }}>
-                Elige una categoría.
-              </Text>
-              {rootCategories.map((it) => (
-                <Pressable
-                  key={it.key}
-                  style={({ pressed }) => [
-                    styles.ferryToggleRow,
-                    { opacity: pressed ? 0.85 : 1 },
-                  ]}
-                  onPress={() => openSection(it.key)}
-                >
-                  <View style={styles.ferryToggleLabel}>
-                    <Ionicons name={it.icon} size={18} color={Colors.light.tint} />
-                    <Text style={styles.ferryToggleText}>{it.label}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
-                </Pressable>
-              ))}
-            </View>
+            {[
+              { title: "Cuenta y datos", keys: ["cuenta", "sync", "import_export", "seguridad"] },
+              { title: "Retribución", keys: ["precios_ref", "cobro_nomina", "periodos"] },
+              { title: "Conductor y avisos", keys: ["perfil_conductor", "tacografo", "festivos", "notificaciones", "admin"] },
+            ].map(group => (
+              <View key={group.title} style={styles.card}>
+                <Text style={{ color: Colors.light.textSecondary, fontFamily: "Inter_600SemiBold", fontSize: 12, marginBottom: 8 }}>{group.title}</Text>
+                {rootCategories.filter(it => group.keys.includes(it.key)).map(it => (
+                  <Pressable key={it.key} accessibilityRole="button" style={({ pressed }) => [styles.ferryToggleRow, { opacity: pressed ? 0.75 : 1 }]} onPress={() => it.key === "tacografo" ? router.push("/(tabs)/tacografo" as any) : openSection(it.key)}>
+                    <View style={styles.ferryToggleLabel}><Ionicons name={it.icon} size={20} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>{it.label}</Text></View>
+                    <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+                  </Pressable>
+                ))}
+              </View>
+            ))}
           </>
         ) : (
           <>
@@ -2130,7 +2181,7 @@ export default function UsuarioScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.saveBtn,
-                { opacity: pressed ? 0.85 : 1, backgroundColor: Colors.light.tint },
+                { opacity: pressed ? 0.85 : 1, backgroundColor: Colors.light.primary },
                 savingProfile && styles.btnDisabled,
               ]}
               onPress={saveProfile}
@@ -2253,7 +2304,7 @@ export default function UsuarioScreen() {
                     <Text style={styles.saveBtnText}>Sincronizar ahora</Text>
                   </Pressable>
                   <Pressable
-                    style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, flex: 1, backgroundColor: Colors.light.tint }]}
+                    style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, flex: 1, backgroundColor: Colors.light.primary }]}
                     onPress={startRestore}
                   >
                     <Ionicons name="cloud-download-outline" size={18} color="#fff" />
@@ -2393,11 +2444,11 @@ export default function UsuarioScreen() {
                     <PriceField label={t("usuario.pricePerKmNacional")} value={settings.price_per_km_nacional} onChange={(v) => updateSetting("price_per_km_nacional", v)} />
                     <PriceField label={t("usuario.pricePerKmInternacional")} value={settings.price_per_km_internacional} onChange={(v) => updateSetting("price_per_km_internacional", v)} />
                     <PriceField label={t("usuario.pricePerKmRegional")} value={settings.price_per_km_regional} onChange={(v) => updateSetting("price_per_km_regional", v)} />
-                    <View style={{ backgroundColor: "#FEF3C7", borderRadius: 10, padding: 10, marginTop: 6 }}>
-                      <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: "#92400E" }}>
+                    <View style={{ backgroundColor: "#352B19", borderRadius: 10, padding: 10, marginTop: 6 }}>
+                      <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: "#FFBD8A" }}>
                         {t("usuario.kmWarningTitle")}
                       </Text>
-                      <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: "#92400E", marginTop: 4 }}>
+                      <Text style={{ fontFamily: "Inter_400Regular", fontSize: 12, color: "#FFBD8A", marginTop: 4 }}>
                         {t("usuario.kmWarningText")}
                       </Text>
                     </View>
@@ -2843,7 +2894,7 @@ export default function UsuarioScreen() {
                         <Text style={styles.summaryNet}>{formatEUR(payrollVm.neto)}</Text>
                       </View>
                       <Pressable
-                        style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, marginTop: 14, backgroundColor: Colors.light.tint }]}
+                        style={({ pressed }) => [styles.saveBtn, { opacity: pressed ? 0.85 : 1, marginTop: 14, backgroundColor: Colors.light.primary }]}
                         onPress={() => openSection("config_nomina")}
                       >
                         <Ionicons name="settings-outline" size={18} color="#fff" />
@@ -2925,7 +2976,7 @@ export default function UsuarioScreen() {
               <Pressable
                 style={({ pressed }) => [
                   styles.saveBtn,
-                  { opacity: pressed ? 0.85 : 1, marginBottom: 10, backgroundColor: Colors.light.tint },
+                  { opacity: pressed ? 0.85 : 1, marginBottom: 10, backgroundColor: Colors.light.primary },
                   loadingPushInfo && styles.btnDisabled,
                 ]}
                 disabled={loadingPushInfo}
@@ -3001,43 +3052,9 @@ export default function UsuarioScreen() {
 
               <View style={styles.subsectionDivider} />
 
-              <Pressable
-                style={styles.ferryToggleRow}
-                disabled={!notificationsEnabled || savingNotifPrefs}
-                onPress={async () => {
-                  if (!notificationsEnabled || savingNotifPrefs || !userId) return;
-                  const next = !availabilityAlarmsEnabled;
-                  if (next && Platform.OS !== "web") {
-                    try {
-                      const Notifications = await import("expo-notifications");
-                      const current = await Notifications.getPermissionsAsync();
-                      const permission = current.status === "granted" ? current : await Notifications.requestPermissionsAsync();
-                      if (permission.status !== "granted") {
-                        Alert.alert("Permiso necesario", "Activa las notificaciones del dispositivo para recibir los avisos de disponibilidad.");
-                        return;
-                      }
-                    } catch (error: any) {
-                      Alert.alert("Error", error?.message || "No se pudo comprobar el permiso de notificaciones.");
-                      return;
-                    }
-                  }
-                  try {
-                    const alarmKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, userId);
-                    await AsyncStorage.setItem(alarmKey, String(next));
-                    setAvailabilityAlarmsEnabled(next);
-                    safeHaptic();
-                  } catch (error: any) {
-                    Alert.alert("Error", error?.message || "No se pudo guardar la preferencia.");
-                  }
-                }}
-              >
-                <View style={styles.ferryToggleLabel}>
-                  <Ionicons name="time-outline" size={18} color={Colors.light.tint} />
-                  <Text style={styles.ferryToggleText}>Alarmas de disponibilidad (13 h / 15 h)</Text>
-                </View>
-                <View style={[styles.toggleTrack, availabilityAlarmsEnabled && notificationsEnabled && styles.toggleTrackOn]}>
-                  <View style={[styles.toggleThumb, availabilityAlarmsEnabled && notificationsEnabled && styles.toggleThumbOn]} />
-                </View>
+              <Pressable style={styles.ferryToggleRow} accessibilityRole="button" onPress={() => router.push("/(tabs)/usuario" as any)}>
+                <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Gestionar alarmas de disponibilidad</Text></View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
               </Pressable>
               <Text style={styles.ferryHint}>Aviso local cinco minutos antes del límite aplicable. Solo se programa con una jornada abierta y permisos concedidos.</Text>
 
@@ -3178,6 +3195,7 @@ export default function UsuarioScreen() {
 }
 
 const styles = StyleSheet.create({
+  preferenceDivider: { height: StyleSheet.hairlineWidth, backgroundColor: Colors.light.border, marginVertical: 6 },
   container: {
     flex: 1,
     backgroundColor: Colors.light.background,
@@ -3188,12 +3206,14 @@ const styles = StyleSheet.create({
     alignSelf: "center" as const,
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 4,
+    paddingBottom: 20,
+    minHeight: 76,
   },
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: "#153B5B",
+    color: "#FFFFFF",
+    flexShrink: 1,
   },
   scrollContent: {
     width: "100%",
@@ -3209,19 +3229,19 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 17,
+    borderRadius: 22,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#E9EEF3",
+    borderColor: "#293D56",
     marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
     elevation: 1,
   },
   quickActionRow: { minHeight: 58, flexDirection: "row" as const, alignItems: "center" as const, gap: 11, paddingVertical: 7 },
-  quickActionIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#EAF4FC", alignItems: "center" as const, justifyContent: "center" as const },
+  quickActionIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: "#11243B", alignItems: "center" as const, justifyContent: "center" as const },
   quickActionTitle: { color: Colors.light.text, fontSize: 14, fontFamily: "Inter_700Bold" },
   quickActionSubtitle: { color: Colors.light.textSecondary, fontSize: 11, lineHeight: 15, fontFamily: "Inter_400Regular", marginTop: 2 },
   sectionHeader: {
@@ -3294,7 +3314,7 @@ const styles = StyleSheet.create({
     color: Colors.light.text,
   },
   warnBox: {
-    backgroundColor: "#FEF3C7",
+    backgroundColor: "#352B19",
     borderRadius: 10,
     padding: 10,
     marginTop: 10,
@@ -3302,7 +3322,7 @@ const styles = StyleSheet.create({
   warnText: {
     fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: "#92400E",
+    color: "#FFBD8A",
   },
   priceRow: {
     flexDirection: "row" as const,
@@ -3353,7 +3373,7 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.light.border,
   },
   tableHeaderRow: {
-    backgroundColor: `${Colors.light.tint}08`,
+    backgroundColor: `${Colors.light.primary}08`,
     borderTopWidth: 0,
   },
   tableCell: {
@@ -3396,7 +3416,7 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     justifyContent: "center" as const,
     gap: 6,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 10,
     paddingVertical: 12,
     marginTop: 14,
@@ -3482,7 +3502,7 @@ const styles = StyleSheet.create({
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 8,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#11243B",
     borderRadius: 8,
     padding: 10,
     marginBottom: 12,
@@ -3537,7 +3557,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   periodOptionSel: {
-    backgroundColor: `${Colors.light.tint}08`,
+    backgroundColor: `${Colors.light.primary}08`,
     borderRadius: 8,
   },
   periodOptionText: {
@@ -3572,7 +3592,7 @@ const styles = StyleSheet.create({
     width: 48,
   },
   periodPreviewBox: {
-    backgroundColor: "#F0F9FF",
+    backgroundColor: "#11243B",
     borderRadius: 8,
     padding: 10,
     marginTop: 8,
@@ -3590,7 +3610,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   periodSaveBtn: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 8,
     paddingVertical: 10,
     flexDirection: "row" as const,
@@ -3624,18 +3644,18 @@ const styles = StyleSheet.create({
     width: 44,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#D1D5DB",
+    backgroundColor: "#11243B",
     justifyContent: "center" as const,
     paddingHorizontal: 2,
   },
   toggleTrackOn: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
   },
   toggleThumb: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: "#fff",
+    backgroundColor: "#11243B",
   },
   toggleThumbOn: {
     alignSelf: "flex-end" as const,

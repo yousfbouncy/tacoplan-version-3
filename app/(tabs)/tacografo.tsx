@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import { formatMinutosHoras } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n-context";
 import { useTachograph } from "@/lib/tachograph/tachograph-context";
@@ -541,7 +541,7 @@ function TacografoScreenContent() {
     if (ev.eventType === "country_entry" && ev.newCountry) {
       return (
         <View key={(ev.id || ev.eventUid)} style={styles.recordRow}>
-          <View style={[styles.recordDot, { backgroundColor: Colors.light.tint }]} />
+          <View style={[styles.recordDot, { backgroundColor: Colors.light.primary }]} />
           <Text style={styles.recordTime}>{time}</Text>
           <Ionicons name="flag" size={14} color={Colors.light.tint} />
           <Text style={styles.recordText}>
@@ -881,7 +881,7 @@ function TacografoScreenContent() {
               </View>
               <View style={{
                 paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
-                backgroundColor: (autoRunning ? Colors.light.tint : Colors.light.textSecondary) + "15",
+                backgroundColor: (autoRunning ? Colors.light.primary : Colors.light.textSecondary) + "15",
                 borderWidth: 1,
                 borderColor: (autoRunning ? Colors.light.tint : Colors.light.textSecondary) + "55",
               }}>
@@ -1462,7 +1462,7 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     flex: 1,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: "center",
@@ -1487,7 +1487,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   smallPrimaryBtn: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,

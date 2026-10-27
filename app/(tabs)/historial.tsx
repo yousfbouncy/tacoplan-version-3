@@ -1,3 +1,5 @@
+import { useWindowDimensions } from "react-native";
+import ScreenBackdrop from "@/components/ScreenBackdrop";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   StyleSheet,
@@ -19,7 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
-import Colors from "@/constants/colors";
+import Colors from "@/constants/driver-theme";
 import {
   formatFecha,
   formatDescanso,
@@ -431,7 +433,7 @@ function ActiveFerryItem({ item }: { item: ActiveFerryRest }) {
           </Text>
         </View>
         <View style={[styles.restGapTypeBadge, { backgroundColor: Colors.light.tint + "18" }]}>
-          <View style={[styles.statusDot, { backgroundColor: Colors.light.tint }]} />
+          <View style={[styles.statusDot, { backgroundColor: Colors.light.primary }]} />
           <Text style={[styles.restGapTypeText, { color: Colors.light.tint }]}>{t("ferry.ferryActive")}</Text>
         </View>
       </View>
@@ -609,7 +611,7 @@ function FerryRestItem({ item, onPress, onDelete, transitRate, cabinRate }: { it
   const extrasAmount = (td * transitRate) + (co * cabinRate);
 
   return (
-    <View style={[styles.card, { backgroundColor: "#e0f2fe", borderLeftWidth: 3, borderLeftColor: "#0284c7" }]}>
+    <View style={[styles.card, { backgroundColor: "#15372F", borderLeftWidth: 3, borderLeftColor: "#0284c7" }]}>
       <View style={styles.cardTop}>
         <View style={styles.cardDates}>
           <MaterialCommunityIcons name="ferry" size={16} color="#0284c7" />
@@ -651,7 +653,7 @@ function FerryRestItem({ item, onPress, onDelete, transitRate, cabinRate }: { it
           Descanso en Ferry · {item.restType}
         </Text>
         {item.destination ? (
-          <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: "#0369a1", marginLeft: 4 }}>
+          <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: "#80BFFF", marginLeft: 4 }}>
             → {item.destination}
           </Text>
         ) : null}
@@ -664,7 +666,7 @@ function FerryRestItem({ item, onPress, onDelete, transitRate, cabinRate }: { it
             const intStartStr = isNew ? new Date(int.start).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : `${int.startMin} min`;
             const intEndStr = isNew ? (int.end ? new Date(int.end).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "...") : `${int.endMin} min`;
             return (
-              <Text key={idx} style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#0369a1" }}>
+              <Text key={idx} style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: "#80BFFF" }}>
                 Int. #{idx + 1}: {intStartStr} → {intEndStr}
               </Text>
             );
@@ -713,11 +715,12 @@ function JornadaItem({
   billingMode: "dietas" | "km" | "viaje";
 }) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
   const isCerrada = !!item.fechaFin;
   const status = getLegalStatus(item);
   const statusLabel = status.label === "Infraccion" ? t("dashboard.infraction") : status.label === "Advertencia" ? t("dashboard.warning") : status.label === "Legal" ? t("dashboard.legal") : status.label;
   const durMin = item.duracionJornadaMin || 0;
-  const condMin = item.conduccionMin || Math.round(durMin * 0.65);
+  const condMin = item.conduccionMin;
   const matchedViajes = findViajesForJornada(item, viajes);
   // Cada jornada conserva el modo con el que fue registrada. El modo global
   // solo sirve de fallback para registros antiguos que no tenían paymentMode.
@@ -779,34 +782,9 @@ function JornadaItem({
             </View>
           )}
         </View>
-        <View style={styles.cardActions}>
-          <Pressable
-            onPress={() => {
-              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              onEdit(item.id);
-            }}
-            hitSlop={8}
-          >
-            <Ionicons name="create-outline" size={18} color={Colors.light.tint} />
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              if (Platform.OS === "web") {
-                const ok = window.confirm(t("historial.deleteQuestion"));
-                if (ok) onDelete(item.id);
-              } else {
-                Alert.alert(t("common.delete"), t("historial.deleteQuestion"), [
-                  { text: t("common.cancel"), style: "cancel" },
-                  { text: t("common.delete"), style: "destructive", onPress: () => onDelete(item.id) },
-                ]);
-              }
-            }}
-            hitSlop={8}
-          >
-            <Ionicons name="trash-outline" size={18} color={Colors.light.danger} />
-          </Pressable>
-        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel={expanded ? "Ocultar detalles de jornada" : "Ver detalles de jornada"} accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={21} color={Colors.light.tint} />
+        </Pressable>
       </View>
 
       <View style={styles.cardRoute}>
@@ -817,7 +795,7 @@ function JornadaItem({
         </Text>
       </View>
 
-      {matchedViajes.length > 0 && (
+      {expanded && matchedViajes.length > 0 && (
         <View style={styles.viajesSection}>
           {matchedViajes.map((v) => {
             const places = v.paradas.map((p) => p.lugar).join(" \u2192 ");
@@ -885,7 +863,7 @@ function JornadaItem({
             </View>
             <View style={styles.statItem}>
               <Ionicons name="car-outline" size={13} color={Colors.light.textSecondary} />
-              <Text style={styles.statText}>{formatMinutosHoras(condMin)}</Text>
+              <Text style={styles.statText}>{condMin == null ? "Sin registrar" : formatMinutosHoras(condMin)}</Text>
             </View>
             {pm === "km" && kmTotal != null && (
               <View style={styles.statItem}>
@@ -894,7 +872,7 @@ function JornadaItem({
               </View>
             )}
           </View>
-          {item.legalSummary && (item.legalSummary.infractions.length > 0 || item.legalSummary.warnings.length > 0) && (
+          {expanded && item.legalSummary && (item.legalSummary.infractions.length > 0 || item.legalSummary.warnings.length > 0) && (
             <View style={styles.legalDetails}>
               {item.legalSummary.infractions.map((inf: any, i: number) => (
                 <View key={`inf-${i}`} style={styles.legalDetailRow}>
@@ -1014,7 +992,7 @@ function JornadaItem({
               })()}
             </View>
           </View>
-          {item.plusItems && item.plusItems.length > 0 && (
+          {expanded && item.plusItems && item.plusItems.length > 0 && (
             <View style={styles.plusSection}>
               {item.plusItems.map((pi, idx) => (
                 <View key={idx} style={styles.plusRow}>
@@ -1026,11 +1004,42 @@ function JornadaItem({
           )}
         </>
       )}
+      {expanded && (
+        <View style={styles.cardActions}>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              onEdit(item.id);
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="create-outline" size={18} color={Colors.light.tint} />
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              if (Platform.OS === "web") {
+                const ok = window.confirm(t("historial.deleteQuestion"));
+                if (ok) onDelete(item.id);
+              } else {
+                Alert.alert(t("common.delete"), t("historial.deleteQuestion"), [
+                  { text: t("common.cancel"), style: "cancel" },
+                  { text: t("common.delete"), style: "destructive", onPress: () => onDelete(item.id) },
+                ]);
+              }
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="trash-outline" size={18} color={Colors.light.danger} />
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
 export default function HistorialScreen() {
+  const { width: screenWidth } = useWindowDimensions();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -1320,6 +1329,10 @@ export default function HistorialScreen() {
     return map;
   }, [compsQuery.data]);
 
+  const [historyFilter, setHistoryFilter] = useState("all");
+  const [historySearch, setHistorySearch] = useState("");
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [showHistoryTools, setShowHistoryTools] = useState(false);
   const jornadasData = jornadasQuery.data || [];
 
   type ListItem =
@@ -1938,8 +1951,9 @@ export default function HistorialScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <ScreenBackdrop />
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1}>{t("historial.title")}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}><Ionicons name="calendar-outline" size={28} color="#FFFFFF" /><Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1}>{t("historial.title")}</Text></View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           {pendingDiets.length > 0 && (
           <Pressable
@@ -1963,14 +1977,14 @@ export default function HistorialScreen() {
             hitSlop={8}
             style={({ pressed }) => [
               styles.reportBtn,
-              Platform.OS !== "web" && {
+              screenWidth < 600 && {
                 width: 44,
                 height: 44,
                 paddingHorizontal: 0,
                 paddingVertical: 0,
               },
               {
-                backgroundColor: "#fff",
+                backgroundColor: "#11243B",
                 borderWidth: 1,
                 borderColor: Colors.light.tint,
                 opacity: pressed ? 0.9 : 1,
@@ -1978,7 +1992,7 @@ export default function HistorialScreen() {
             ]}
           >
             <Ionicons name="refresh-outline" size={16} color={Colors.light.tint} />
-            {Platform.OS === "web" ? (
+            {screenWidth >= 600 ? (
               <Text style={{ color: Colors.light.tint, fontSize: 13, fontWeight: "600", marginLeft: 4 }}>
                 Re-evaluar dietas
               </Text>
@@ -1989,7 +2003,7 @@ export default function HistorialScreen() {
             onPress={() => router.push("/exportar")}
             style={({ pressed }) => [
               styles.reportBtn,
-              Platform.OS !== "web" && {
+              screenWidth < 600 && {
                 width: 44,
                 height: 44,
                 paddingHorizontal: 0,
@@ -2000,12 +2014,14 @@ export default function HistorialScreen() {
             hitSlop={8}
           >
             <Ionicons name="document-text-outline" size={16} color="#fff" />
-            {Platform.OS === "web" ? (
+            {screenWidth >= 600 ? (
               <Text style={styles.reportBtnText}>{t("Generar informe")}</Text>
             ) : null}
           </Pressable>
           <Pressable
-            onPress={() => router.push("/usuario")}
+            accessibilityRole="button"
+            accessibilityLabel="Buscar en el historial"
+            onPress={() => setSearchVisible(v => !v)}
             hitSlop={8}
             style={({ pressed }) => [
               {
@@ -2021,15 +2037,17 @@ export default function HistorialScreen() {
               },
             ]}
           >
-            <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
+            <Ionicons name="search-outline" size={20} color={Colors.light.tint} />
           </Pressable>
         </View>
       </View>
+      {searchVisible && <TextInput accessibilityLabel="Buscar fecha o lugar" placeholder="Buscar fecha o lugar" placeholderTextColor="#64748B" value={historySearch} onChangeText={setHistorySearch} style={{ backgroundColor: "#11243B", color: Colors.light.text, borderRadius: 18, marginHorizontal: 16, marginBottom: 8, padding: 14 }} />}
       <View style={styles.periodoNav}>
         <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
           <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
         </Pressable>
-        <Text style={styles.periodoText}>{periodo.label}</Text>
+        <Ionicons name="calendar-outline" size={19} color={Colors.light.text} />
+          <Text style={styles.periodoText}>{periodo.label}</Text>
         <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => Math.max(0, p - 1))} hitSlop={6}>
           <Ionicons
             name="chevron-forward"
@@ -2039,7 +2057,11 @@ export default function HistorialScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.periodToolsRow}>
+      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, marginBottom: 16 }}>
+        {[{key:"all",label:"Todo"},{key:"jornada",label:"Jornadas"},{key:"rest",label:"Descansos"}].map(f => <Pressable key={f.key} accessibilityRole="button" accessibilityState={{selected: historyFilter === f.key}} onPress={() => setHistoryFilter(f.key)} style={{ flex: 1, minHeight: 44, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: historyFilter === f.key ? Colors.light.primary : "#11243B" }}><Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: historyFilter === f.key ? "#FFFFFF" : Colors.light.text }}>{f.label}</Text></Pressable>)}
+        <Pressable accessibilityRole="button" accessibilityLabel="Herramientas del historial" accessibilityState={{expanded:showHistoryTools}} onPress={() => setShowHistoryTools(v => !v)} style={{ width: 44, borderRadius: 22, backgroundColor: "#11243B", alignItems: "center", justifyContent: "center" }}><Ionicons name="options-outline" size={21} color={Colors.light.tint} /></Pressable>
+      </View>
+      <View style={[styles.periodToolsRow, !showHistoryTools && { display: "none" }]}>
         <Pressable
           onPress={runPeriodAudit}
           disabled={auditLoading}
@@ -2211,7 +2233,7 @@ export default function HistorialScreen() {
       {pendingDietsBannerVisible && pendingDiets.length > 0 && (
         <View
           style={{
-            backgroundColor: "#FEF3C7",
+            backgroundColor: "#352B19",
             borderWidth: 1,
             borderColor: Colors.light.tint,
             opacity: 0.3,
@@ -2263,7 +2285,7 @@ export default function HistorialScreen() {
                 }
               }}
               style={{
-                backgroundColor: Colors.light.tint,
+                backgroundColor: Colors.light.primary,
                 paddingVertical: 8,
                 paddingHorizontal: 16,
                 borderRadius: 8,
@@ -2288,7 +2310,7 @@ export default function HistorialScreen() {
                 } catch {}
               }}
               style={{
-                backgroundColor: "#fff",
+                backgroundColor: "#11243B",
                 borderWidth: 1,
                 borderColor: Colors.light.tint,
                 paddingVertical: 8,
@@ -2323,7 +2345,12 @@ export default function HistorialScreen() {
         </View>
       ) : (
         <FlatList
-          data={listItems}
+          data={listItems.filter(item => {
+            const matchesType = historyFilter === "all" || (historyFilter === "jornada" ? item.type === "jornada" : ["rest-gap", "ferry-rest", "active-ferry", "offsite-weekly-rest"].includes(item.type));
+            if (!matchesType || !historySearch.trim()) return matchesType;
+            const text = item.type === "jornada" ? `${item.jornada.fechaInicio} ${formatFecha(item.jornada.fechaInicio)} ${item.jornada.lugarInicio} ${item.jornada.lugarFin || ""}` : JSON.stringify(item);
+            return text.toLocaleLowerCase().includes(historySearch.trim().toLocaleLowerCase());
+          })}
           keyExtractor={(item) => {
             if (item.type === "jornada") return "j_" + item.jornada.id;
             if (item.type === "ferry-rest") return `ferry-${item.ferryRest.id}`;
@@ -2431,26 +2458,26 @@ export default function HistorialScreen() {
                       </View>
                       {ndd.isDomingo === true && (
                         <View style={{
-                          backgroundColor: "#FFF7ED",
+                          backgroundColor: "#11243B",
                           borderRadius: 100,
                           paddingHorizontal: 8,
                           paddingVertical: 2,
                           marginLeft: 6,
                         }}>
-                          <Text style={{ fontSize: 11, color: "#9A3412", fontWeight: "700" }}>
+                          <Text style={{ fontSize: 11, color: "#FFBD8A", fontWeight: "700" }}>
                             Domingo
                           </Text>
                         </View>
                       )}
                       {ndd.isFestivo === true && (
                         <View style={{
-                          backgroundColor: "#FCE7F3",
+                          backgroundColor: "#3C2331",
                           borderRadius: 100,
                           paddingHorizontal: 8,
                           paddingVertical: 2,
                           marginLeft: 6,
                         }}>
-                          <Text style={{ fontSize: 11, color: "#9D174D", fontWeight: "700" }}>
+                          <Text style={{ fontSize: 11, color: "#FFBD8A", fontWeight: "700" }}>
                             Festivo
                           </Text>
                         </View>
@@ -3348,12 +3375,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 4,
+    paddingBottom: 20,
+    minHeight: 76,
   },
   headerTitle: {
     fontSize: 28,
     fontFamily: "Inter_700Bold",
-    color: "#153B5B",
+    color: "#FFFFFF",
+    flexShrink: 1,
   },
   reportBtn: {
     flexDirection: "row" as const,
@@ -3362,7 +3391,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 12,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
   },
   reportBtnText: {
     fontSize: 13,
@@ -3375,14 +3404,14 @@ const styles = StyleSheet.create({
     justifyContent: "center" as const,
     gap: 12,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 8,
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 12,
-    borderRadius: 15,
+    borderRadius: 20,
     backgroundColor: Colors.light.surface,
     borderWidth: 1,
-    borderColor: "#E7EDF3",
+    borderColor: "#293D56",
     shadowColor: "#123B5D",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
@@ -3390,11 +3419,12 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   periodoText: {
-    fontSize: 15,
+    fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.text,
     minWidth: 130,
     textAlign: "center" as const,
+    flexShrink: 1,
   },
   periodArrow: {
     width: 36,
@@ -3402,7 +3432,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center" as const,
     justifyContent: "center" as const,
-    backgroundColor: "#EDF6FE",
+    backgroundColor: "#11243B",
   },
   periodToolsRow: {
     flexDirection: "row" as const,
@@ -3463,7 +3493,7 @@ const styles = StyleSheet.create({
   auditOk: {
     borderRadius: 12,
     padding: 14,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: "#15372F",
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 9,
@@ -3498,7 +3528,7 @@ const styles = StyleSheet.create({
   toolsPrimaryBtn: {
     minHeight: 44,
     borderRadius: 12,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "center" as const,
@@ -3594,20 +3624,20 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.light.surface,
-    borderRadius: 17,
-    padding: 15,
-    marginBottom: 12,
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E9EEF3",
+    borderColor: "#293D56",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     elevation: 1,
   },
   cardOpen: {
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.light.warning,
+    borderLeftWidth: 5,
+    borderLeftColor: Colors.light.success,
   },
   cardTop: {
     flexDirection: "row" as const,
@@ -3955,7 +3985,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.surface,
   },
   ferryEditToggleActive: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderColor: Colors.light.tint,
   },
   ferryEditToggleText: {
@@ -3967,7 +3997,7 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   ferryEditBtnPrimary: {
-    backgroundColor: Colors.light.tint,
+    backgroundColor: Colors.light.primary,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: "center" as const,
