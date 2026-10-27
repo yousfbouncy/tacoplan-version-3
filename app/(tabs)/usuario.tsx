@@ -36,7 +36,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } from "@/lib/user-cloud";
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
-import { AVAILABILITY_ALARMS_KEY } from "@/lib/availability-alarms";
+import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 
 function safeHaptic() {
   if (Platform.OS !== "web") {
@@ -1950,6 +1950,8 @@ export default function UsuarioScreen() {
       const alarmKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, userId);
       await AsyncStorage.setItem(alarmKey, String(next));
       setAvailabilityAlarmsEnabled(next);
+      // Disabling must cancel pending notifications immediately, even away from Inicio.
+      if (!next) await syncAvailabilityAlarms(null, undefined, false);
       safeHaptic();
     } catch (error: any) {
       Alert.alert("Error", error?.message || "No se pudo guardar la preferencia.");
@@ -3078,9 +3080,9 @@ export default function UsuarioScreen() {
 
               <View style={styles.subsectionDivider} />
 
-              <Pressable style={styles.ferryToggleRow} accessibilityRole="button" onPress={() => { closeSection(); }}>
-                <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Gestionar alarmas de disponibilidad</Text></View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />
+              <Pressable style={styles.ferryToggleRow} accessibilityRole="switch" accessibilityState={{ checked: availabilityAlarmsEnabled && notificationsEnabled, disabled: !notificationsEnabled }} onPress={() => { void toggleAvailabilityAlarms(); }} disabled={!notificationsEnabled || savingNotifPrefs || !userId}>
+                <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Alarmas de disponibilidad (13 h / 15 h)</Text></View>
+                <Switch value={availabilityAlarmsEnabled && notificationsEnabled} onValueChange={() => { void toggleAvailabilityAlarms(); }} disabled={!notificationsEnabled || savingNotifPrefs || !userId} />
               </Pressable>
               <Text style={styles.ferryHint}>Aviso local cinco minutos antes del límite aplicable. Solo se programa con una jornada abierta y permisos concedidos.</Text>
 
