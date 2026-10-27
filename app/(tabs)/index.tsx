@@ -1,3 +1,5 @@
+import { suggestClosingDiet, applyClosingDietSuggestion } from "@/lib/automatic-diet-selection";
+import type { BaseLocationConfig } from "@/lib/base-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
@@ -321,6 +323,9 @@ export default function DashboardScreen() {
   const [finLugar, setFinLugar] = useState("");
   const [finLugarTouched, setFinLugarTouched] = useState(false);
   const [resolvingFinLugar, setResolvingFinLugar] = useState(false);
+  const [dietBase, setDietBase] = useState<Partial<BaseLocationConfig> | null>(null);
+  const [dietGps, setDietGps] = useState<{ label: string; countryCode: string | null; latitude: number; longitude: number } | null>(null);
+  const [dietManual, setDietManual] = useState({ route: false, overnight: false, percentage: false });
   const [tipoRuta, setTipoRuta] = useState<TipoRuta>("NACIONAL");
   const [conduccionHoras, setConduccionHoras] = useState("");
   const [conduccionDomingoHoras, setConduccionDomingoHoras] = useState("");
@@ -400,6 +405,7 @@ export default function DashboardScreen() {
       const country = (g.country || "").trim();
       const label = [city || province, country].filter(Boolean).join(", ");
       if (!label) return;
+      setDietGps({ label, countryCode: g.isoCountryCode ?? null, latitude: pos.coords.latitude, longitude: pos.coords.longitude });
       setFinLugar((prev) => {
         if (finLugarTouched) return prev;
         if (prev && prev.trim().length > 0) return prev;
@@ -601,6 +607,10 @@ export default function DashboardScreen() {
       const local = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings", user?.id));
       if (local) {
         const s = JSON.parse(local);
+        setDietBase({ baseCity: s.base_city ?? null, baseCountry: s.base_country ?? null,
+          baseLatitude: s.base_latitude == null || s.base_latitude === "" ? null : Number(s.base_latitude),
+          baseLongitude: s.base_longitude == null || s.base_longitude === "" ? null : Number(s.base_longitude),
+          baseRadiusKm: s.base_radius_km == null ? 20 : Number(s.base_radius_km) });
         const pf = (v: any, fb: number) => { const n = parseFloat(v); return isNaN(n) ? fb : n; };
         const rates: UserDietRate[] = [
           { trip_type: "NACIONAL", percent: 100, amount: pf(s.nac_100, 0) },
@@ -767,6 +777,18 @@ export default function DashboardScreen() {
     if (!abierta) return;
     setKmInicioClose(abierta.kmInicio != null && Number.isFinite(abierta.kmInicio) ? String(abierta.kmInicio) : "");
   }, [showFinForm, abiertaQuery.data?.id]);
+
+  useEffect(() => {
+    if (!showFinForm) return;
+    if (dietaModo !== "AUTO" || isMoroccoMode || paymentMode !== "dietas") return;
+    const suggestion = suggestClosingDiet({ base: dietBase, endPlace: finLugar,
+      startPlace: abiertaQuery.data?.lugarInicio, countries: abiertaQuery.data?.tachoCountries, gps: dietGps });
+    const next = applyClosingDietSuggestion({ tipoRuta, pernocta, percentage: dietaPercent }, suggestion, dietManual);
+    if (next.tipoRuta !== tipoRuta) setTipoRuta(next.tipoRuta as TipoRuta);
+    if (next.pernocta !== pernocta) setPernocta(next.pernocta);
+    if (next.percentage !== dietaPercent) setDietaPercent(next.percentage);
+  }, [showFinForm, dietaModo, isMoroccoMode, paymentMode, dietBase, finLugar, dietGps,
+    abiertaQuery.data?.lugarInicio, abiertaQuery.data?.tachoCountries, dietManual, tipoRuta, pernocta, dietaPercent]);
 
   const estadoQuery = useQuery<EstadoLegal>({
     queryKey: ["estado-legal", syncVersion],
@@ -2915,6 +2937,8 @@ export default function DashboardScreen() {
                   setFinHora(nowTimeStr());
                   setFinLugar("");
                   setFinLugarTouched(false);
+                  setDietGps(null);
+                  setDietManual({ route: false, overnight: false, percentage: false });
                   setShowFinForm(true);
                   resolveFinLugarFromGps();
                 }}
@@ -3053,7 +3077,7 @@ export default function DashboardScreen() {
                 <Pressable
                   key={rt}
                   style={[styles.segmentFlex, tipoRuta === rt && styles.segmentActive]}
-                  onPress={() => setTipoRuta(rt)}
+                  onPress={() => { setDietManual(v => ({ ...v, route: true })); setTipoRuta(rt); }}
                 >
                   <Text style={[styles.segmentTextSmall, tipoRuta === rt && styles.segmentTextActive]}>
                     {rt === "NACIONAL" ? t("dashboard.routeNac") : rt === "INTERNACIONAL" ? t("dashboard.routeIntl") : rt === "REGIONAL_INTL" ? t("dashboard.routeRegIntl") : rt === "NAC_INTL" ? t("dashboard.routeNacIntl") : rt === "NAC_REGIONAL" ? t("dashboard.routeNacReg") : rt === "NINGUNO" ? t("dashboard.routeNone") : t("dashboard.routeReg")}
@@ -3244,13 +3268,13 @@ export default function DashboardScreen() {
                 <View style={styles.segmentRow}>
                   <Pressable
                     style={[styles.segmentSmall, pernocta && styles.segmentActive]}
-                    onPress={() => setPernocta(true)}
+                    onPress={() => { setDietManual(v => ({ ...v, overnight: true })); setPernocta(true); }}
                   >
                     <Text style={[styles.segmentText, pernocta && styles.segmentTextActive]}>{t("common.yes")}</Text>
                   </Pressable>
                   <Pressable
                     style={[styles.segmentSmall, !pernocta && styles.segmentActive]}
-                    onPress={() => setPernocta(false)}
+                    onPress={() => { setDietManual(v => ({ ...v, overnight: true })); setPernocta(false); }}
                   >
                     <Text style={[styles.segmentText, !pernocta && styles.segmentTextActive]}>{t("common.no")}</Text>
                   </Pressable>
@@ -3261,7 +3285,7 @@ export default function DashboardScreen() {
                 <View style={styles.segmentRow}>
                   <Pressable
                     style={[styles.segmentSmall, dietaModo === "AUTO" && styles.segmentActive]}
-                    onPress={() => setDietaModo("AUTO")}
+                    onPress={() => { setDietManual({ route: false, overnight: false, percentage: false }); setDietaModo("AUTO"); }}
                   >
                     <Text style={[styles.segmentText, dietaModo === "AUTO" && styles.segmentTextActive]}>{t("dashboard.dietAuto")}</Text>
                   </Pressable>
@@ -3284,7 +3308,7 @@ export default function DashboardScreen() {
                     <Pressable
                       key={p}
                       style={[styles.segmentSmall, dietaPercent === p && styles.segmentActive]}
-                      onPress={() => setDietaPercent(p)}
+                      onPress={() => { setDietManual(v => ({ ...v, percentage: true })); setDietaPercent(p); }}
                     >
                       <Text style={[styles.segmentText, dietaPercent === p && styles.segmentTextActive]}>
                         {p}%
