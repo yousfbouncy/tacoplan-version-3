@@ -985,6 +985,8 @@ export default function UsuarioScreen() {
   };
 
   const [payrollConfig, setPayrollConfig] = useState<PayrollConfig>(DEFAULT_PAYROLL_CONFIG);
+  const payrollHasConfiguredSalary = ["salario_base_bruto", "plus_convenio", "complemento", "pagas_prorrateadas", "productividad_fija", "otros_conceptos_fijos"]
+    .some((key) => Number(String((payrollConfig as any)[key] ?? "0").replace(",", ".")) > 0);
   const [loadingPayrollConfig, setLoadingPayrollConfig] = useState(false);
   const [savingPayrollConfig, setSavingPayrollConfig] = useState(false);
   const [payrollEstimate, setPayrollEstimate] = useState<any | null>(null);
@@ -2719,7 +2721,16 @@ export default function UsuarioScreen() {
               </View>
             )}
 
-            {shouldShowSection("estimacion_nomina") && (
+            {shouldShowSection("estimacion_nomina") && !loadingPayrollConfig && !payrollHasConfiguredSalary && (
+              <View style={styles.card}>
+                <SectionHeader title="Configura tu nómina" icon="information-circle-outline" />
+                <Text style={styles.ferryHint}>Todavía no tienes configurado el salario base ni otros conceptos fijos. Completa los importes para obtener una estimación de nómina fiable.</Text>
+                <Pressable style={styles.saveBtn} onPress={() => openSection("config_nomina")}>
+                  <Text style={styles.saveBtnText}>Configurar salario y complementos</Text>
+                </Pressable>
+              </View>
+            )}
+            {shouldShowSection("estimacion_nomina") && payrollHasConfiguredSalary && !loadingPayrollConfig && (
               <>
                 <View style={styles.card}>
                   <SectionHeader title="Resumen" icon="document-text-outline" />
