@@ -58,6 +58,9 @@ export default function DietasScreen() {
   const payrollSetupQuery = useQuery({
     queryKey: ["payroll-setup", user?.id, syncVersion],
     enabled: Boolean(user?.id),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     queryFn: async () => {
       if (!user?.id) return false;
       const cacheKey = await userScopedKey("tacoplan_payroll_config", user.id);
