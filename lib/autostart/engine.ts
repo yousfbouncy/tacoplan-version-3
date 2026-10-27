@@ -1,4 +1,4 @@
-export const MIN_SPEED_MPS = 2 / 3.6;
+export const MIN_SPEED_MPS = 15 / 3.6;
 export const MIN_DURATION_MS = 2 * 1000;
 export const MAX_SAMPLE_GAP_MS = 90 * 1000;
 export const MAX_ACCURACY_METERS = 75;

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { advanceCandidate, shouldAutoConfirm, type Candidate, type MovementSegment } from "../lib/autostart/engine";
 
 function moving(timestamp: number) {
-  return { timestamp, coords: { speed: 3 / 3.6, accuracy: 5 } };
+  return { timestamp, coords: { speed: 15 / 3.6, accuracy: 5 } };
 }
 function stopped(timestamp: number) {
   return { timestamp, coords: { speed: 0, accuracy: 5 } };

@@ -13,6 +13,7 @@ import {
   Linking,
   Platform,
   ActivityIndicator,
+  AppState,
   RefreshControl,
   Modal,
   Switch,
@@ -747,6 +748,18 @@ export default function DashboardScreen() {
     queryKey: ["jornada-abierta", syncVersion],
     queryFn: () => getJornadaAbierta(),
   });
+
+  useFocusEffect(useCallback(() => {
+    const refreshLocalShift = () => {
+      void qc.invalidateQueries({ queryKey: ["jornada-abierta"] });
+      void qc.invalidateQueries({ queryKey: ["estado-legal"] });
+    };
+    refreshLocalShift();
+    const sub = AppState.addEventListener("change", state => {
+      if (state === "active") refreshLocalShift();
+    });
+    return () => sub.remove();
+  }, [qc]));
 
   useEffect(() => {
     if (!showFinForm) return;
