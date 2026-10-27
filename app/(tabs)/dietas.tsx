@@ -160,7 +160,8 @@ export default function DietasScreen() {
   useFocusEffect(
     useCallback(() => {
       loadConfig();
-    }, [loadConfig])
+      void qc.invalidateQueries({ queryKey: ["payroll-setup", user?.id] });
+    }, [loadConfig, qc, user?.id])
   );
 
   const periodo = useMemo(() => {
