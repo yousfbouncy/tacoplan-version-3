@@ -1,26 +1,30 @@
-import { crearAvisosAmplitud, type Ampliacion15h } from "@/lib/alertasDisponibilidad";
+import { planAvailabilityAlarms, type AlarmShift, type AvailabilityContext } from "./availability-context";
 import { Platform } from "react-native";
 
 export const AVAILABILITY_ALARMS_KEY = "tacoplan_availability_alarms_enabled";
 
-type ActiveShift = {
-  id: string;
-  fechaInicio: string;
-  horaInicio: string;
-};
+let pendingSync: Promise<void> = Promise.resolve();
+
+export function syncAvailabilityAlarms(shift: AlarmShift | null, context: AvailabilityContext | undefined, enabled: boolean): Promise<void> {
+  const next = pendingSync.then(() => reconcileAvailabilityAlarms(shift, context, enabled));
+  pendingSync = next.catch(() => {});
+  return next;
+}
 
 /** Reconciles scheduled local alerts with the current open shift. */
-export async function syncAvailabilityAlarms(
-  shift: ActiveShift | null,
-  availabilityMinutes: number | undefined,
+async function reconcileAvailabilityAlarms(
+  shift: AlarmShift | null,
+  context: AvailabilityContext | undefined,
   enabled: boolean,
 ): Promise<void> {
   if (Platform.OS === "web") return;
   const Notifications = await import("expo-notifications");
-  const existing = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  const existing = await Notifications.getAllScheduledNotificationsAsync();
   const ours = existing.filter((item) => item.content.data?.tacoplanAvailabilityAlarm === true);
-  await Promise.all(ours.map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier).catch(() => {})));
-  if (!enabled || !shift || !availabilityMinutes || availabilityMinutes <= 0) return;
+  await Promise.all(ours.map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+  if (!enabled || !shift) return;
+
+  if (context?.shiftId === shift.id && !context.aplica13h15h) return;
 
   const permission = await Notifications.getPermissionsAsync().catch(() => ({ status: "undetermined" } as any));
   if (permission.status !== "granted") return;
@@ -33,15 +37,9 @@ export async function syncAvailabilityAlarms(
     }).catch(() => {});
   }
 
-  const start = new Date(`${shift.fechaInicio}T${shift.horaInicio}:00`);
-  if (!Number.isFinite(start.getTime())) return;
-  const applies15Hours = availabilityMinutes >= 15 * 60;
-  const alerts = crearAvisosAmplitud({
-    id: shift.id,
-    inicio: start.toISOString(),
-    ampliacion15h: applies15Hours ? "disponible" as Ampliacion15h : "agotada" as Ampliacion15h,
-  });
+  const alerts = planAvailabilityAlarms(shift, context, enabled);
   await Promise.all(alerts.map((alert) => Notifications.scheduleNotificationAsync({
+    identifier: alert.id,
     content: {
       title: `Tacoplan · límite de ${alert.limite} h`,
       body: alert.mensaje,

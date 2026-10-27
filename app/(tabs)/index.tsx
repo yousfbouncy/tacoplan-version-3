@@ -775,8 +775,8 @@ export default function DashboardScreen() {
         if (abiertaQuery.isLoading || estadoQuery.isLoading) return;
         const shift = abiertaQuery.data;
         await syncAvailabilityAlarms(
-          shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio } : null,
-          estadoQuery.data?.disponibilidadMin,
+          shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio, startAt: shift.startAt } : null,
+          estadoQuery.isError ? undefined : estadoQuery.data?.availabilityContext,
           localEnabled && masterEnabled,
         );
         await syncJornadaWidget(shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio } : null, estadoQuery.data?.disponibilidadMin);
@@ -786,7 +786,7 @@ export default function DashboardScreen() {
     };
     syncAlarms();
     return () => { cancelled = true; };
-  }, [abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.isLoading, user?.id]));
+  }, [abiertaQuery.data?.startAt, abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.isLoading, estadoQuery.isError, estadoQuery.data?.availabilityContext, user?.id]));
 
   const legalPreviewQuery = useQuery<LegalPreview>({
     queryKey: ["legal-preview", syncVersion],
@@ -976,7 +976,7 @@ export default function DashboardScreen() {
     if (!abierta) return null;
     const start = new Date(`${abierta.fechaInicio}T${String(abierta.horaInicio || "00:00").slice(0, 5)}:00`).getTime();
     const elapsedMin = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 60000)) : 0;
-    const limitMin = estado?.disponibilidadMin === 15 * 60 ? 15 * 60 : 13 * 60;
+    const limitMin = estado?.disponibilidadMin ?? 13 * 60;
     const remainingMin = Math.max(0, limitMin - elapsedMin);
     const elapsedSeconds = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 1000)) : 0;
     return {
@@ -2886,7 +2886,7 @@ export default function DashboardScreen() {
                     <Text style={[styles.shiftLimitNumber, { color: estado?.disponibilidadMin === 15 * 60 ? "#FFFFFF" : "#A8B8C7" }]}>Límite 15h</Text>
                     <Ionicons name="time-outline" size={22} color="#FFB51A" />
                   </View>
-                  <Text style={styles.shiftLimitDetail}>{estado?.disponibilidadMin === 15 * 60 ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}` : "No disponible hoy"}</Text>
+                  <Text style={styles.shiftLimitDetail}>{estado?.disponibilidadMin === 15 * 60 ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}` : estado?.availabilityContext?.ampliacion15h === "agotada" ? "No disponible hoy" : "Comprueba las condiciones"}</Text>
                   <Text style={styles.shiftLimitDeadline}>{estado?.disponibilidadMin === 15 * 60 ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
                 </View>
               </View>

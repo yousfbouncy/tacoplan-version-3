@@ -1,5 +1,6 @@
+import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, computeReducedRestsInUtcWeek, isSplitDailyRestGapComplete, type LegalSummary } from "./legalEngine";
+import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
 import { assessWeeklyRest, type WeeklyRestAssessment } from "@/lib/weekly-rest";
 import { userScopedKey } from "@/lib/user-scope";
@@ -298,6 +299,7 @@ export interface CompensacionAgregada {
 }
 
 export interface EstadoLegal {
+  availabilityContext?: AvailabilityContext;
   conduccionSemanalMin: number;
   conduccionBisemanalMin: number;
   maxSemanalMin: number;
@@ -4057,16 +4059,8 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   const abierta = all.find((j) => !j.fechaFin);
-  const descansosReducidos = computeReducedRestsInUtcWeek(
-    all,
-    lunesStr,
-    domingoStr,
-    abierta ? {
-      startAt: abierta.startAt,
-      descansoAnteriorMin: abierta.descansoAnteriorMin,
-      tipoDescansoAnterior: abierta.tipoDescansoAnterior,
-    } : null,
-  );
+  const availabilityContext = getAvailabilityContext(all);
+  const descansosReducidos = availabilityContext.reducidosUsados;
 
   let conduccionBisemanalMin = 0;
   const seenBiweekly = new Set<string>();
@@ -4166,7 +4160,7 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     alertas.push({ tipo: "danger", mensaje: "Has usado las 2 extensiones de 10h esta semana" });
   }
 
-  if (descansosReducidos >= 3) {
+  if (availabilityContext.ampliacion15h === "agotada") {
     alertas.push({ tipo: "danger", mensaje: "Has usado los 3 descansos diarios reducidos. Disponibilidad limitada a 13h." });
   }
 
@@ -4199,7 +4193,8 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     maxExtensiones: 2,
     descansosReducidos,
     maxDescansosReducidos: 3,
-    disponibilidadMin: descansosReducidos < 3 ? 15 * 60 : 13 * 60,
+    availabilityContext,
+    disponibilidadMin: !availabilityContext.aplica13h15h ? 21 * 60 : availabilityContext.ampliacion15h === "disponible" ? 15 * 60 : 13 * 60,
     compensacionAgregada,
     alertas,
   };

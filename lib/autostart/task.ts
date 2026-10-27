@@ -67,7 +67,7 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
         const [place] = await Location.reverseGeocodeAsync(fix.coords);
         if (place) lugarInicio = [place.city, place.region, place.country].filter(Boolean).join(", ") || lugarInicio;
       } catch {}
-      await crearJornadaInicio({ fechaInicio, horaInicio, lugarInicio });
+      const startedShift = await crearJornadaInicio({ fechaInicio, horaInicio, lugarInicio });
       try {
         const prefKey = await userScopedKey(AVAILABILITY_ALARMS_KEY, state.userId);
         let alertsEnabled = (await AsyncStorage.getItem(prefKey)) !== "false";
@@ -76,15 +76,15 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
         if ((notificationPrefs as any)?.notifications_enabled === false) alertsEnabled = false;
         const legalState = await getEstadoLegal();
         await syncAvailabilityAlarms(
-          { id: `${state.userId}:${state.firstMovementAt ?? result.segment.startedAt}`, fechaInicio, horaInicio },
-          legalState.disponibilidadMin,
+          { id: startedShift.id, fechaInicio, horaInicio, startAt: startedShift.startAt },
+          legalState.availabilityContext,
           alertsEnabled,
         );
-        await syncJornadaWidget({ id: `${state.userId}:${state.firstMovementAt ?? result.segment.startedAt}`, fechaInicio, horaInicio }, legalState.disponibilidadMin);
+        await syncJornadaWidget({ id: startedShift.id, fechaInicio, horaInicio }, legalState.disponibilidadMin);
       } catch (alarmError) {
         console.warn("[AUTOSTART] No se pudieron programar avisos de disponibilidad", alarmError);
       }
-      const proposalId = `${state.userId}:${state.firstMovementAt ?? result.segment.startedAt}`;
+      const proposalId = `${state.userId}:${state.firstMovementAt ?? (result.segment?.startedAt ?? firstMovementAt)}`;
       const { error } = await (await import("@/lib/supabase")).supabase.from("autostart_proposals")
         .update({ status: "accepted" }).eq("id", proposalId).eq("user_id", state.userId);
       if (error) console.warn("[AUTOSTART] Jornada local iniciada; no se pudo sincronizar la propuesta:", error);
@@ -100,8 +100,8 @@ TaskManager.defineTask(AUTOSTART_TASK, async ({ data, error }) => {
     }
     if (state.proposals.some(p => p.status === "pending")) continue;
     const proposal: Proposal = {
-      id: `${state.userId}:${state.firstMovementAt ?? result.segment.startedAt}`, userId: state.userId,
-      detectedAt: new Date(state.firstMovementAt ?? result.segment.startedAt).toISOString(), createdAt: new Date().toISOString(),
+      id: `${state.userId}:${state.firstMovementAt ?? (result.segment?.startedAt ?? firstMovementAt)}`, userId: state.userId,
+      detectedAt: new Date(state.firstMovementAt ?? (result.segment?.startedAt ?? firstMovementAt)).toISOString(), createdAt: new Date().toISOString(),
       status: "pending", source: "location",
     };
     state.proposals.push(proposal);
