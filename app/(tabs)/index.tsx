@@ -79,6 +79,7 @@ import {
   type NaturalDayDietEntry,
   addDays,
   extractYyyyMmDd,
+  updateJornadaPlannedRest,
 } from "@/lib/local-storage";
 import {
   todayStr,
@@ -1009,7 +1010,7 @@ export default function DashboardScreen() {
   useEffect(() => {
     const needsCountdown = !!abierta || lastClosed?.endAt || shouldShowFerryPanel;
     if (!needsCountdown) return;
-    const tickMs = abierta || shouldShowFerryPanel ? 1000 : 30000;
+    const tickMs = 1000;
     const interval = setInterval(() => setCountdownNow(Date.now()), tickMs);
     return () => clearInterval(interval);
   }, [abierta?.id, lastClosed?.plannedRestMin, lastClosed?.endAt, shouldShowFerryPanel]);
@@ -2885,6 +2886,26 @@ export default function DashboardScreen() {
                         {totalMin === null ? "descanso transcurrido · sin duración prevista" : t("dashboard.restRemaining")}
                       </Text>
                     </View>
+                    {totalMin === null && (
+                      <View style={{ gap: 8, marginBottom: 10 }}>
+                        <Text style={{ color: Colors.light.textSecondary, fontSize: 12 }}>Selecciona la duración del descanso para activar la cuenta atrás:</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                          {([9, 11, 24, 45] as const).map(hours => (
+                            <Pressable key={hours} accessibilityRole="button"
+                              style={{ backgroundColor: Colors.light.tint + "18", borderColor: Colors.light.tint, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 }}
+                              onPress={async () => {
+                                try {
+                                  await updateJornadaPlannedRest(lastClosed.id, hours * 60, hours >= 24 ? "weekly" : "daily");
+                                  await qc.invalidateQueries({ queryKey: dashboardQueryKey("last-closed", user?.id) });
+                                } catch (error) { Alert.alert("Descanso", "No se pudo guardar la duración seleccionada."); }
+                              }}>
+                              <Text style={{ color: Colors.light.tint, fontFamily: "Inter_600SemiBold" }}>{hours} h</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                    {totalMin !== null && <Text style={{ color: Colors.light.textSecondary, fontSize: 12, textAlign: "center", marginBottom: 7 }}>Transcurrido: {Math.floor(rest.elapsedMin / 60)}h {rest.elapsedMin % 60}m · Objetivo: {Math.floor(totalMin / 60)}h</Text>}
                     {totalMin !== null && <View style={[styles.progressBg, { backgroundColor: Colors.light.border, height: 6 }]}>
                       <View style={[styles.progressFill, {
                         width: `${progress * 100}%` as any,
