@@ -2407,6 +2407,17 @@ export async function cerrarJornada(
   const others = all.filter((j) => j.id !== id);
   const derived = computeDerivedFields(jornada, others, data);
 
+  // Evita cierres que la base de datos rechazará por incoherencia de duración.
+  // Nunca reducir artificialmente la conducción ni cambiar la hora indicada.
+  if (derived.duracionJornadaMin == null || !Number.isFinite(derived.duracionJornadaMin) || derived.duracionJornadaMin < 0) {
+    throw new Error("La fecha u hora de fin no es válida. Revisa el cierre antes de guardar.");
+  }
+  if (data.conduccionMin != null && (!Number.isFinite(data.conduccionMin) || data.conduccionMin < 0 || data.conduccionMin > derived.duracionJornadaMin)) {
+    throw new Error("La conducción no puede superar la duración de la jornada. Revisa la hora de inicio, la de fin y las horas de conducción.");
+  }
+  if (derived.duracionJornadaMin === 0) {
+    throw new Error("La jornada termina a la misma hora que empieza. Comprueba las fechas y horas antes de cerrar.");
+  }
   const merged: Jornada = { ...jornada, ...derived };
   const tachoFields = [
     "tachoDailySummaryId",
