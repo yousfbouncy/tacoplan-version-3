@@ -79,7 +79,6 @@ import {
   type NaturalDayDietEntry,
   addDays,
   extractYyyyMmDd,
-  updateJornadaPlannedRest,
 } from "@/lib/local-storage";
 import {
   todayStr,
