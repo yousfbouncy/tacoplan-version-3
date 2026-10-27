@@ -63,7 +63,8 @@ export default function DietasScreen() {
       let config: Record<string, unknown> = {};
       try { config = JSON.parse((await AsyncStorage.getItem(cacheKey)) || "{}"); } catch {}
       const { data } = await supabase.from("profiles").select("payroll_config").eq("id", user.id).maybeSingle();
-      config = { ...config, ...((data as any)?.payroll_config || {}) };
+      const cloudConfig = (data as any)?.payroll_config;
+      if (cloudConfig && typeof cloudConfig === "object") config = cloudConfig;
       return config;
     },
   });
