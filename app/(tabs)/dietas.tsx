@@ -29,6 +29,7 @@ import { useFerry } from "@/lib/ferry-context";
 import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
 import { supabase } from "@/lib/supabase";
+import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
 
 type ResumenDietas = {
   total: number;
@@ -102,7 +103,7 @@ export default function DietasScreen() {
     };
   };
 
-  const { getPeriod } = usePeriod();
+  const { getPeriod, config: periodConfig } = usePeriod();
 
   const loadConfig = useCallback(async () => {
     try {
@@ -265,14 +266,8 @@ export default function DietasScreen() {
     const to = new Date(periodo.to + "T12:00:00").getTime();
     const computedDays = Math.max(1, Math.round((to - from) / 86400000) + 1);
     const workedDays = payrollDaysQuery.data;
-    const periodDays = computedDays;
-    const fixedUnit = payrollConfig.fixed_unit === "month" ? "month" : "day";
-    const fixedTotal = fixedKeys.reduce((sum, key) => {
-      const amount = Math.max(0, parsePay(payrollConfig[key]));
-      if (fixedUnit === "day") return sum + amount * workedDays;
-      const multiplier = key === "complemento" || key === "productividad_fija" ? workedDays : computedDays;
-      return sum + amount * multiplier / periodDays;
-    }, 0);
+    const baseDays = periodConfig.mode === "AUTO_01_30" ? 30 : computedDays;
+    const fixedTotal = getPayrollFixedTotal(payrollConfig, computedDays, workedDays, baseDays);
     const summary = paymentMode === "km" ? kmData : paymentMode === "viaje" ? viajeData : data;
     if (!summary) return null;
     const dietTotal = paymentMode === "dietas" ? Number(data?.total || 0) : Number(summary?.dietas?.totalDietas || 0);
@@ -294,7 +289,7 @@ export default function DietasScreen() {
     const irpf = parsePay(payrollConfig.irpf_mode === "manual" ? payrollConfig.irpf_manual_pct : payrollConfig.irpf_auto_applied_pct);
     const net = gross - social - Math.round(taxed * irpf / 100 * 100) / 100;
     return { gross, net, dietTotal, extras, pluses };
-  }, [payrollConfig, hasPayrollSetup, payrollDaysQuery.data, periodo.from, periodo.to, paymentMode, kmData, viajeData, data]);
+  }, [payrollConfig, hasPayrollSetup, payrollDaysQuery.data, periodo.from, periodo.to, paymentMode, kmData, viajeData, data, periodConfig.mode]);
   const refreshing =
     resumenQuery.isRefetching ||
     kmResumenQuery.isRefetching ||
