@@ -20,7 +20,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/driver-theme";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
-import { getResumenDietas, getResumenKm, getResumenViaje, findRate, getMoroccoJornadaSummary, getFerryExtrasSummary, detectMissingOutOfBaseDietDays, dismissNaturalDayDiets, upsertNaturalDayDiets, clearDismissedNaturalDayDietsInRange, type UserDietRate, type UserDayExtras, type DetectedMissingNaturalDay, type NaturalDayDietEntry } from "@/lib/local-storage";
+import { listarJornadas, getResumenDietas, getResumenKm, getResumenViaje, findRate, getMoroccoJornadaSummary, getFerryExtrasSummary, detectMissingOutOfBaseDietDays, dismissNaturalDayDiets, upsertNaturalDayDiets, clearDismissedNaturalDayDietsInRange, type UserDietRate, type UserDayExtras, type DetectedMissingNaturalDay, type NaturalDayDietEntry } from "@/lib/local-storage";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import { useAuth } from "@/lib/auth-context";
@@ -64,10 +64,13 @@ export default function DietasScreen() {
       try { config = JSON.parse((await AsyncStorage.getItem(cacheKey)) || "{}"); } catch {}
       const { data } = await supabase.from("profiles").select("payroll_config").eq("id", user.id).maybeSingle();
       config = { ...config, ...((data as any)?.payroll_config || {}) };
-      return ["salario_base_bruto", "plus_convenio", "complemento", "pagas_prorrateadas", "productividad_fija", "otros_conceptos_fijos"]
-        .some((key) => Number(String(config[key] ?? "0").replace(",", ".")) > 0);
+      return config;
     },
   });
+  const payrollConfig = payrollSetupQuery.data;
+  const fixedKeys = ["salario_base_bruto", "plus_convenio", "complemento", "pagas_prorrateadas", "productividad_fija", "otros_conceptos_fijos"];
+  const parsePay = (v: unknown) => { const n = Number(String(v ?? "0").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
+  const hasPayrollSetup = !!payrollConfig && fixedKeys.some(k => parsePay(payrollConfig[k]) > 0);
   const [periodoIdx, setPeriodoIdx] = useState(0);
   const [customRates, setCustomRates] = useState<UserDietRate[] | null>(null);
   const [dayExtras, setDayExtras] = useState<UserDayExtras>({
@@ -220,6 +223,15 @@ export default function DietasScreen() {
   });
   const ferryExtras = ferryExtrasQuery.data;
 
+  const payrollDaysQuery = useQuery({
+    queryKey: ["payroll-worked-days", user?.id, periodo.from, periodo.to, syncVersion],
+    enabled: !!user?.id && hasPayrollSetup,
+    queryFn: async () => {
+      const jornadas = await listarJornadas();
+      return new Set(jornadas.filter(j => j.fechaFin && j.fechaInicio >= periodo.from && j.fechaInicio <= periodo.to).map(j => j.fechaInicio)).size;
+    },
+  });
+
   const data = resumenQuery.data;
   const kmData = kmResumenQuery.data as any;
   const viajeData = viajeResumenQuery.data as any;
@@ -245,6 +257,42 @@ export default function DietasScreen() {
       ? (viajeData?.totalImporte || 0)
       : (data?.total || 0);
   const grandTotal = baseTotal + totalDietasOffsite + totalExtras + totalPlus + totalFerryExtras;
+  const estimatedPayroll = useMemo(() => {
+    if (!hasPayrollSetup || payrollDaysQuery.data == null || !payrollConfig) return null;
+    const from = new Date(periodo.from + "T12:00:00").getTime();
+    const to = new Date(periodo.to + "T12:00:00").getTime();
+    const computedDays = Math.max(1, Math.round((to - from) / 86400000) + 1);
+    const workedDays = payrollDaysQuery.data;
+    const periodDays = computedDays;
+    const fixedUnit = payrollConfig.fixed_unit === "month" ? "month" : "day";
+    const fixedTotal = fixedKeys.reduce((sum, key) => {
+      const amount = Math.max(0, parsePay(payrollConfig[key]));
+      if (fixedUnit === "day") return sum + amount * workedDays;
+      const multiplier = key === "complemento" || key === "productividad_fija" ? workedDays : computedDays;
+      return sum + amount * multiplier / periodDays;
+    }, 0);
+    const summary = paymentMode === "km" ? kmData : paymentMode === "viaje" ? viajeData : data;
+    if (!summary) return null;
+    const dietTotal = paymentMode === "dietas" ? Number(data?.total || 0) : Number(summary?.dietas?.totalDietas || 0);
+    const offsite = (paymentMode === "dietas" ? data?.desglose : summary?.dietas?.desglose || [])
+      ?.filter((x: any) => String(x.tipo).startsWith("FUERA_BASE_"))
+      .reduce((sum: number, x: any) => sum + Number(x.total || 0), 0) || 0;
+    const extras = Number(summary?.extras?.totalExtras || 0);
+    const pluses = Number(summary?.plus?.totalPlus || 0);
+    const baseVariable = paymentMode === "dietas" ? 0 : Number(summary?.totalImporte || 0);
+    const regularDiets = Math.max(0, dietTotal - offsite);
+    const taxed = fixedTotal + baseVariable
+      + (payrollConfig.dietas_cotizan ? regularDiets : 0)
+      + (payrollConfig.extras_cotizan ? extras : 0)
+      + (payrollConfig.pluses_cotizan ? pluses : 0)
+      + (payrollConfig.descanso_fuera_base_cotiza ? offsite : 0);
+    const gross = fixedTotal + baseVariable + dietTotal + extras + pluses;
+    const social = ["ss_cc_pct", "ss_desempleo_pct", "ss_fp_pct", "ss_mei_pct"]
+      .reduce((sum, key) => sum + Math.round(taxed * parsePay(payrollConfig[key]) / 100 * 100) / 100, 0);
+    const irpf = parsePay(payrollConfig.irpf_mode === "manual" ? payrollConfig.irpf_manual_pct : payrollConfig.irpf_auto_applied_pct);
+    const net = gross - social - Math.round(taxed * irpf / 100 * 100) / 100;
+    return { gross, net, dietTotal, extras, pluses };
+  }, [payrollConfig, hasPayrollSetup, payrollDaysQuery.data, periodo.from, periodo.to, paymentMode, kmData, viajeData, data]);
   const refreshing =
     resumenQuery.isRefetching ||
     kmResumenQuery.isRefetching ||
@@ -757,7 +805,9 @@ export default function DietasScreen() {
 
 
 
-        {payrollSetupQuery.data === false && (
+        {payrollSetupQuery.isLoading ? (
+          <View style={styles.payrollHintCard}><ActivityIndicator color={Colors.light.tint} /></View>
+        ) : !hasPayrollSetup && (
           <View style={styles.payrollHintCard}>
             <Ionicons name="information-circle-outline" size={20} color={Colors.light.tint} />
             <View style={{ flex: 1 }}>
@@ -775,6 +825,30 @@ export default function DietasScreen() {
           </View>
         )}
 
+
+        {hasPayrollSetup && (
+          <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any)}
+            style={{ borderRadius: 18, overflow: "hidden", marginBottom: 12 }}>
+            <LinearGradient colors={["#0D86DC", "#0A2766"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ padding: 18, alignItems: "center", gap: 7 }}>
+              <Ionicons name="cash-outline" size={27} color="#FFFFFF" />
+              <Text style={{ color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_600SemiBold" }}>Estimación de nómina · Neto orientativo</Text>
+              <Text style={{ color: "#FFFFFF", fontSize: 30, fontFamily: "Inter_700Bold" }}>
+                {estimatedPayroll ? euro(estimatedPayroll.net) : "Calculando…"}
+              </Text>
+              {estimatedPayroll && <View style={{ flexDirection: "row", width: "100%", gap: 6 }}>
+                {([
+                  ["Dietas", estimatedPayroll.dietTotal],
+                  ["Extras", estimatedPayroll.extras],
+                  ["Plus", estimatedPayroll.pluses],
+                ] as const).map(([label, value]) => <View key={label} style={{ flex: 1, padding: 9, borderRadius: 10, backgroundColor: "#FFFFFF20", alignItems: "center" }}>
+                  <Text style={{ color: "#E5F0FF", fontSize: 11 }}>{label}</Text>
+                  <Text style={{ color: "#FFFFFF", fontSize: 13, fontFamily: "Inter_600SemiBold" }}>{euro(value)}</Text>
+                </View>)}
+              </View>}
+              <Text style={{ color: "#E5F0FF", fontSize: 11 }}>Bruto: {estimatedPayroll ? euro(estimatedPayroll.gross) : "—"} · Ver desglose</Text>
+            </LinearGradient>
+          </Pressable>
+        )}
 
         {isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet" && moroccoQuery.data ? (
           <View style={styles.totalCard}>
@@ -1124,18 +1198,7 @@ export default function DietasScreen() {
           ) : null
         )}
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.saveBtn,
-            { opacity: pressed ? 0.85 : 1, marginTop: 8, backgroundColor: Colors.light.primary },
-          ]}
-          onPress={() => {
-            router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any);
-          }}
-        >
-          <Ionicons name="calculator-outline" size={18} color="#fff" />
-          <Text style={styles.saveBtnText}>Estimación de nómina</Text>
-        </Pressable>
+
 
             {ferryExtras && ferryExtras.count > 0 && (ferryExtras.totalTransitDiet > 0 || ferryExtras.totalCabinOvernight > 0 || ferryExtras.totalCountryChange > 0) && (
               <View style={styles.extrasCard}>
