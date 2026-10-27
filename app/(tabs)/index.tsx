@@ -2846,6 +2846,11 @@ export default function DashboardScreen() {
             if (!rest) return null;
             const totalMin = rest.totalMin;
             const isComplete = rest.remainingMin === 0;
+            const reachedReducedDaily = totalMin === 11 * 60 && rest.elapsedMin >= 9 * 60 && rest.elapsedMin < 11 * 60;
+            const completionLabel = totalMin === 11 * 60 ? "Descanso diario completo" :
+              totalMin === 9 * 60 ? "Descanso diario reducido completado" :
+              totalMin === 24 * 60 ? "Descanso semanal reducido completado" :
+              totalMin === 45 * 60 ? "Descanso semanal normal completado" : "Descanso completado";
             const displayMin = rest.remainingMin ?? rest.elapsedMin;
             const remainH = Math.floor(displayMin / 60);
             const remainM = displayMin % 60;
@@ -2864,11 +2869,20 @@ export default function DashboardScreen() {
                   <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 8 }}>
                     <Ionicons name="checkmark-circle" size={24} color={Colors.light.success} />
                     <Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.light.success }}>
-                      {t("dashboard.restCompleted")}
+                      {completionLabel}
                     </Text>
                   </View>
                 ) : (
                   <>
+                    {reachedReducedDaily && (
+                      <View style={{ backgroundColor: Colors.light.success + "18", borderRadius: 10, padding: 10, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Ionicons name="checkmark-circle" size={20} color={Colors.light.success} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: Colors.light.success, fontFamily: "Inter_600SemiBold", fontSize: 14 }}>Descanso reducido completado (9 h)</Text>
+                          <Text style={{ color: Colors.light.textSecondary, fontSize: 12 }}>Continúa hasta 11 h para completar el descanso diario normal, si las condiciones legales lo permiten.</Text>
+                        </View>
+                      </View>
+                    )}
                     {targetLabel && <View style={{ paddingVertical: 6, paddingHorizontal: 4 }}>
                       <Text style={{ fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.light.textSecondary }}>
                         {t("dashboard.canStartAt")}
