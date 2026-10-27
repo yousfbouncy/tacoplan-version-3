@@ -252,6 +252,19 @@ function RestGapItem({
   onEditFerryJornada?: (jornada: Jornada) => void;
 }) {
   const { t } = useI18n();
+  // A rest runs from the previous shift's end to this shift's start.
+  // For imported/open entries without the former, reconstruct the start from
+  // the recorded duration, clearly marking it as estimated.
+  const restEndIso = restJornada?.startAt;
+  const recordedRestStartIso = previousRestSourceJornada?.endAt;
+  const restEndMs = restEndIso ? Date.parse(restEndIso) : NaN;
+  const recordedStartMs = recordedRestStartIso ? Date.parse(recordedRestStartIso) : NaN;
+  const hasRestEnd = Number.isFinite(restEndMs);
+  const hasRecordedStart = Number.isFinite(recordedStartMs) && recordedStartMs < restEndMs;
+  const restStartMs = hasRecordedStart ? recordedStartMs : hasRestEnd && restMin > 0 ? restEndMs - restMin * 60000 : NaN;
+  const restDatesLabel = Number.isFinite(restStartMs) && hasRestEnd
+    ? `${hasRecordedStart ? "Inicio" : "Inicio aprox."}: ${formatDateTimeShort(new Date(restStartMs).toISOString())} · Fin: ${formatDateTimeShort(new Date(restEndMs).toISOString())}`
+    : hasRestEnd ? `Fin: ${formatDateTimeShort(new Date(restEndMs).toISOString())}` : null;
   const isSplitDailyComplete = isSplitDailyCompleteForHistory(restMin, restJornada);
   const splitFirstPartMin = getQualifiedSplitDailyRestFirstPartMin(previousRestSourceJornada);
   const splitComputedTotalMin = getSplitDailyRestComputedTotalMin(restMin, previousRestSourceJornada);
@@ -318,6 +331,11 @@ function RestGapItem({
               </Text>
               <Ionicons name="create-outline" size={14} color={FERRY_BLUE} />
             </View>
+            {restDatesLabel && (
+              <Text style={{ fontSize: 11, fontFamily: "Inter_500Medium", color: Colors.light.textSecondary }}>
+                {restDatesLabel}
+              </Text>
+            )}
             {ints.length > 0 && (
               <Text style={{ fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
                 Interrupciones: {ints.length} ({intTotalMin} min total)
@@ -360,6 +378,13 @@ function RestGapItem({
           <Text style={[styles.restGapTypeText, { color: displayColor }]}>{displayLabel}</Text>
         </View>
       </View>
+      {restDatesLabel && (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          <Text style={[styles.restGapMetaText, { flexShrink: 1 }]}>
+            <Ionicons name="calendar-outline" size={12} color={Colors.light.textSecondary} /> {restDatesLabel}
+          </Text>
+        </View>
+      )}
       {compensacion && !compensacion.compensada && (
         <View style={styles.restGapAlert}>
           <Ionicons name="alert-circle" size={12} color={Colors.light.warning} />
