@@ -85,7 +85,6 @@ import {
 } from "@/lib/legalEngine";
 import { useSync } from "@/lib/sync-context";
 import { userScopedKey } from "@/lib/user-scope";
-import RecoveredJourneysPanel from "@/components/RecoveredJourneysPanel";
 import { getCalendarDietLabel, journeyTouchesCalendarDate } from "@/lib/history-calendar";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
@@ -2068,7 +2067,6 @@ export default function HistorialScreen() {
         </View>
       </View>
       {searchVisible && <TextInput accessibilityLabel="Buscar fecha o lugar" placeholder="Buscar fecha o lugar" placeholderTextColor="#64748B" value={historySearch} onChangeText={setHistorySearch} style={{ backgroundColor: "#11243B", color: Colors.light.text, borderRadius: 18, marginHorizontal: 16, marginBottom: 8, padding: 14 }} />}
-      <RecoveredJourneysPanel userId={user?.id ?? null} />
       <View style={styles.periodoNav}>
         <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
           <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
