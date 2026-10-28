@@ -392,11 +392,21 @@ export default function RootLayout() {
             ...MaterialCommunityIcons.font,
           } : {}),
         };
-        await Font.loadAsync(fontAssets);
+        const loadingFonts = Font.loadAsync(fontAssets).catch((error) => {
+          // Conservar la causa real para diagnosticar la URL del asset.
+          console.warn("[FONTS] No se pudieron cargar todas las fuentes locales", error);
+        });
+        if (Platform.OS === "web") {
+          // Un fallo de red en una fuente no debe bloquear 12 s toda la app.
+          await Promise.race([
+            loadingFonts,
+            new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+          ]);
+        } else {
+          await loadingFonts;
+        }
       } catch (error) {
-        // La interfaz sigue disponible si falla una fuente; el error se
-        // conserva en consola para diagnosticar URLs/CORS de Metro.
-        console.warn("[FONTS] No se pudieron cargar todas las fuentes locales", error);
+        console.warn("[FONTS] Error al preparar las fuentes", error);
       }
       // Mostrar la app en cuanto estén las fuentes; no añadir 4 s artificiales.
       if (cancelled) return;
