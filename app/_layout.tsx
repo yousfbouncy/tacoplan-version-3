@@ -26,6 +26,7 @@ import LoginScreen from "@/app/login";
 import { ActivityIndicator, LogBox, View } from "react-native";
 import Colors from "@/constants/colors";
 import UpdateGate from "@/components/UpdateGate";
+import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { userScopedKey } from "@/lib/user-scope";
 import { supabase } from "@/lib/supabase";
 import {
@@ -347,6 +348,7 @@ function PeriodSetupGate() {
           }}
         />
       </Stack>
+      <WeeklySurveyModal enabled={!needsSetup} />
     </>
   );
 }
