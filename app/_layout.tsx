@@ -116,6 +116,27 @@ function OnboardingGate() {
           return;
         }
 
+        // Si este usuario ya terminó el alta y tiene una base local configurada,
+        // abrir Inicio sin bloquear cada arranque por una petición al perfil.
+        // Un dispositivo nuevo o una configuración incompleta siguen el control remoto.
+        if (localCompleted) {
+          try {
+            const rawSettings = await AsyncStorage.getItem(await userScopedKey("tacoplan_user_settings", user.id));
+            const localSettings = rawSettings ? JSON.parse(rawSettings) : null;
+            const hasLocalBase = Boolean(
+              String(localSettings?.base_name || "").trim() &&
+              String(localSettings?.base_city || "").trim() &&
+              String(localSettings?.base_country || "").trim(),
+            );
+            if (hasLocalBase) {
+              setNeedsOnboarding(false);
+              setNeedsBaseLocation(false);
+              setChecking(false);
+              return;
+            }
+          } catch {}
+        }
+
         try {
           const applyBaseRequirement = async (profileLike: any) => {
             const hasBase =
