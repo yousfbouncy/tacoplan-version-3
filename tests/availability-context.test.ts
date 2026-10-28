@@ -19,15 +19,17 @@ function cycle(reduced: number): Jornada[] {
 const shift = { id: "active", fechaInicio: "2026-10-27", horaInicio: "08:00" };
 const pairs = (n: number) => planAvailabilityAlarms(shift, getAvailabilityContext(cycle(n)), true, 0);
 
-test("13 h: three used rests, including rest before open shift, means one urgent alert", () => {
+test("13 h: exhausted extensions give two urgent alerts, at 30 and 10 minutes", () => {
   assert.equal(getAvailabilityContext(cycle(3)).ampliacionesDisponibles, 0);
-  assert.deepEqual(pairs(3).map(a => [a.limite,a.nivel]), [[13,"urgente"]]);
-});
-test("15 h: available extension gives soft 13 h and urgent 15 h, five minutes before", () => {
-  const alerts = pairs(2);
-  assert.deepEqual(alerts.map(a => [a.limite,a.nivel]), [[13,"suave"],[15,"urgente"]]);
+  assert.deepEqual(pairs(3).map(a => [a.limite,a.minutosAntes,a.nivel]), [[13,30,"urgente"],[13,10,"urgente"]]);
   const start = new Date("2026-10-27T08:00:00").getTime();
-  assert.deepEqual(alerts.map(a => (Date.parse(a.fecha)-start)/60000), [775,895]);
+  assert.deepEqual(pairs(3).map(a => (Date.parse(a.fecha)-start)/60000), [750,770]);
+});
+test("15 h: available extension gives 13h at 10 minutes and 15h at 30 minutes", () => {
+  const alerts = pairs(2);
+  assert.deepEqual(alerts.map(a => [a.limite,a.minutosAntes,a.nivel]), [[13,10,"suave"],[15,30,"urgente"]]);
+  const start = new Date("2026-10-27T08:00:00").getTime();
+  assert.deepEqual(alerts.map(a => (Date.parse(a.fecha)-start)/60000), [770,870]);
 });
 test("remaining extensions use the observed cycle, not Monday or driving extensions", () => {
   for (const n of [0,1,2,3,4]) {
@@ -36,13 +38,13 @@ test("remaining extensions use the observed cycle, not Monday or driving extensi
     assert.equal(getAvailabilityContext(rows).ampliacionesDisponibles, Math.max(0,3-n));
   }
 });
-test("unknown boundary, unavailable/stale state, invalid data: preventive only", () => {
+test("unknown boundary, unavailable/stale state, invalid data: two preventive 13h alerts", () => {
   const noBoundary = getAvailabilityContext(cycle(2).slice(1));
   const invalid = cycle(2); invalid[1].endAt = "invalid";
   for (const ctx of [undefined, noBoundary, getAvailabilityContext(invalid), {...getAvailabilityContext(cycle(0)), shiftId:"other"}]) {
     const alerts = planAvailabilityAlarms(shift, ctx, true, 0);
-    assert.deepEqual(alerts.map(a => [a.limite,a.nivel]), [[13,"preventiva"]]);
-    assert.doesNotMatch(alerts[0].mensaje, /infracci[oó]n/i);
+    assert.deepEqual(alerts.map(a => [a.limite,a.minutosAntes,a.nivel]), [[13,30,"preventiva"],[13,10,"preventiva"]]);
+    alerts.forEach(alert => assert.doesNotMatch(alert.mensaje, /infracci[oó]n/i));
   }
 });
 test("weekly rest resets the cycle and split 3+9 does not consume a reduction", () => {
@@ -79,7 +81,7 @@ test("canonical timestamp preserves elapsed hours across DST and midnight; edit 
   const ctx = getAvailabilityContext(cycle(0));
   const startAt = "2026-10-24T22:00:00+02:00";
   const alerts = planAvailabilityAlarms({...shift,startAt},ctx,true,0);
-  assert.equal(Date.parse(alerts[0].fecha)-Date.parse(startAt),775*60000);
+  assert.equal(Date.parse(alerts[0].fecha)-Date.parse(startAt),770*60000);
   const edited = planAvailabilityAlarms({...shift,startAt:"2026-10-24T23:00:00+02:00"},ctx,true,0);
   assert.equal(Date.parse(edited[0].fecha)-Date.parse(alerts[0].fecha),3600000);
   assert.equal(edited[0].id,alerts[0].id);
