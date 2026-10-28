@@ -28,13 +28,17 @@ async function reconcileAvailabilityAlarms(
 
   const permission = await Notifications.getPermissionsAsync().catch(() => ({ status: "undetermined" } as any));
   if (permission.status !== "granted") return;
-  if (Notifications.setNotificationChannelAsync) {
-    await Notifications.setNotificationChannelAsync("availability-alarms", {
-      name: "Avisos de disponibilidad",
-      importance: Notifications.AndroidImportance.DEFAULT,
-      vibrationPattern: [0],
+  // Android keeps a channel's sound/importance settings after creation.
+  // Use a new channel ID so upgraded installations receive the audible defaults.
+  // The user can still silence this channel in the system's notification settings.
+  const availabilityChannelId = "availability-alarms-sound-v2";
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync(availabilityChannelId, {
+      name: "Alarmas de disponibilidad",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 350, 150, 350],
       sound: "default",
-    }).catch(() => {});
+    });
   }
 
   const alerts = planAvailabilityAlarms(shift, context, enabled);
@@ -43,13 +47,13 @@ async function reconcileAvailabilityAlarms(
     content: {
       title: `Tacoplan · límite de ${alert.limite} h`,
       body: alert.mensaje,
-      sound: true,
+      sound: "default",
       data: { tacoplanAvailabilityAlarm: true, shiftId: shift.id, limit: alert.limite },
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: new Date(alert.fecha),
-      channelId: "availability-alarms",
+      ...(Platform.OS === "android" ? { channelId: availabilityChannelId } : {}),
     },
   })));
 }
