@@ -8,7 +8,6 @@ type Props = {
   actions: ExtraAction[];
   onActionsChange: (actions: ExtraAction[]) => void;
   formKind: FormKind;
-  onFormKindChange: (kind: FormKind) => void;
   questions: EditableQuestion[];
   onQuestionsChange: (questions: EditableQuestion[]) => void;
 };
@@ -17,6 +16,35 @@ const MAX_BUTTONS = 4; // Includes the original primary button.
 const MAX_QUESTIONS = 6;
 const MAX_OPTIONS = 8;
 const MIN_OPTIONS = 2;
+
+export function AdminNotificationContentKindSelector({
+  value,
+  onChange,
+}: {
+  value: FormKind;
+  onChange: (kind: FormKind) => void;
+}) {
+  return (
+    <View style={styles.root}>
+      <Text style={styles.heading}>¿Qué quieres enviar?</Text>
+      <View style={styles.row}>
+        {([["none", "Aviso"], ["survey", "Encuesta"], ["form", "Formulario"]] as const).map(([key, label]) => (
+          <Pressable key={key} accessibilityRole="button"
+            accessibilityState={{ selected: value === key }}
+            onPress={() => onChange(key)}
+            style={[styles.pill, value === key && styles.pillActive]}>
+            <Text style={[styles.pillText, value === key && styles.pillTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.hint}>
+        {value === "survey" ? "La encuesta aparecerá en una ventana con sus preguntas y respuestas."
+          : value === "form" ? "El formulario aparecerá en una ventana y recogerá las respuestas."
+          : "Envía un mensaje a los usuarios con botones de enlace opcionales."}
+      </Text>
+    </View>
+  );
+}
 
 function SmallButton({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
@@ -28,7 +56,7 @@ function SmallButton({ label, onPress, disabled = false }: { label: string; onPr
 }
 
 export default function AdminNotificationExtraControls({
-  actions, onActionsChange, formKind, onFormKindChange, questions, onQuestionsChange,
+  actions, onActionsChange, formKind, questions, onQuestionsChange,
 }: Props) {
   const updateAction = (index: number, key: keyof ExtraAction, value: string) =>
     onActionsChange(actions.map((item, i) => i === index ? { ...item, [key]: value } : item));
@@ -54,8 +82,8 @@ export default function AdminNotificationExtraControls({
     ));
   return (
     <View style={styles.root}>
-      <Text style={styles.heading}>Botones adicionales (hasta {MAX_BUTTONS} en total)</Text>
-      <Text style={styles.hint}>Escribe el texto y el enlace de cada botón. Puedes usar uno solo o varios.</Text>
+      <Text style={styles.heading}>{formKind === "none" ? "Botones adicionales" : "Enlaces opcionales adicionales"} (hasta {MAX_BUTTONS} en total)</Text>
+      <Text style={styles.hint}>Estos botones abren enlaces. No son las opciones de respuesta de las preguntas.</Text>
       {actions.map((item, index) => (
         <View key={index} style={styles.group}>
           <Text style={styles.label}>Botón {index + 2}</Text>
@@ -69,15 +97,6 @@ export default function AdminNotificationExtraControls({
       <SmallButton label="+ Añadir botón" disabled={actions.length >= MAX_BUTTONS - 1}
         onPress={() => onActionsChange([...actions, { label: "", url: "" }])} />
 
-      <Text style={[styles.heading, { marginTop: 14 }]}>Tipo de contenido</Text>
-      <View style={styles.row}>
-        {([["none", "Aviso"], ["survey", "Encuesta"], ["form", "Formulario"]] as const).map(([key, label]) => (
-          <Pressable key={key} onPress={() => onFormKindChange(key)}
-            style={[styles.pill, formKind === key && styles.pillActive]}>
-            <Text style={[styles.pillText, formKind === key && styles.pillTextActive]}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
       {formKind !== "none" ? (
         <View style={styles.form}>
           <Text style={styles.hint}>Las respuestas se guardan en Tacoplan para verlas en tu panel Admin. Máximo 6 preguntas.</Text>
