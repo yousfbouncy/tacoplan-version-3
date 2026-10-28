@@ -1,4 +1,4 @@
-import { Linking } from "react-native";
+import { Linking, Platform } from "react-native";
 
 export type NotificationLinkFields = {
   type?: string | null;
@@ -48,9 +48,25 @@ export function getNotificationActions(input: NotificationLinkFields | null | un
   return legacy.buttonText && legacy.buttonUrl ? [{ label: legacy.buttonText, url: legacy.buttonUrl }] : [];
 }
 
-export async function openNotificationUrl(url: string | null | undefined) {
+export async function openNotificationUrl(
+  url: string | null | undefined,
+  options?: { keepCurrentScreen?: boolean },
+) {
   if (!url) return false;
   try {
+    // Surveys/forms must stay open while the user visits external links.
+    // Open HTTP(S) links in a separate browser tab on web, synchronously
+    // with the press event so the browser does not block the new tab.
+    if (Platform.OS === "web" && options?.keepCurrentScreen && /^https?:\/\//i.test(url)) {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return true;
+    }
     const supported = await Linking.canOpenURL(url);
     if (!supported) return false;
     await Linking.openURL(url);
