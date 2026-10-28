@@ -7,7 +7,6 @@ import { getInstalledAppVersion } from "@/lib/update-service";
 import {
   shouldOfferCloudRestorePrompt,
   restoreFromCloud,
-  autoSync as syncServiceAutoSync,
 } from "@/lib/sync-service";
 
 interface AuthUser {
@@ -405,7 +404,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *     ni en user switch (solo volatile: queue / last_sync).
    *   - Si el dispositivo NO tiene datos locales para este usuario y HAY datos en
    *     la nube → auto-restoreFromCloud (trae settings, perfil, jornadas).
-   *   - Después dispara autoSync() para bidireccional: merge local<->remoto.
+   *   - SyncProvider se ocupa de la sincronización bidireccional: no duplicarla aquí.
    */
   const bootstrapUserDataOnDevice = useCallback(async (userId: string) => {
     if (!userId) return;
@@ -438,16 +437,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // silenciosamente desde la nube. Así no se le pide de nuevo la
           // configuración ni desaparece el historial al cambiar de móvil.
           await restoreFromCloud(getAccessTokenFactory, () => {});
-        } else {
-          // Si no necesitamos restore, al menos arrancamos sync bidireccional
-          // para emparejar lo de local con lo que hubiera en nube más reciente.
-          try {
-            await syncServiceAutoSync(getAccessTokenFactory, undefined);
-          } catch {}
         }
+        // Para dispositivos ya configurados, SyncProvider gestiona la única
+        // sincronización bidireccional en segundo plano.
       } catch (e) {
-        // Falla online o similar: sin decisión; el sync normal lo arreglará.
-        try { await syncServiceAutoSync(getAccessTokenFactory, undefined); } catch {}
+        // Sin conexión: conservar los datos locales y dejar reintentar a SyncProvider.
+        console.warn("[AUTH] No se pudo comprobar la restauración inicial", e);
       }
     } catch (e) {
       console.log("[AUTH] bootstrapUserDataOnDevice failed", e);
