@@ -209,7 +209,7 @@ function saveNotificationComposeDraft(partial: Partial<NotificationComposeDraft>
     buttonUrl: "",
     extraActions: [],
     formKind: "none",
-    formQuestions: [{ id: "q1", label: "", type: "choice", optionsText: "", required: true }],
+    formQuestions: [{ id: "q1", label: "", type: "choice", options: ["", ""], required: true }],
     targetType: "all",
     targetPlatform: "",
     selectedUser: null,
@@ -416,9 +416,15 @@ function validateInteractiveFields(
     for (const q of questions) {
       if (!q.label.trim() || q.label.length > 200) return "Escribe un texto válido para cada pregunta.";
       if (q.type === "choice") {
-        const options = q.optionsText.split(",").map(x => x.trim()).filter(Boolean);
-        if (options.length < 2 || options.length > 8) return "Cada pregunta de opciones necesita entre 2 y 8 respuestas separadas por comas.";
-        if (options.some(x => x.length > 100)) return "Cada opción debe tener como máximo 100 caracteres.";
+        if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 8)
+          return "Cada pregunta debe tener entre 2 y 8 respuestas.";
+        const options = q.options.map(option => option.trim());
+        if (options.some(option => !option))
+          return "Completa todas las respuestas o elimina las que no necesites.";
+        if (options.some(option => option.length > 100))
+          return "Cada respuesta debe tener como máximo 100 caracteres.";
+        if (new Set(options.map(option => option.toLocaleLowerCase("es"))).size !== options.length)
+          return "No repitas la misma respuesta dentro de una pregunta.";
       }
     }
   }
@@ -564,7 +570,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
   const [extraActions, setExtraActions] = useState<ExtraAction[]>([]);
   const [formKind, setFormKind] = useState<FormKind>("none");
   const [formQuestions, setFormQuestions] = useState<EditableQuestion[]>([
-    { id: "q1", label: "", type: "choice", optionsText: "", required: true },
+    { id: "q1", label: "", type: "choice", options: ["", ""], required: true },
   ]);
   const [targetType, setTargetType] = useState<ScheduleTargetType>("all");
   const [targetPlatform, setTargetPlatform] = useState<"" | "ios" | "android">("");
@@ -666,7 +672,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     setButtonUrl(draft.buttonUrl);
     setExtraActions(draft.extraActions || []);
     setFormKind(draft.formKind || "none");
-    setFormQuestions(draft.formQuestions || [{ id: "q1", label: "", type: "choice", optionsText: "", required: true }]);
+    setFormQuestions(draft.formQuestions || [{ id: "q1", label: "", type: "choice", options: ["", ""], required: true }]);
     setTargetType(draft.targetType);
     setTargetPlatform(draft.targetPlatform);
     setSelectedUser(draft.selectedUser);
@@ -1109,7 +1115,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
             kind: formKind,
             questions: formQuestions.map(q => ({
               id: q.id, label: q.label.trim(), type: q.type, required: q.required,
-              ...(q.type === "choice" ? { options: q.optionsText.split(",").map(x => x.trim()).filter(Boolean) } : {}),
+              ...(q.type === "choice" ? { options: q.options.map(x => x.trim()) } : {}),
             })),
           } } : {}),
         },
