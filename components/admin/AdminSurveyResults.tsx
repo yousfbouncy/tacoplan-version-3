@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { RefreshCw } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
+import AdminNotificationFormResponses from "@/components/admin/AdminNotificationFormResponses";
 
 type SurveyReport = {
   total: number;
@@ -128,7 +129,7 @@ export default function AdminSurveyResults() {
       <View style={styles.headingRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.introTitle}>Encuestas de usuarios</Text>
-          <Text style={styles.secondary}>Respuestas semanales guardadas en Tacoplan. Solo tu cuenta administradora puede consultarlas.</Text>
+          <Text style={styles.secondary}>Encuestas semanales y enviadas como notificación. Solo tu cuenta administradora puede consultar las respuestas.</Text>
         </View>
         <Pressable
           accessibilityLabel="Actualizar encuestas"
@@ -139,6 +140,13 @@ export default function AdminSurveyResults() {
         >
           <RefreshCw size={18} color="#2563EB" />
         </Pressable>
+      </View>
+
+      <AdminNotificationFormResponses kind="survey" />
+
+      <View style={styles.sectionHeading}>
+        <Text style={styles.sectionTitle}>Encuesta semanal</Text>
+        <Text style={styles.secondary}>Resultados de la encuesta semanal obligatoria</Text>
       </View>
 
       {loading ? <View style={styles.loading}><ActivityIndicator color="#2563EB" /><Text style={styles.secondary}>Cargando respuestas…</Text></View> : null}
