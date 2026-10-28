@@ -11,6 +11,7 @@ import {
   ChevronRight,
   LayoutDashboard,
   LoaderCircle,
+  ClipboardList,
   Settings,
   Users,
 } from "lucide-react-native";
@@ -20,6 +21,7 @@ import { useAuth } from "@/lib/auth-context";
 const MENU_ITEMS = [
   { label: "Resumen", icon: LayoutDashboard, href: "/admin/summary" },
   { label: "Usuarios", icon: Users, href: "/admin/users" },
+  { label: "Encuestas", icon: ClipboardList, href: "/admin/surveys" },
   { label: "Notificaciones", icon: Bell, href: "/admin/notifications" },
   { label: "Programadas", icon: CalendarClock, href: "/admin/scheduled" },
   { label: "Automáticas", icon: Bot, href: "/admin/automations" },
