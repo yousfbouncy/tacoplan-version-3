@@ -2266,6 +2266,8 @@ export default function DashboardScreen() {
         body={selectedNotification?.body || ""}
         buttonText={getNotificationAction(selectedNotification).buttonText}
         buttonUrl={getNotificationAction(selectedNotification).buttonUrl}
+        data={selectedNotification?.data}
+        notificationId={selectedNotification?.id}
         onClose={() => setSelectedNotification(null)}
       />
 
