@@ -13,7 +13,7 @@ type ResponseItem = {
 };
 const LIMIT = 30;
 
-export default function AdminNotificationFormResponses() {
+export default function AdminNotificationFormResponses({ kind = "form" }: { kind?: "form" | "survey" }) {
   const [items, setItems] = useState<ResponseItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -23,7 +23,8 @@ export default function AdminNotificationFormResponses() {
     offset ? setMoreLoading(true) : setLoading(true);
     setError("");
     try {
-      const { data, error: reqError } = await supabase.rpc("tacoplan_admin_notification_form_answers", {
+      const { data, error: reqError } = await supabase.rpc("tacoplan_admin_notification_answers_by_kind", {
+        p_kind: kind,
         p_limit: LIMIT,
         p_offset: offset,
       });
@@ -37,13 +38,13 @@ export default function AdminNotificationFormResponses() {
       setLoading(false);
       setMoreLoading(false);
     }
-  }, []);
+  }, [kind]);
   useEffect(() => { void load(0); }, [load]);
   return (
     <View style={styles.root}>
       <View style={styles.heading}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Respuestas a encuestas y formularios enviados</Text>
+          <Text style={styles.title}>{kind === "survey" ? "Encuestas enviadas por notificación" : "Respuestas a formularios enviados"}</Text>
           <Text style={styles.secondary}>{total} respuestas recibidas</Text>
         </View>
         <Pressable style={styles.button} onPress={() => void load(0)}>
