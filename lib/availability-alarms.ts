@@ -5,6 +5,32 @@ export const AVAILABILITY_ALARMS_KEY = "tacoplan_availability_alarms_enabled";
 
 let pendingSync: Promise<void> = Promise.resolve();
 
+// Impide que sincronizaciones anteriores vuelvan a activar alarmas tras cerrar.
+const closedShiftIds = new Set<string>();
+
+/**
+ * Se llama solo después de guardar correctamente el cierre de una jornada.
+ * Cancela los próximos avisos en iOS/Android y retira los ya mostrados.
+ * No toca notificaciones de AutoStart, dietas ni otras funciones.
+ */
+export function cancelAvailabilityAlarmsForClosedShift(shiftId: string): Promise<void> {
+  if (shiftId) closedShiftIds.add(shiftId);
+  const next = pendingSync.then(async () => {
+    await reconcileAvailabilityAlarms(null, undefined, false);
+    if (Platform.OS === "web") return;
+    const Notifications = await import("expo-notifications");
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    const ours = presented.filter(
+      item => item.request.content.data?.tacoplanAvailabilityAlarm === true,
+    );
+    await Promise.all(ours.map(
+      item => Notifications.dismissNotificationAsync(item.request.identifier),
+    ));
+  });
+  pendingSync = next.catch(() => {});
+  return next;
+}
+
 export function syncAvailabilityAlarms(shift: AlarmShift | null, context: AvailabilityContext | undefined, enabled: boolean): Promise<void> {
   const next = pendingSync.then(() => reconcileAvailabilityAlarms(shift, context, enabled));
   pendingSync = next.catch(() => {});
@@ -17,6 +43,8 @@ async function reconcileAvailabilityAlarms(
   context: AvailabilityContext | undefined,
   enabled: boolean,
 ): Promise<void> {
+  // El cierre tiene prioridad incluso frente a sincronizaciones en cola.
+  if (shift?.id && closedShiftIds.has(shift.id)) return;
   if (Platform.OS === "web") return;
   const Notifications = await import("expo-notifications");
   const existing = await Notifications.getAllScheduledNotificationsAsync();
