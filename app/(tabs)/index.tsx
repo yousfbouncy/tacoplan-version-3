@@ -784,19 +784,35 @@ export default function DashboardScreen() {
   const abiertaQuery = useQuery<Jornada | null>({
     queryKey: dashboardQueryKey("jornada-abierta", user?.id),
     queryFn: () => getJornadaAbierta(),
+    // Mantener en pantalla el dato local mientras se actualiza en segundo plano.
+    staleTime: 30_000,
   });
 
+  const [lastResolvedShift, setLastResolvedShift] = useState<{
+    userId: string | undefined;
+    shift: Jornada | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!abiertaQuery.isSuccess) return;
+    setLastResolvedShift({ userId: user?.id, shift: abiertaQuery.data ?? null });
+  }, [abiertaQuery.isSuccess, abiertaQuery.data, user?.id]);
+
   useFocusEffect(useCallback(() => {
-    const refreshLocalShift = () => {
-      void qc.invalidateQueries({ queryKey: ["jornada-abierta"] });
-      void qc.invalidateQueries({ queryKey: ["estado-legal"] });
+    const refreshIfStale = () => {
+      for (const name of ["jornada-abierta", "estado-legal"]) {
+        const key = dashboardQueryKey(name, user?.id);
+        const state = qc.getQueryState(key);
+        // No cancelar una lectura en curso ni relanzar peticiones recientes.
+        if (!state || state.fetchStatus === "fetching") continue;
+        void qc.refetchQueries({ queryKey: key, type: "active", stale: true });
+      }
     };
-    refreshLocalShift();
+    refreshIfStale();
     const sub = AppState.addEventListener("change", state => {
-      if (state === "active") refreshLocalShift();
+      if (state === "active") refreshIfStale();
     });
     return () => sub.remove();
-  }, [qc]));
+  }, [qc, user?.id]));
 
   useEffect(() => {
     if (!showFinForm) return;
@@ -820,6 +836,7 @@ export default function DashboardScreen() {
   const estadoQuery = useQuery<EstadoLegal>({
     queryKey: dashboardQueryKey("estado-legal", user?.id),
     queryFn: () => getEstadoLegal(),
+    staleTime: 30_000,
   });
 
   useFocusEffect(useCallback(() => {
@@ -860,7 +877,9 @@ export default function DashboardScreen() {
   });
   const legalPreview = legalPreviewQuery.data;
 
-  const abierta = ferryJustClosed ? null : abiertaQuery.data;
+  const cachedShift = lastResolvedShift?.userId === user?.id ? lastResolvedShift : null;
+  const abierta = ferryJustClosed ? null :
+    abiertaQuery.isSuccess ? abiertaQuery.data : cachedShift?.shift ?? null;
   const estado = estadoQuery.data;
 
   const isCrossSundayMonday = useMemo(() => {
@@ -1774,6 +1793,8 @@ export default function DashboardScreen() {
       return result;
     },
     onSuccess: async (closed: Jornada) => {
+      // Reflejar el cierre inmediatamente, sin esperar al siguiente refresco.
+      qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), null);
       // La jornada ya está guardada como cerrada: anular inmediatamente todas
       // sus alarmas pendientes y visibles, incluso antes de actualizar la UI.
       try {
@@ -1858,7 +1879,21 @@ export default function DashboardScreen() {
     },
   });
 
-  const isLoading = abiertaQuery.isLoading;
+  const isLoading = abiertaQuery.isPending && !cachedShift;
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    if (manualRefreshing) return;
+    setManualRefreshing(true);
+    try {
+      await Promise.all(
+        ["jornada-abierta", "estado-legal", "legal-preview", "last-closed"].map((name) =>
+          qc.refetchQueries({ queryKey: dashboardQueryKey(name, user?.id), type: "active" }),
+        ),
+      );
+    } finally {
+      setManualRefreshing(false);
+    }
+  }, [manualRefreshing, qc, user?.id]);
   const showDietFields = isMoroccoMode ? ferryConfig.paymentMode === "morocco_diet" : paymentMode === "dietas";
   const showKmFields = !isMoroccoMode && paymentMode === "km";
   const showTripFields = !isMoroccoMode && paymentMode === "viaje";
@@ -2309,8 +2344,8 @@ export default function DashboardScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={abiertaQuery.isRefetching || estadoQuery.isRefetching}
-            onRefresh={invalidateAll}
+            refreshing={manualRefreshing}
+            onRefresh={handleManualRefresh}
             tintColor={Colors.light.tint}
           />
         }
@@ -2341,7 +2376,7 @@ export default function DashboardScreen() {
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.light.accent, position: "absolute", top: 9, right: 9 }} />
               )}
               {syncStatus === "syncing" ? (
-                <ActivityIndicator size="small" color={Colors.light.tint} />
+                <Ionicons name="cloud-upload-outline" size={22} color={Colors.light.tint} />
               ) : syncStatus === "synced" ? (
                 <Ionicons name="cloud-done-outline" size={22} color={Colors.light.success} />
               ) : syncStatus === "error" ? (
