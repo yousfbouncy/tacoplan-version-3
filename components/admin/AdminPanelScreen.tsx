@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
-import AdminNotificationExtraControls, { type ExtraAction, type EditableQuestion, type FormKind } from "@/components/admin/AdminNotificationExtraControls";
+import AdminNotificationExtraControls, { AdminNotificationContentKindSelector, type ExtraAction, type EditableQuestion, type FormKind } from "@/components/admin/AdminNotificationExtraControls";
 import AdminNotificationFormResponses from "@/components/admin/AdminNotificationFormResponses";
 import AdminSurveyResults from "@/components/admin/AdminSurveyResults";
 import { supabase } from "@/lib/supabase";
@@ -1057,10 +1057,11 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     setSendError(null);
     setSendResult(null);
     if (!title.trim()) {
-      setSendError("Escribe un título para la notificación.");
+      setSendError(formKind === "survey" ? "Escribe el título de la encuesta." :
+        formKind === "form" ? "Escribe el título del formulario." : "Escribe un título para la notificación.");
       return;
     }
-    if (!body.trim()) {
+    if (formKind === "none" && !body.trim()) {
       setSendError("Escribe un mensaje para la notificación.");
       return;
     }
@@ -1089,15 +1090,20 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       if (!token) throw new Error("No autenticado");
       const isUpdateOptional = type === "update_optional";
       const isUpdateRequired = type === "update_required";
-      const effectiveType = isUpdateOptional || isUpdateRequired ? "update" : type;
-      const extraData =
+      const effectiveType = formKind !== "none" ? "admin_message" :
+        isUpdateOptional || isUpdateRequired ? "update" : type;
+      const extraData = formKind !== "none" ? {} :
         isUpdateOptional ? { update_mode: "optional", force_update: false } :
         isUpdateRequired ? { update_mode: "required", force_update: true } :
         {};
+      // The backend needs a body for delivery, but an introduction is optional for a survey/form.
+      const effectiveBody = body.trim() || (formKind === "survey"
+        ? "Responde a esta encuesta desde Tacoplan."
+        : "Completa este formulario desde Tacoplan.");
 
       const res: any = await callEdge("send-admin-notification", token, {
         title: title.trim(),
-        body: body.trim(),
+        body: effectiveBody,
         type: effectiveType,
         button_text: buttonText.trim() || undefined,
         button_url: buttonUrl.trim() || undefined,
@@ -1122,7 +1128,8 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       });
 
       setSendResult(res || null);
-      showToast("success", "Notificación enviada.");
+      showToast("success", formKind === "survey" ? "Encuesta enviada." :
+        formKind === "form" ? "Formulario enviado." : "Notificación enviada.");
       loadHistory();
       if (tab !== "notifications") goToScreen("notifications");
     } catch (e: any) {
@@ -1585,22 +1592,37 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     <>
       <View style={[styles.twoCol, { alignItems: "flex-start" }]}>
         <SurfaceCard
-          title="Notificaciones manuales"
-          description={isCompact ? undefined : "Diseñado para enviar mensajes rápidos con filtros reales en backend."}
+          title={formKind === "survey" ? "Crear encuesta" : formKind === "form" ? "Crear formulario" : "Enviar notificación"}
+          description={isCompact ? undefined : (formKind === "none"
+            ? "Envía un aviso a los usuarios con enlaces opcionales."
+            : "Configura el título y las preguntas que responderán los usuarios en Tacoplan.")}
           style={{ flex: 1, minWidth: isWide ? 460 : 0 }}
         >
           <View style={{ gap: 16 }}>
-            <Field label="Título">
-              <Input value={title} onChangeText={setTitle} placeholder="Ej. Actualización disponible" />
+            <AdminNotificationContentKindSelector value={formKind}
+              onChange={kind => { setFormKind(kind); setSendError(null); setPreviewError(null); setPreviewResult(null); }} />
+
+            <Field label={formKind === "survey" ? "Título de la encuesta" :
+              formKind === "form" ? "Título del formulario" : "Título de la notificación"}>
+              <Input value={title} onChangeText={setTitle}
+                placeholder={formKind === "survey" ? "Ej. ¿Cómo valoras Tacoplan?" :
+                  formKind === "form" ? "Ej. Solicitud de información" : "Ej. Actualización disponible"} />
             </Field>
 
-            <Field label={`Mensaje · ${body.length} caracteres`}>
-              <Input value={body} onChangeText={setBody} placeholder="Escribe el mensaje que verá el usuario." multiline />
+            <Field label={formKind === "none" ? `Mensaje · ${body.length} caracteres` :
+              `Descripción o introducción (opcional) · ${body.length} caracteres`}>
+              <Input value={body} onChangeText={setBody} multiline
+                placeholder={formKind === "survey" ? "Ej. Tu opinión nos ayuda a mejorar. Puedes dejarlo vacío." :
+                  formKind === "form" ? "Ej. Completa este formulario. Puedes dejarlo vacío." :
+                    "Escribe el mensaje que verá el usuario."} />
             </Field>
+            {formKind !== "none" ? (
+              <Text style={styles.helperText}>Las preguntas y sus respuestas se configuran más abajo. No necesitas escribir un mensaje manual.</Text>
+            ) : null}
 
             <View style={styles.inlineInputs}>
               <View style={{ flex: 1 }}>
-                <Field label="Nombre del botón">
+                <Field label={formKind === "none" ? "Nombre del botón" : "Botón de enlace (opcional)"}>
                   <Input value={buttonText} onChangeText={setButtonText} placeholder="Ej. Abrir ahora" />
                 </Field>
               </View>
@@ -1612,7 +1634,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
             </View>
 
             <AdminNotificationExtraControls actions={extraActions} onActionsChange={setExtraActions}
-              formKind={formKind} onFormKindChange={setFormKind}
+              formKind={formKind}
               questions={formQuestions} onQuestionsChange={setFormQuestions} />
 
             {validateInteractiveFields(buttonText, buttonUrl, extraActions, formKind, formQuestions) ? (
@@ -1622,13 +1644,15 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
               </View>
             ) : null}
 
-            <Field label="Tipo">
-              <View style={styles.inlineGroup}>
-                {NOTIFICATION_TYPE_OPTIONS.map((opt) => (
-                  <FilterPill key={opt} label={TYPE_LABELS[opt] ?? opt} active={type === opt} onPress={() => setType(opt)} />
-                ))}
-              </View>
-            </Field>
+            {formKind === "none" ? (
+              <Field label="Tipo de aviso">
+                <View style={styles.inlineGroup}>
+                  {NOTIFICATION_TYPE_OPTIONS.map((opt) => (
+                    <FilterPill key={opt} label={TYPE_LABELS[opt] ?? opt} active={type === opt} onPress={() => setType(opt)} />
+                  ))}
+                </View>
+              </Field>
+            ) : null}
 
             <Field label="Destinatarios">
               <View style={styles.inlineGroup}>
@@ -1668,7 +1692,9 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
 
             <View style={styles.rowButtons}>
               <InlineButton label="Previsualizar destinatarios" onPress={onPreviewTargets} icon={Search} tone="secondary" loading={previewLoading} style={{ flex: 1 }} />
-              <InlineButton label="Enviar notificación" onPress={onSend} icon={SendHorizontal} tone="primary" loading={sending} style={{ flex: 1 }} />
+              <InlineButton label={formKind === "survey" ? "Enviar encuesta" :
+                formKind === "form" ? "Enviar formulario" : "Enviar notificación"}
+                onPress={onSend} icon={SendHorizontal} tone="primary" loading={sending} style={{ flex: 1 }} />
             </View>
           </View>
         </SurfaceCard>
@@ -2148,7 +2174,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     summary: { title: "Resumen", subtitle: "Un dashboard limpio, rápido y útil tanto en escritorio como en móvil." },
     users: { title: "Usuarios", subtitle: "Búsqueda, filtros y acciones rápidas por usuario." },
     surveys: { title: "Encuestas", subtitle: "Consulta privada de las valoraciones y sugerencias semanales de los usuarios." },
-    notifications: { title: "Notificaciones", subtitle: "Envía mensajes manuales con vista previa y confirmación clara." },
+    notifications: { title: "Notificaciones", subtitle: "Envía avisos, encuestas y formularios con botones y respuestas dentro de Tacoplan." },
     scheduled: { title: "Programadas", subtitle: "Crea, edita y ejecuta envíos programados con mejor control." },
     automations: { title: "Automáticas", subtitle: "Gestiona las reglas existentes y pruébalas desde el flujo manual." },
     updates: { title: "Actualizaciones", subtitle: "Publica avisos de versión con modo opcional u obligatorio." },
