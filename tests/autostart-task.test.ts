@@ -17,7 +17,7 @@ const epoch = Date.parse("2026-10-27T08:00:00Z");
 function fix(seconds: number, speed = 15, accuracy = 5) {
   return { timestamp: epoch + seconds * 1000, coords: { speed: speed / 3.6, accuracy, latitude: 41.5, longitude: 1.9 } };
 }
-async function harness(options: { cloudFails?: boolean; createFails?: boolean; otherUser?: boolean; open?: boolean } = {}) {
+async function harness(options: { cloudFails?: boolean; createFails?: boolean; otherUser?: boolean; open?: boolean; lastEndLocation?: string | null } = {}) {
   let stored = JSON.stringify({ userId: "u1", enabled: true, candidate: null, lastDetectedAt: 0, proposals: [], movementSegments: [], firstMovementAt: null });
   let callback: any;
   let open: any = options.open ? { id: "manual" } : null;
@@ -38,6 +38,7 @@ async function harness(options: { cloudFails?: boolean; createFails?: boolean; o
     "@/lib/user-scope": { async userScopedKey(key: string, user?: string) { return `${key}_${user ?? (options.otherUser ? "u2" : "u1")}`; } },
     "@/lib/local-storage": {
       async getJornadaAbierta() { return open; },
+      async getLastLugarFin() { return options.lastEndLocation === undefined ? "Narbonne, Francia" : options.lastEndLocation; },
       async crearJornadaInicio(data: any) { if (failCreate) throw new Error("disk failure"); creates++; open = { id: "shift", ...data }; return open; },
       async getEstadoLegal() { return { availabilityContext: { shiftId: "shift" }, disponibilidadMin: 900 }; },
     },
@@ -66,6 +67,20 @@ test("native task starts after 3 continuous minutes, saves first movement and re
   assert.equal(h.state().candidate, null);
   assert.ok(h.notifications.some(n => n.content.title.includes("Jornada iniciada")));
   assert.equal(h.invalidations.length, 2);
+});
+
+test("AutoStart copies the previous closed jornada end as its start location, never the GPS coordinates", async () => {
+  const h = await harness({ lastEndLocation: "Fitou, Francia" });
+  await h.deliver(fix(0), fix(60), fix(120), fix(180));
+  assert.equal(h.creates(), 1);
+  assert.equal(h.shift().lugarInicio, "Fitou, Francia");
+});
+
+test("AutoStart still begins if there is no previous jornada end location", async () => {
+  const h = await harness({ lastEndLocation: null });
+  await h.deliver(fix(0), fix(60), fix(120), fix(180));
+  assert.equal(h.creates(), 1);
+  assert.equal(h.shift().lugarInicio, "Lugar de inicio pendiente");
 });
 
 test("notification for first segment is followed by automatic start after three valid segments", async () => {
