@@ -1043,6 +1043,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
         platform: targetPlatform || undefined,
         send_push: sendPush,
         create_internal_notification: createInternal,
+        interactive_kind: formKind !== "none" ? formKind : undefined,
       });
       setPreviewResult(res || null);
     } catch (e: any) {
@@ -1128,8 +1129,14 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       });
 
       setSendResult(res || null);
-      showToast("success", formKind === "survey" ? "Encuesta enviada." :
-        formKind === "form" ? "Formulario enviado." : "Notificación enviada.");
+      const skipped = Number(res?.incompatible_skipped || 0);
+      const delivered = Number(res?.users_found || res?.targetUsers || 0);
+      if (formKind !== "none" && delivered === 0) {
+        showToast("warning", "No se ha enviado: ningún destinatario tiene todavía una versión compatible.");
+      } else {
+        showToast("success", formKind === "survey" ? "Encuesta enviada." :
+          formKind === "form" ? "Formulario enviado." : "Notificación enviada.");
+      }
       loadHistory();
       if (tab !== "notifications") goToScreen("notifications");
     } catch (e: any) {
@@ -1706,7 +1713,12 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
             ) : previewResult ? (
               <View style={{ gap: 12 }}>
                 <PreviewLine label="Destinatario seleccionado" value={targetLabel(targetType)} />
-                <PreviewLine label="Usuarios estimados" value={String(previewResult.targetUsers ?? 0)} />
+                <PreviewLine label={formKind === "none" ? "Usuarios estimados" : "Usuarios compatibles"}
+                  value={String(previewResult.targetUsers ?? 0)} />
+                {formKind !== "none" ? (
+                  <PreviewLine label="Versiones antiguas excluidas"
+                    value={String((previewResult as any).incompatible_skipped ?? 0)} />
+                ) : null}
                 <PreviewLine label="Tokens push estimados" value={String(previewResult.tokens ?? 0)} />
                 <PreviewLine label="Internas estimadas" value={String(previewResult.internalNotificationsCreated ?? 0)} />
                 <PreviewLine label="Botones" value={String((buttonUrl.trim() ? 1 : 0) + extraActions.filter(a => a.url.trim()).length)} />
@@ -1725,6 +1737,9 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
             {sendResult ? (
               <View style={{ gap: 12 }}>
                 <PreviewLine label="Usuarios objetivo" value={String(sendResult.users_found ?? sendResult.targetUsers ?? 0)} />
+                {sendResult.incompatible_skipped ? (
+                  <PreviewLine label="Versiones no compatibles excluidas" value={String(sendResult.incompatible_skipped)} />
+                ) : null}
                 <PreviewLine label="Tokens encontrados" value={String(sendResult.tokens_found ?? sendResult.tokens ?? 0)} />
                 <PreviewLine label="Push enviados" value={String(sendResult.push_ok ?? sendResult.messagesOk ?? 0)} />
                 <PreviewLine label="Push fallidos" value={String(sendResult.push_failed ?? sendResult.messagesFailed ?? 0)} />
