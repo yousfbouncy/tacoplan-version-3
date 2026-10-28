@@ -407,7 +407,7 @@ function validateInteractiveFields(
   for (const action of actions) {
     if (!!action.label.trim() !== !!action.url.trim()) return "Cada botón necesita nombre y enlace.";
     if (action.label && action.label.length > 80) return "Los nombres de botones no pueden superar 80 caracteres.";
-    if (action.url && !/^(https?:\\/\\/|tacoplan:\\/\\/)/i.test(action.url.trim()))
+    if (action.url && !["https://", "http://", "tacoplan://"].some(prefix => action.url.trim().toLowerCase().startsWith(prefix)))
       return "Los enlaces deben empezar por https://, http:// o tacoplan://.";
   }
   if (formKind !== "none") {
