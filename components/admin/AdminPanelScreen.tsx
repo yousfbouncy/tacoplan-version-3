@@ -44,6 +44,8 @@ import {
   X,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
+import AdminNotificationExtraControls, { type ExtraAction, type EditableQuestion, type FormKind } from "@/components/admin/AdminNotificationExtraControls";
+import AdminNotificationFormResponses from "@/components/admin/AdminNotificationFormResponses";
 import AdminSurveyResults from "@/components/admin/AdminSurveyResults";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
@@ -186,6 +188,9 @@ type NotificationComposeDraft = {
   type: NotificationMessageType;
   buttonText: string;
   buttonUrl: string;
+  extraActions: ExtraAction[];
+  formKind: FormKind;
+  formQuestions: EditableQuestion[];
   targetType: ScheduleTargetType;
   targetPlatform: "" | "ios" | "android";
   selectedUser: AdminUserRow | null;
@@ -202,6 +207,9 @@ function saveNotificationComposeDraft(partial: Partial<NotificationComposeDraft>
     type: "admin_message",
     buttonText: "",
     buttonUrl: "",
+    extraActions: [],
+    formKind: "none",
+    formQuestions: [{ id: "q1", label: "", type: "choice", optionsText: "", required: true }],
     targetType: "all",
     targetPlatform: "",
     selectedUser: null,
@@ -388,6 +396,35 @@ function notificationActionError(buttonText: string | null | undefined, buttonUr
   return "Completa el nombre del botón y el enlace (URL) para incluir la acción.";
 }
 
+function validateInteractiveFields(
+  buttonText: string, buttonUrl: string, extraActions: ExtraAction[],
+  formKind: FormKind, questions: EditableQuestion[],
+): string | null {
+  const firstError = notificationActionError(buttonText, buttonUrl);
+  if (firstError) return firstError;
+  const actions = [{ label: buttonText, url: buttonUrl }, ...extraActions];
+  if (actions.length > 4) return "Máximo cuatro botones por notificación.";
+  for (const action of actions) {
+    if (!!action.label.trim() !== !!action.url.trim()) return "Cada botón necesita nombre y enlace.";
+    if (action.label && action.label.length > 80) return "Los nombres de botones no pueden superar 80 caracteres.";
+    if (action.url && !/^(https?:\\/\\/|tacoplan:\\/\\/)/i.test(action.url.trim()))
+      return "Los enlaces deben empezar por https://, http:// o tacoplan://.";
+  }
+  if (formKind !== "none") {
+    if (questions.length < 1 || questions.length > 6) return "Añade de una a seis preguntas.";
+    if (new Set(questions.map(q => q.id)).size !== questions.length) return "Las preguntas tienen identificadores duplicados.";
+    for (const q of questions) {
+      if (!q.label.trim() || q.label.length > 200) return "Escribe un texto válido para cada pregunta.";
+      if (q.type === "choice") {
+        const options = q.optionsText.split(",").map(x => x.trim()).filter(Boolean);
+        if (options.length < 2 || options.length > 8) return "Cada pregunta de opciones necesita entre 2 y 8 respuestas separadas por comas.";
+        if (options.some(x => x.length > 100)) return "Cada opción debe tener como máximo 100 caracteres.";
+      }
+    }
+  }
+  return null;
+}
+
 function makeEmptySchedule() {
   return {
     id: null as string | null,
@@ -524,6 +561,11 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
   const [type, setType] = useState<NotificationMessageType>("admin_message");
   const [buttonText, setButtonText] = useState("");
   const [buttonUrl, setButtonUrl] = useState("");
+  const [extraActions, setExtraActions] = useState<ExtraAction[]>([]);
+  const [formKind, setFormKind] = useState<FormKind>("none");
+  const [formQuestions, setFormQuestions] = useState<EditableQuestion[]>([
+    { id: "q1", label: "", type: "choice", optionsText: "", required: true },
+  ]);
   const [targetType, setTargetType] = useState<ScheduleTargetType>("all");
   const [targetPlatform, setTargetPlatform] = useState<"" | "ios" | "android">("");
   const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
@@ -622,6 +664,9 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     setType(draft.type);
     setButtonText(draft.buttonText);
     setButtonUrl(draft.buttonUrl);
+    setExtraActions(draft.extraActions || []);
+    setFormKind(draft.formKind || "none");
+    setFormQuestions(draft.formQuestions || [{ id: "q1", label: "", type: "choice", optionsText: "", required: true }]);
     setTargetType(draft.targetType);
     setTargetPlatform(draft.targetPlatform);
     setSelectedUser(draft.selectedUser);
@@ -645,6 +690,9 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       type,
       buttonText,
       buttonUrl,
+      extraActions,
+      formKind,
+      formQuestions,
       targetType: "user",
       targetPlatform,
       selectedUser,
@@ -652,7 +700,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       createInternal,
     });
     goToScreen("users");
-  }, [body, buttonText, buttonUrl, createInternal, goToScreen, selectedUser, sendPush, targetPlatform, title, type]);
+  }, [body, buttonText, buttonUrl, extraActions, formKind, formQuestions, createInternal, goToScreen, selectedUser, sendPush, targetPlatform, title, type]);
 
   const openNotificationsForUser = useCallback((user: AdminUserRow, overrides?: Partial<NotificationComposeDraft>) => {
     saveNotificationComposeDraft({
@@ -661,6 +709,9 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       type,
       buttonText,
       buttonUrl,
+      extraActions,
+      formKind,
+      formQuestions,
       targetType: "user",
       targetPlatform,
       selectedUser: user,
@@ -669,7 +720,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       ...overrides,
     });
     goToScreen("notifications");
-  }, [body, buttonText, buttonUrl, createInternal, goToScreen, sendPush, targetPlatform, title, type]);
+  }, [body, buttonText, buttonUrl, extraActions, formKind, formQuestions, createInternal, goToScreen, sendPush, targetPlatform, title, type]);
 
   const callEdge = useCallback(async (fnName: string, token: string, payload: any) => {
     const anonKey = String((supabase as any)?.supabaseKey || "");
@@ -964,7 +1015,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
 
   const onPreviewTargets = useCallback(async () => {
     if (previewLoading) return;
-    const actionError = notificationActionError(buttonText, buttonUrl);
+    const actionError = validateInteractiveFields(buttonText, buttonUrl, extraActions, formKind, formQuestions);
     if (actionError) {
       setPreviewError(actionError);
       return;
@@ -993,7 +1044,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     } finally {
       setPreviewLoading(false);
     }
-  }, [buttonText, buttonUrl, callEdge, createInternal, getAccessToken, openUserPicker, previewLoading, selectedUser?.user_id, sendPush, targetPlatform, targetType]);
+  }, [buttonText, buttonUrl, extraActions, formKind, formQuestions, callEdge, createInternal, getAccessToken, openUserPicker, previewLoading, selectedUser?.user_id, sendPush, targetPlatform, targetType]);
 
   const onSend = useCallback(async () => {
     if (sending) return;
@@ -1007,9 +1058,13 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       setSendError("Escribe un mensaje para la notificación.");
       return;
     }
-    const actionError = notificationActionError(buttonText, buttonUrl);
+    const actionError = validateInteractiveFields(buttonText, buttonUrl, extraActions, formKind, formQuestions);
     if (actionError) {
       setSendError(actionError);
+      return;
+    }
+    if (formKind !== "none" && !createInternal) {
+      setSendError("Las encuestas y formularios necesitan activar la notificación interna.");
       return;
     }
     if (!sendPush && !createInternal) {
@@ -1045,7 +1100,19 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
         platform: targetPlatform || undefined,
         send_push: sendPush,
         create_internal_notification: createInternal,
-        data: extraData,
+        data: {
+          ...extraData,
+          presentation: "modal",
+          actions: [{ label: buttonText.trim(), url: buttonUrl.trim() }, ...extraActions]
+            .filter(a => a.label && a.url).map(a => ({ label: a.label.trim(), url: a.url.trim() })),
+          ...(formKind !== "none" ? { form: {
+            kind: formKind,
+            questions: formQuestions.map(q => ({
+              id: q.id, label: q.label.trim(), type: q.type, required: q.required,
+              ...(q.type === "choice" ? { options: q.optionsText.split(",").map(x => x.trim()).filter(Boolean) } : {}),
+            })),
+          } } : {}),
+        },
       });
 
       setSendResult(res || null);
@@ -1059,7 +1126,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     } finally {
       setSending(false);
     }
-  }, [body, buttonText, buttonUrl, callEdge, createInternal, getAccessToken, goToScreen, loadHistory, openUserPicker, selectedUser?.user_id, sendPush, sending, showToast, tab, targetPlatform, targetType, title, type]);
+  }, [body, buttonText, buttonUrl, extraActions, formKind, formQuestions, callEdge, createInternal, getAccessToken, goToScreen, loadHistory, openUserPicker, selectedUser?.user_id, sendPush, sending, showToast, tab, targetPlatform, targetType, title, type]);
 
   const saveAutomationSetting = useCallback(async (next: AutomationSetting) => {
     try {
@@ -1538,10 +1605,14 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
               </View>
             </View>
 
-            {notificationActionError(buttonText, buttonUrl) ? (
+            <AdminNotificationExtraControls actions={extraActions} onActionsChange={setExtraActions}
+              formKind={formKind} onFormKindChange={setFormKind}
+              questions={formQuestions} onQuestionsChange={setFormQuestions} />
+
+            {validateInteractiveFields(buttonText, buttonUrl, extraActions, formKind, formQuestions) ? (
               <View style={styles.inlineError}>
                 <CircleAlert size={16} color="#B91C1C" />
-                <Text style={styles.inlineErrorText}>{notificationActionError(buttonText, buttonUrl)}</Text>
+                <Text style={styles.inlineErrorText}>{validateInteractiveFields(buttonText, buttonUrl, extraActions, formKind, formQuestions)}</Text>
               </View>
             ) : null}
 
@@ -1606,7 +1677,8 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
                 <PreviewLine label="Usuarios estimados" value={String(previewResult.targetUsers ?? 0)} />
                 <PreviewLine label="Tokens push estimados" value={String(previewResult.tokens ?? 0)} />
                 <PreviewLine label="Internas estimadas" value={String(previewResult.internalNotificationsCreated ?? 0)} />
-                <PreviewLine label="Botón" value={buttonUrl.trim() ? (buttonText.trim() || "Configurado") : "Sin botón"} />
+                <PreviewLine label="Botones" value={String((buttonUrl.trim() ? 1 : 0) + extraActions.filter(a => a.url.trim()).length)} />
+                <PreviewLine label="Formulario" value={formKind === "none" ? "No" : formKind === "survey" ? "Encuesta" : "Formulario"} />
                 <View style={styles.badgesRow}>
                   <Badge label={`iOS ${previewResult.push_tokens_by_platform?.ios ?? 0}`} tone="info" />
                   <Badge label={`Android ${previewResult.push_tokens_by_platform?.android ?? 0}`} tone="info" />
@@ -1625,7 +1697,8 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
                 <PreviewLine label="Push enviados" value={String(sendResult.push_ok ?? sendResult.messagesOk ?? 0)} />
                 <PreviewLine label="Push fallidos" value={String(sendResult.push_failed ?? sendResult.messagesFailed ?? 0)} />
                 <PreviewLine label="Internas creadas" value={String(sendResult.internal_created ?? sendResult.internalNotificationsCreated ?? 0)} />
-                <PreviewLine label="Botón" value={buttonUrl.trim() ? (buttonText.trim() || "Configurado") : "Sin botón"} />
+                <PreviewLine label="Botones" value={String((buttonUrl.trim() ? 1 : 0) + extraActions.filter(a => a.url.trim()).length)} />
+                <PreviewLine label="Formulario" value={formKind === "none" ? "No" : formKind === "survey" ? "Encuesta" : "Formulario"} />
               </View>
             ) : (
               <Text style={styles.helperText}>{isCompact ? "Aquí verás el último resultado." : "Cuando envíes una notificación, aquí verás el resultado resumido."}</Text>
@@ -1666,6 +1739,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
           </View>
         )}
       </SurfaceCard>
+      <AdminNotificationFormResponses />
     </>
   );
 
