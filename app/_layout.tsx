@@ -383,7 +383,6 @@ export default function RootLayout() {
 
   useEffect(() => {
     let cancelled = false;
-    const startedAt = Date.now();
     async function loadFontsAndHoldSplash() {
       try {
         if (Platform.OS === "web") {
@@ -398,16 +397,12 @@ export default function RootLayout() {
         }
       } catch {
       }
-      const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(0, 4000 - elapsed);
-      if (remaining > 0) {
-        await new Promise((r) => setTimeout(r, remaining));
-      }
+      // Mostrar la app en cuanto estén las fuentes; no añadir 4 s artificiales.
       if (cancelled) return;
       try {
         await SplashScreen.hideAsync();
       } catch {}
-      if (__DEV__) console.log("[SPLASH] Shown for 4s, continuing app bootstrap");
+      if (__DEV__) console.log("[SPLASH] Fonts ready, continuing app bootstrap");
       setBootReady(true);
     }
     loadFontsAndHoldSplash();
