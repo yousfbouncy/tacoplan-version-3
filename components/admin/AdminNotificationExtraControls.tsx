@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 export type ExtraAction = { label: string; url: string };
-export type EditableQuestion = { id: string; label: string; type: "text" | "choice"; optionsText: string; required: boolean };
+export type EditableQuestion = { id: string; label: string; type: "text" | "choice"; options: string[]; required: boolean };
 export type FormKind = "none" | "survey" | "form";
 
 type Props = {
@@ -15,6 +15,8 @@ type Props = {
 
 const MAX_BUTTONS = 4; // Includes the original primary button.
 const MAX_QUESTIONS = 6;
+const MAX_OPTIONS = 8;
+const MIN_OPTIONS = 2;
 
 function SmallButton({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
@@ -32,6 +34,24 @@ export default function AdminNotificationExtraControls({
     onActionsChange(actions.map((item, i) => i === index ? { ...item, [key]: value } : item));
   const updateQuestion = (index: number, change: Partial<EditableQuestion>) =>
     onQuestionsChange(questions.map((item, i) => i === index ? { ...item, ...change } : item));
+  const updateOption = (questionIndex: number, optionIndex: number, value: string) =>
+    onQuestionsChange(questions.map((question, i) =>
+      i === questionIndex
+        ? { ...question, options: (question.options || ["", ""]).map((answer, j) => j === optionIndex ? value : answer) }
+        : question
+    ));
+  const addOption = (questionIndex: number) =>
+    onQuestionsChange(questions.map((question, i) =>
+      i === questionIndex && (question.options || ["", ""]).length < MAX_OPTIONS
+        ? { ...question, options: [...(question.options || ["", ""]), ""] }
+        : question
+    ));
+  const removeOption = (questionIndex: number, optionIndex: number) =>
+    onQuestionsChange(questions.map((question, i) =>
+      i === questionIndex && (question.options || ["", ""]).length > MIN_OPTIONS
+        ? { ...question, options: question.options.filter((_, j) => j !== optionIndex) }
+        : question
+    ));
   return (
     <View style={styles.root}>
       <Text style={styles.heading}>Botones adicionales (hasta {MAX_BUTTONS} en total)</Text>
@@ -73,10 +93,33 @@ export default function AdminNotificationExtraControls({
                   onPress={() => updateQuestion(index, { type: "text" })} />
               </View>
               {q.type === "choice" ? (
-                <TextInput placeholder="Opciones separadas por comas (Ej. Sí, No, A veces)"
-                  placeholderTextColor="#94A3B8" style={styles.input} value={q.optionsText}
-                  onChangeText={text => updateQuestion(index, { optionsText: text })} maxLength={600} />
-              ) : null}
+                <View style={styles.optionsGroup}>
+                  <Text style={styles.label}>Respuestas posibles · {(q.options || ["", ""]).length} de {MAX_OPTIONS}</Text>
+                  {(q.options || ["", ""]).map((option, optionIndex) => (
+                    <View key={optionIndex} style={styles.optionRow}>
+                      <Text style={styles.optionNumber}>{optionIndex + 1}.</Text>
+                      <TextInput
+                        accessibilityLabel={`Respuesta ${optionIndex + 1} de la pregunta ${index + 1}`}
+                        placeholder={`Escribe la respuesta ${optionIndex + 1}`}
+                        placeholderTextColor="#94A3B8"
+                        style={[styles.input, styles.optionInput]}
+                        value={option}
+                        maxLength={100}
+                        onChangeText={value => updateOption(index, optionIndex, value)}
+                      />
+                      {(q.options || []).length > MIN_OPTIONS ? (
+                        <SmallButton label="Quitar" onPress={() => removeOption(index, optionIndex)} />
+                      ) : null}
+                    </View>
+                  ))}
+                  <SmallButton
+                    label="+ Añadir respuesta"
+                    disabled={(q.options || ["", ""]).length >= MAX_OPTIONS}
+                    onPress={() => addOption(index)}
+                  />
+                  <Text style={styles.hint}>Añade una respuesta por campo. El usuario podrá elegir una de ellas.</Text>
+                </View>
+              ) : null>
               <View style={styles.row}>
                 <SmallButton label={q.required ? "● Obligatoria" : "○ Opcional"}
                   onPress={() => updateQuestion(index, { required: !q.required })} />
@@ -88,7 +131,7 @@ export default function AdminNotificationExtraControls({
           <SmallButton label="+ Añadir pregunta" disabled={questions.length >= MAX_QUESTIONS}
             onPress={() => {
               const id = "q" + (Math.max(0, ...questions.map(q => Number(q.id.slice(1)) || 0)) + 1);
-              onQuestionsChange([...questions, { id, label: "", type: "choice", optionsText: "", required: true }]);
+              onQuestionsChange([...questions, { id, label: "", type: "choice", options: ["", ""], required: true }]);
             }} />
         </View>
       ) : null}
@@ -111,4 +154,8 @@ const styles = StyleSheet.create({
   pillText: { fontFamily: "Inter_600SemiBold", fontSize: 13, color: "#475569" },
   pillTextActive: { color: "#1D4ED8" },
   form: { gap: 12 },
+  optionsGroup: { gap: 10 },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  optionNumber: { width: 20, fontFamily: "Inter_600SemiBold", fontSize: 13, color: "#475569" },
+  optionInput: { flex: 1, minWidth: 150 },
 });
