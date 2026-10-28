@@ -36,6 +36,12 @@ function findServiceRoleKey(maybe: unknown): string | null {
   return null;
 }
 
+function chunk<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
 serve(async (req: Request) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -89,6 +95,8 @@ serve(async (req: Request) => {
     const targetUserId = typeof body?.target_user_id === "string" ? body.target_user_id.trim() : "";
     const createInternal = body?.create_internal_notification === true;
     const sendPush = body?.send_push === true;
+    const interactiveKind = body?.interactive_kind;
+    const isInteractive = interactiveKind === "survey" || interactiveKind === "form";
 
     const allowedTargets = new Set([
       "all",
@@ -128,8 +136,39 @@ serve(async (req: Request) => {
       targetUsers = (ids || []).map((r: any) => String(r.user_id || "")).filter(Boolean);
     }
 
+    const originalTargetCount = targetUsers.length;
+    const eligibleDeviceTokens = new Set<string>();
+    if (isInteractive && targetUsers.length) {
+      const eligibleUsers = new Set<string>();
+      for (const batch of chunk(targetUsers, 400)) {
+        const { data: eligible, error } = await admin.rpc("tacoplan_interactive_notification_eligible_users", {
+          p_user_ids: batch,
+        });
+        if (error) throw error;
+        for (const row of eligible || []) {
+          if (typeof row.user_id === "string") eligibleUsers.add(row.user_id);
+        }
+      }
+      targetUsers = targetUsers.filter(id => eligibleUsers.has(id));
+      for (const batch of chunk(targetUsers, 400)) {
+        const { data: devices, error } = await admin
+          .from("app_user_devices")
+          .select("user_id,device_id,interactive_forms_capable_at,last_seen_at")
+          .in("user_id", batch);
+        if (error) throw error;
+        for (const d of devices || []) {
+          const cap = Date.parse(String(d.interactive_forms_capable_at || ""));
+          const seen = Date.parse(String(d.last_seen_at || ""));
+          if (Number.isFinite(cap) && Number.isFinite(seen) && cap >= seen - 10000) {
+            eligibleDeviceTokens.add(String(d.user_id) + "|" + String(d.device_id));
+          }
+        }
+      }
+    }
+    const incompatibleSkipped = isInteractive ? originalTargetCount - targetUsers.length : 0;
+
     let tokens: any[] = [];
-    if (sendPush) {
+    if (sendPush && targetUsers.length) {
       if (targetType === "user") {
         let q = admin
           .from("push_tokens")
@@ -146,6 +185,12 @@ serve(async (req: Request) => {
         if (error) throw error;
         tokens = rows || [];
       }
+    }
+
+    if (isInteractive) {
+      const selected = new Set(targetUsers);
+      tokens = tokens.filter(t => selected.has(String(t.user_id || (targetType === "user" ? targetUserId : ""))) &&
+        eligibleDeviceTokens.has(String(t.user_id || (targetType === "user" ? targetUserId : "")) + "|" + String(t.device_id || "")));
     }
 
     const byPlatform: any = { ios: 0, android: 0, other: 0 };
@@ -167,6 +212,7 @@ serve(async (req: Request) => {
       targetUsers: targetUsers.length,
       tokens: tokens.length,
       internalNotificationsCreated: createInternal ? targetUsers.length : 0,
+      incompatible_skipped: incompatibleSkipped,
     });
   } catch (e: any) {
     return json({ message: e?.message || String(e) }, 500);
