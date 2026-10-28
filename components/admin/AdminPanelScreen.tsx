@@ -1132,7 +1132,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       const skipped = Number(res?.incompatible_skipped || 0);
       const delivered = Number(res?.users_found || res?.targetUsers || 0);
       if (formKind !== "none" && delivered === 0) {
-        showToast("warning", "No se ha enviado: ningún destinatario tiene todavía una versión compatible.");
+        showToast("info", "No se ha enviado: ningún destinatario tiene todavía una versión compatible.");
       } else {
         showToast("success", formKind === "survey" ? "Encuesta enviada." :
           formKind === "form" ? "Formulario enviado." : "Notificación enviada.");
