@@ -33,6 +33,21 @@ export function getNotificationAction(input: NotificationLinkFields | null | und
   return { buttonText, buttonUrl };
 }
 
+
+export type NotificationAction = { label: string; url: string };
+
+export function getNotificationActions(input: NotificationLinkFields | null | undefined): NotificationAction[] {
+  const actions = input?.data?.actions;
+  if (Array.isArray(actions) && actions.length > 0) {
+    return actions.slice(0, 4).filter((item: any) =>
+      item && typeof item.label === "string" && typeof item.url === "string" &&
+      item.label.trim() && /^(https?:\\/\\/|tacoplan:\\/\\/)/i.test(item.url.trim())
+    ).map((item: any) => ({ label: item.label.trim(), url: item.url.trim() }));
+  }
+  const legacy = getNotificationAction(input);
+  return legacy.buttonText && legacy.buttonUrl ? [{ label: legacy.buttonText, url: legacy.buttonUrl }] : [];
+}
+
 export async function openNotificationUrl(url: string | null | undefined) {
   if (!url) return false;
   try {
