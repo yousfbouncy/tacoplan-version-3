@@ -54,11 +54,14 @@ export function getAvailabilityContext(jornadas: Jornada[]): AvailabilityContext
   };
 }
 
-export type AlarmShift = { id: string; fechaInicio: string; horaInicio: string; startAt?: string; fin?: string | null };
+export type AlarmShift = {
+  id: string; fechaInicio: string; horaInicio: string;
+  startAt?: string; fin?: string | null; fechaFin?: string | null; endAt?: string | null;
+};
 
 /** Shared adapter used by manual start and AutoStart; stale counters are unknown. */
 export function planAvailabilityAlarms(shift: AlarmShift | null, context: AvailabilityContext | undefined, enabled: boolean, now = Date.now()) {
-  if (!enabled || !shift || shift.fin) return [];
+  if (!enabled || !shift || shift.fin || shift.fechaFin || shift.endAt) return [];
   const matched = context?.shiftId === shift.id ? context : undefined;
   if (matched && !matched.aplica13h15h) return [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(shift.fechaInicio) || !/^\d{2}:\d{2}(:\d{2})?$/.test(shift.horaInicio)) return [];
