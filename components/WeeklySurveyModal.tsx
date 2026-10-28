@@ -131,6 +131,8 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
   const [error, setError] = useState("");
   const checkId = useRef(0);
   const savingRef = useRef(false);
+  const lastCheckedWeek = useRef<number | null>(null);
+  const retryAfter = useRef(0);
 
   const checkWeeklyResponse = useCallback(async () => {
     const id = ++checkId.current;
@@ -140,28 +142,47 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
     }
     if (savingRef.current) return;
 
+    const weekStart = thisWeekStartedAt();
+    lastCheckedWeek.current = weekStart;
     const { data, error: queryError } = await supabase
       .from("tacoplan_survey_responses")
       .select("updated_at")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    // A temporary network error must never trap a driver in an unusable app.
-    // Check again next time the app comes to the foreground.
-    if (queryError || id !== checkId.current || savingRef.current) return;
-
+    if (id !== checkId.current || savingRef.current) return;
+    if (queryError) {
+      // Retry an unsuccessful check while the app stays open. Do not treat a
+      // failed read as a completed survey, and do not close an already-open modal.
+      // We avoid blocking access indefinitely if the service is offline.
+      retryAfter.current = Date.now() + 2 * 60 * 1000;
+      return;
+    }
+    retryAfter.current = 0;
     const lastResponse = data?.updated_at ? new Date(data.updated_at).getTime() : 0;
+    // A skipped week never counts as answered. Only a saved response during
+    // the current Monday-Sunday week satisfies this week's requirement.
     setVisible(!Number.isFinite(lastResponse) || lastResponse < thisWeekStartedAt());
   }, [enabled, user?.id]);
 
   useEffect(() => {
+    lastCheckedWeek.current = null;
+    retryAfter.current = 0;
     void checkWeeklyResponse();
     const listener = AppState.addEventListener("change", (state) => {
       if (state === "active") void checkWeeklyResponse();
     });
+    // Check the week boundary even if the user leaves Tacoplan open over
+    // Sunday night. Retry temporary errors without requiring an app restart.
+    const interval = setInterval(() => {
+      const weekChanged = lastCheckedWeek.current !== thisWeekStartedAt();
+      const shouldRetry = retryAfter.current !== 0 && Date.now() >= retryAfter.current;
+      if (weekChanged || shouldRetry) void checkWeeklyResponse();
+    }, 60 * 1000);
     return () => {
       checkId.current += 1;
       listener.remove();
+      clearInterval(interval);
     };
   }, [checkWeeklyResponse]);
 
