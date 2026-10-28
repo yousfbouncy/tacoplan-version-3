@@ -1,6 +1,5 @@
 import "@/lib/autostart/task";
 import "react-native-url-polyfill/auto";
-import "@/lib/suppress-font-errors";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -23,8 +22,9 @@ import PeriodSetupModal from "@/components/PeriodSetupModal";
 import OnboardingSetup from "@/components/OnboardingSetup";
 import BaseLocationSetup from "@/components/BaseLocationSetup";
 import LoginScreen from "@/app/login";
-import { ActivityIndicator, LogBox, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import Colors from "@/constants/colors";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { userScopedKey } from "@/lib/user-scope";
@@ -37,7 +37,6 @@ import {
 } from "@expo-google-fonts/inter";
 
 SplashScreen.preventAutoHideAsync();
-LogBox.ignoreLogs(["timeout exceeded"]);
 
 const ONBOARDING_KEY = "tacoplan_onboarding_completed";
 const BASE_LOCATION_SKIP_KEY = "tacoplan_base_location_skip_once";
@@ -374,31 +373,6 @@ function PeriodSetupGate() {
   );
 }
 
-function loadWebFonts(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof document === "undefined") {
-      resolve();
-      return;
-    }
-    const link = document.createElement("link");
-    link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
-    link.rel = "stylesheet";
-    link.onload = () => {
-      const style = document.createElement("style");
-      style.textContent = `
-        [style*="Inter_400Regular"] { font-family: 'Inter', sans-serif !important; font-weight: 400 !important; }
-        [style*="Inter_500Medium"] { font-family: 'Inter', sans-serif !important; font-weight: 500 !important; }
-        [style*="Inter_600SemiBold"] { font-family: 'Inter', sans-serif !important; font-weight: 600 !important; }
-        [style*="Inter_700Bold"] { font-family: 'Inter', sans-serif !important; font-weight: 700 !important; }
-      `;
-      document.head.appendChild(style);
-      resolve();
-    };
-    link.onerror = () => resolve();
-    document.head.appendChild(link);
-  });
-}
-
 export default function RootLayout() {
   const [bootReady, setBootReady] = useState(false);
 
@@ -406,17 +380,23 @@ export default function RootLayout() {
     let cancelled = false;
     async function loadFontsAndHoldSplash() {
       try {
-        if (Platform.OS === "web") {
-          await loadWebFonts();
-        } else {
-          await Font.loadAsync({
-            Inter_400Regular,
-            Inter_500Medium,
-            Inter_600SemiBold,
-            Inter_700Bold,
-          });
-        }
-      } catch {
+        // Usar las fuentes locales incluidas en el paquete: no depender de
+        // Google Fonts ni de su DNS/CORS para abrir Tacoplan web.
+        const fontAssets = {
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
+          ...(Platform.OS === "web" ? {
+            ...Ionicons.font,
+            ...MaterialCommunityIcons.font,
+          } : {}),
+        };
+        await Font.loadAsync(fontAssets);
+      } catch (error) {
+        // La interfaz sigue disponible si falla una fuente; el error se
+        // conserva en consola para diagnosticar URLs/CORS de Metro.
+        console.warn("[FONTS] No se pudieron cargar todas las fuentes locales", error);
       }
       // Mostrar la app en cuanto estén las fuentes; no añadir 4 s artificiales.
       if (cancelled) return;
