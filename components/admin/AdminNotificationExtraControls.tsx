@@ -119,7 +119,7 @@ export default function AdminNotificationExtraControls({
                   />
                   <Text style={styles.hint}>Añade una respuesta por campo. El usuario podrá elegir una de ellas.</Text>
                 </View>
-              ) : null>
+              ) : null}
               <View style={styles.row}>
                 <SmallButton label={q.required ? "● Obligatoria" : "○ Opcional"}
                   onPress={() => updateQuestion(index, { required: !q.required })} />
