@@ -21,6 +21,7 @@ import {
   BellOff,
   Bot,
   CalendarClock,
+  ClipboardList,
   Check,
   ChevronLeft,
   CircleAlert,
@@ -43,6 +44,7 @@ import {
   X,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
+import AdminSurveyResults from "@/components/admin/AdminSurveyResults";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -59,7 +61,7 @@ import {
   ToastBanner,
 } from "@/components/admin/AdminUI";
 
-export type AdminTab = "summary" | "users" | "notifications" | "scheduled" | "automations" | "updates" | "settings";
+export type AdminTab = "summary" | "users" | "surveys" | "notifications" | "scheduled" | "automations" | "updates" | "settings";
 
 type AdminUserRow = {
   user_id: string;
@@ -262,6 +264,7 @@ const USER_SORT_OPTIONS = [
 const NAV_ITEMS = [
   { key: "summary", label: "Resumen", icon: LayoutDashboard },
   { key: "users", label: "Usuarios", icon: Users },
+  { key: "surveys", label: "Encuestas", icon: ClipboardList },
   { key: "notifications", label: "Notificaciones", icon: Bell },
   { key: "scheduled", label: "Programadas", icon: CalendarClock },
   { key: "automations", label: "Automáticas", icon: Bot },
@@ -273,6 +276,7 @@ function adminPath(tab: AdminTab) {
   switch (tab) {
     case "summary": return "/admin/summary";
     case "users": return "/admin/users";
+    case "surveys": return "/admin/surveys";
     case "notifications": return "/admin/notifications";
     case "scheduled": return "/admin/scheduled";
     case "automations": return "/admin/automations";
@@ -2063,6 +2067,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
   const tabCopy: Record<AdminTab, { title: string; subtitle: string }> = {
     summary: { title: "Resumen", subtitle: "Un dashboard limpio, rápido y útil tanto en escritorio como en móvil." },
     users: { title: "Usuarios", subtitle: "Búsqueda, filtros y acciones rápidas por usuario." },
+    surveys: { title: "Encuestas", subtitle: "Consulta privada de las valoraciones y sugerencias semanales de los usuarios." },
     notifications: { title: "Notificaciones", subtitle: "Envía mensajes manuales con vista previa y confirmación clara." },
     scheduled: { title: "Programadas", subtitle: "Crea, edita y ejecuta envíos programados con mejor control." },
     automations: { title: "Automáticas", subtitle: "Gestiona las reglas existentes y pruébalas desde el flujo manual." },
@@ -2115,6 +2120,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
         <Animated.View style={{ opacity: contentFade }}>
           {tab === "summary" ? summaryContent : null}
           {tab === "users" ? usersContent : null}
+          {tab === "surveys" ? <AdminSurveyResults /> : null}
           {tab === "notifications" ? notificationsContent : null}
           {tab === "scheduled" ? scheduledContent : null}
           {tab === "automations" ? automationsContent : null}
