@@ -137,15 +137,17 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const updateStatus = useCallback((status: SyncStatus, result?: SyncResult) => {
+  const updateStatus = useCallback((status: SyncStatus, result?: SyncResult, notifyUser = false) => {
     setSyncStatus(status);
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
     if (status === "synced") {
       refreshSyncInfo();
       setSyncVersion((v) => v + 1);
 
-      if (result?.stats) {
-        const { pulled, pushed, merged } = result.stats;
+      // La sincronización automática es silenciosa: el usuario ya puede trabajar.
+      // Mostrar el banner solamente después de una sincronización manual.
+      if (notifyUser && result?.stats) {
+        const { pulled, pushed } = result.stats;
         if (pulled > 0 || pushed > 0) {
           const parts: string[] = [];
           if (pushed > 0) parts.push(`${pushed} subidos`);
@@ -159,7 +161,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       statusTimerRef.current = setTimeout(() => setSyncStatus("idle"), 3000);
     } else if (status === "error") {
       const msg = `Error de sincronización · ${result?.message || "motivo desconocido"}`;
-      showToast(msg, "error");
+      if (notifyUser) showToast(msg, "error");
       logSyncDiagnostics("sync_error_banner", result);
       statusTimerRef.current = setTimeout(() => setSyncStatus("idle"), 3000);
     }
@@ -168,7 +170,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const triggerSync = useCallback(() => {
     if (!isAuthenticated) return;
     debouncedAutoSync(getAccessToken, (status, result) => {
-      updateStatus(status as SyncStatus, result);
+      updateStatus(status as SyncStatus, result, true);
     });
   }, [getAccessToken, isAuthenticated, updateStatus]);
 
@@ -265,6 +267,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Evita que el evento AppState active lance otra sincronización al abrir.
+      lastAutoSyncAtRef.current = Date.now();
       setSyncStatus("syncing");
       try {
         const result = await syncAll(getAccessToken);
