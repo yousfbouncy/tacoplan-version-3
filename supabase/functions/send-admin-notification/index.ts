@@ -113,6 +113,38 @@ async function listAllProfileIds(admin: any, limitMax = 20000): Promise<string[]
   return Array.from(new Set(ids));
 }
 
+async function compatibleInteractiveRecipients(admin: any, userIds: string[]) {
+  const eligibleUsers = new Set<string>();
+  const eligibleDeviceTokens = new Set<string>();
+  for (const userBatch of chunk(userIds, 400)) {
+    const { data: rows, error } = await admin.rpc("tacoplan_interactive_notification_eligible_users", {
+      p_user_ids: userBatch,
+    });
+    if (error) throw error;
+    for (const row of rows || []) {
+      if (typeof row.user_id === "string") eligibleUsers.add(row.user_id);
+    }
+  }
+  // A push token from a device that has not advertised support must never
+  // receive a survey/form, even when the same user has a compatible device.
+  for (const userBatch of chunk(Array.from(eligibleUsers), 400)) {
+    const { data: devices, error } = await admin
+      .from("app_user_devices")
+      .select("user_id,device_id,interactive_forms_capable_at,last_seen_at")
+      .in("user_id", userBatch);
+    if (error) throw error;
+    for (const device of devices || []) {
+      const capabilitiesAt = Date.parse(String(device.interactive_forms_capable_at || ""));
+      const lastSeenAt = Date.parse(String(device.last_seen_at || ""));
+      if (Number.isFinite(capabilitiesAt) && Number.isFinite(lastSeenAt) &&
+          capabilitiesAt >= lastSeenAt - 10000) {
+        eligibleDeviceTokens.add(String(device.user_id) + "|" + String(device.device_id));
+      }
+    }
+  }
+  return { eligibleUsers, eligibleDeviceTokens };
+}
+
 serve(async (req: Request) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -183,7 +215,9 @@ serve(async (req: Request) => {
     const sendPush = body?.send_push === true;
     const createInternal = body?.create_internal_notification === true;
     const visibilityMode = body?.visibility_mode === "persistent" ? "persistent" : "snapshot";
-    const data = body?.data && typeof body.data === "object" ? body.data : null;
+    const data = body?.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : null;
+    const interactiveKind = data?.form?.kind;
+    const isInteractive = interactiveKind === "survey" || interactiveKind === "form";
     const buttonTextRaw = typeof body?.button_text === "string" ? body.button_text : null;
     const buttonUrlRaw = typeof body?.button_url === "string" ? body.button_url : null;
     const actionError = notificationActionValidationError({
@@ -195,6 +229,9 @@ serve(async (req: Request) => {
     if (!text) return json({ message: "body requerido" }, 400);
     if (targetType === "user" && !targetUserId) return json({ message: "target_user_id requerido" }, 400);
     if (!sendPush && !createInternal) return json({ message: "Nada que enviar: activa push o notificación interna" }, 400);
+    if (isInteractive && !createInternal) {
+      return json({ message: "Las encuestas y formularios requieren notificación interna" }, 400);
+    }
     if (actionError) return json({ message: actionError }, 400);
 
     let targetUserIds: string[] = [];
@@ -218,7 +255,15 @@ serve(async (req: Request) => {
       if (idsErr) throw idsErr;
       targetUserIds = (ids || []).map((r: any) => String(r.user_id || "")).filter(Boolean);
     }
-    targetUserIds = targetUserIds.filter(Boolean);
+    targetUserIds = Array.from(new Set(targetUserIds.filter(Boolean)));
+    const originalTargetCount = targetUserIds.length;
+    let eligibleDeviceTokens = new Set<string>();
+    if (isInteractive && targetUserIds.length > 0) {
+      const compatible = await compatibleInteractiveRecipients(admin, targetUserIds);
+      targetUserIds = targetUserIds.filter(userId => compatible.eligibleUsers.has(userId));
+      eligibleDeviceTokens = compatible.eligibleDeviceTokens;
+    }
+    const incompatibleSkipped = isInteractive ? originalTargetCount - targetUserIds.length : 0;
     if (targetUserIds.length === 0) {
       return json({
         ok: true,
@@ -227,6 +272,7 @@ serve(async (req: Request) => {
         push_ok: 0,
         push_failed: 0,
         internal_created: 0,
+        incompatible_skipped: incompatibleSkipped,
         errors: [],
       });
     }
@@ -310,6 +356,11 @@ serve(async (req: Request) => {
         const to = row.expo_push_token;
         if (!to || typeof to !== "string") continue;
         const tokenUserId = typeof row.user_id === "string" ? row.user_id : null;
+        if (isInteractive && (
+          !tokenUserId ||
+          !targetUserIds.includes(tokenUserId) ||
+          !eligibleDeviceTokens.has(tokenUserId + "|" + String(row.device_id || ""))
+        )) continue;
         if (tokenUserId) {
           userTokenCount.set(tokenUserId, (userTokenCount.get(tokenUserId) || 0) + 1);
         }
@@ -416,6 +467,7 @@ serve(async (req: Request) => {
       push_ok: pushOk,
       push_failed: pushFailed,
       internal_created: internalCreated,
+      incompatible_skipped: incompatibleSkipped,
       targetUsers: targetUserIds.length,
       tokens: tokensFound,
       messagesOk: pushOk,
