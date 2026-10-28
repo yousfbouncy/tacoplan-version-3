@@ -363,6 +363,7 @@ export default function DashboardScreen() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<UserNotificationRow[]>([]);
   const [selectedNotification, setSelectedNotification] = useState<UserNotificationRow | null>(null);
+  const autoPopupShownThisSession = useRef(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [closePlanEndAt, setClosePlanEndAt] = useState<string | null>(null);
 
@@ -481,6 +482,25 @@ export default function DashboardScreen() {
       refreshNotifications();
     }, [refreshNotifications]),
   );
+
+
+  // Manual Admin notifications can request a one-time in-app popup. The
+  // message remains available in the notifications inbox after dismissal.
+  useEffect(() => {
+    if (!user?.id || autoPopupShownThisSession.current || selectedNotification || showNotifications) return;
+    const pending = notifications.find(n => !n.is_read && n.data?.presentation === "modal");
+    if (!pending?.id) return;
+    let cancelled = false;
+    (async () => {
+      const key = await userScopedKey("tacoplan_notification_popup_" + pending.id, user.id);
+      const alreadyShown = await AsyncStorage.getItem(key).catch(() => null);
+      if (cancelled || alreadyShown) return;
+      autoPopupShownThisSession.current = true;
+      await AsyncStorage.setItem(key, "1").catch(() => {});
+      if (!cancelled) setSelectedNotification(pending);
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, [notifications, selectedNotification, showNotifications, user?.id]);
 
   // Comprueba al entrar en Inicio si existen jornadas/días fuera de base
   // pendientes de re-evaluación. El botón solo se muestra cuando hay algo real
