@@ -65,6 +65,8 @@ test("closed, disabled, invalid and elapsed shifts do not schedule alerts; repea
   const ctx = getAvailabilityContext(cycle(0));
   assert.deepEqual(planAvailabilityAlarms(null,ctx,true,0),[]);
   assert.deepEqual(planAvailabilityAlarms({...shift,fin:"closed"},ctx,true,0),[]);
+  assert.deepEqual(planAvailabilityAlarms({...shift,fechaFin:"2026-10-27"},ctx,true,0),[]);
+  assert.deepEqual(planAvailabilityAlarms({...shift,endAt:"2026-10-27T16:00:00Z"},ctx,true,0),[]);
   assert.deepEqual(planAvailabilityAlarms(shift,ctx,false,0),[]);
   assert.deepEqual(planAvailabilityAlarms({...shift,horaInicio:"bad"},ctx,true,0),[]);
   const alerts = planAvailabilityAlarms(shift,ctx,true,0);
