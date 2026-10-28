@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tacoplan",
     "slug": "tacoplan",
-    "version": "2.2.9",
+    "version": "2.2.10",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tacoplan",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tacoplan",
-      "buildNumber": "12",
+      "buildNumber": "13",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para autocompletar el lugar de fin de jornada (provincia y país).",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.yousfbouncy.tacoplanv2",
-      "versionCode": 20208,
+      "versionCode": 20209,
       "googleServicesFile": "./app/google-services.json",
       "permissions": [
         "POST_NOTIFICATIONS",
