@@ -41,7 +41,7 @@ export function getNotificationActions(input: NotificationLinkFields | null | un
   if (Array.isArray(actions) && actions.length > 0) {
     return actions.slice(0, 4).filter((item: any) =>
       item && typeof item.label === "string" && typeof item.url === "string" &&
-      item.label.trim() && /^(https?:\\/\\/|tacoplan:\\/\\/)/i.test(item.url.trim())
+      item.label.trim() && ["https://", "http://", "tacoplan://"].some(prefix => item.url.trim().toLowerCase().startsWith(prefix))
     ).map((item: any) => ({ label: item.label.trim(), url: item.url.trim() }));
   }
   const legacy = getNotificationAction(input);
