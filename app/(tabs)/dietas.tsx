@@ -850,6 +850,35 @@ export default function DietasScreen() {
           </Pressable>
         )}
 
+        {/* Las dietas y los complementos se muestran aunque no se haya configurado la nómina. */}
+        {!payrollSetupQuery.isLoading && !hasPayrollSetup && !isMoroccoMode && paymentMode === "dietas" && (
+          <View style={styles.totalCard}>
+            <View style={styles.totalIcon}>
+              <Ionicons name="wallet-outline" size={32} color={Colors.light.accent} />
+            </View>
+            <Text style={styles.totalLabel}>Total de dietas, extras y pluses</Text>
+            <Text style={styles.totalValue}>
+              {resumenQuery.isError ? "No disponible" : data ? euro(grandTotal) : "Calculando…"}
+            </Text>
+            {data && (
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryItem}>
+                  <Text style={styles.summaryLabel}>Dietas</Text>
+                  <Text style={styles.summaryValue}>{euro(Number(data.total || 0))}</Text>
+                </View>
+                <View style={styles.summaryItem}>
+                  <Text style={styles.summaryLabel}>Extras</Text>
+                  <Text style={styles.summaryValue}>{euro(totalExtras + totalFerryExtras)}</Text>
+                </View>
+                <View style={styles.summaryItem}>
+                  <Text style={styles.summaryLabel}>Pluses</Text>
+                  <Text style={styles.summaryValue}>{euro(totalPlus)}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
         {isMoroccoMode && ferryConfig.paymentMode !== "morocco_diet" && moroccoQuery.data ? (
           <View style={styles.totalCard}>
             <View style={styles.totalIcon}>
