@@ -5,7 +5,7 @@ import { withTimeout } from "./runtime";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MIN_SPEED_MPS, advanceCandidate, shouldAutoConfirm, type Candidate, type MovementSegment } from "./engine";
-import { crearJornadaInicio, getEstadoLegal, getJornadaAbierta } from "@/lib/local-storage";
+import { crearJornadaInicio, getEstadoLegal, getJornadaAbierta, getLastLugarFin } from "@/lib/local-storage";
 import { userScopedKey } from "@/lib/user-scope";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
@@ -87,10 +87,9 @@ async function processLocations(data: unknown, error: unknown) {
       const startAt = new Date(state.firstMovementAt ?? result.segment?.startedAt ?? state.candidate!.startedAt);
       const fechaInicio = `${startAt.getFullYear()}-${String(startAt.getMonth() + 1).padStart(2, "0")}-${String(startAt.getDate()).padStart(2, "0")}`;
       const horaInicio = `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`;
-      // Starting locally must not wait for network-backed reverse geocoding.
-      const lugarInicio = Number.isFinite(fix.coords.latitude) && Number.isFinite(fix.coords.longitude)
-        ? `GPS ${fix.coords.latitude.toFixed(5)}, ${fix.coords.longitude.toFixed(5)}`
-        : "Ubicación detectada automáticamente";
+      // AutoStart always begins where the previous shift ended. Use local data
+      // without a network request so automatic creation keeps working offline.
+      const lugarInicio = (await getLastLugarFin())?.trim() || "Lugar de inicio pendiente";
       const startedShift = await crearJornadaInicio({ fechaInicio, horaInicio, lugarInicio });
       const proposalId = `${state.userId}:${state.firstMovementAt ?? (result.segment?.startedAt ?? firstMovementAt)}`;
       state.proposals = state.proposals.filter((p) => p.id !== proposalId);
