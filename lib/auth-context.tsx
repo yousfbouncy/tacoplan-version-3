@@ -121,6 +121,10 @@ async function upsertDevicePresence(userId: string): Promise<void> {
       app_version: String(appVersion || ""),
       build_number: buildNumber,
       last_seen_at: nowIso,
+      // Only clients that include the interactive notification renderer report support.
+      // Keep this exactly in sync with last_seen_at so older/downgraded builds
+      // naturally become ineligible on their next device-presence update.
+      interactive_forms_capable_at: nowIso,
       updated_at: nowIso,
     };
     await supabase.from("app_user_devices").upsert(row, { onConflict: "user_id,device_id" });
