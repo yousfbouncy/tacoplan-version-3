@@ -108,7 +108,7 @@ import { useSync } from "@/lib/sync-context";
 import { useTachograph } from "@/lib/tachograph/tachograph-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { userScopedKey } from "@/lib/user-scope";
-import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
+import { AVAILABILITY_ALARMS_KEY, cancelAvailabilityAlarmsForClosedShift, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
 import { supabase } from "@/lib/supabase";
 import {
@@ -1774,6 +1774,13 @@ export default function DashboardScreen() {
       return result;
     },
     onSuccess: async (closed: Jornada) => {
+      // La jornada ya está guardada como cerrada: anular inmediatamente todas
+      // sus alarmas pendientes y visibles, incluso antes de actualizar la UI.
+      try {
+        await cancelAvailabilityAlarmsForClosedShift(String(closed.id));
+      } catch (error) {
+        console.warn("[AVAILABILITY-ALARMS] No se pudieron cancelar las alarmas tras cerrar la jornada", error);
+      }
       console.log("[Ferry Close] onSuccess: ferryPending=", closed.ferryPending, "ferryRestCompleted=", closed.ferryRestCompleted);
       if (closed.ferryPending) {
         setFerryJustClosed(closed);
