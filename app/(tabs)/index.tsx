@@ -1052,6 +1052,12 @@ export default function DashboardScreen() {
     };
   }, [abierta?.fechaInicio, abierta?.horaInicio, countdownNow, estado?.disponibilidadMin]);
 
+  // El tiempo restante de 15h se muestra aunque el historial no permita confirmar su uso.
+  // El estado legal sigue decidiendo si la ampliación está disponible o agotada.
+  const show15hCountdown = estado?.availabilityContext?.aplica13h15h !== false
+    && estado?.availabilityContext?.ampliacion15h !== "agotada";
+  const verify15hConditions = estado?.availabilityContext?.ampliacion15h !== "disponible";
+
   const [ferryTransitDiet, setFerryTransitDiet] = useState(0);
   const [ferryCabinOvernight, setFerryCabinOvernight] = useState(0);
   const [ferryCountryChange, setFerryCountryChange] = useState(false);
@@ -2989,11 +2995,16 @@ export default function DashboardScreen() {
                 <View style={styles.shiftLimitDivider} />
                 <View style={styles.shiftLimitItem}>
                   <View style={styles.shiftLimitTop}>
-                    <Text style={[styles.shiftLimitNumber, { color: estado?.disponibilidadMin === 15 * 60 ? "#FFFFFF" : "#A8B8C7" }]}>Límite 15h</Text>
+                    <Text style={[styles.shiftLimitNumber, { color: show15hCountdown ? "#FFFFFF" : "#A8B8C7" }]}>Límite 15h</Text>
                     <Ionicons name="time-outline" size={22} color="#FFB51A" />
                   </View>
-                  <Text style={styles.shiftLimitDetail}>{estado?.disponibilidadMin === 15 * 60 ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}` : estado?.availabilityContext?.ampliacion15h === "agotada" ? "No disponible hoy" : "Comprueba las condiciones"}</Text>
-                  <Text style={styles.shiftLimitDeadline}>{estado?.disponibilidadMin === 15 * 60 ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
+                  <Text style={styles.shiftLimitDetail}>{show15hCountdown
+                    ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}`
+                    : estado?.availabilityContext?.aplica13h15h === false ? "No aplica en doble conducción" : "No disponible hoy"}</Text>
+                  <Text style={styles.shiftLimitDeadline}>{show15hCountdown ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
+                  {show15hCountdown && verify15hConditions && (
+                    <Text style={[styles.shiftLimitDeadline, { color: "#FFC966" }]}>Disponibilidad por confirmar</Text>
+                  )}
                 </View>
               </View>
 
