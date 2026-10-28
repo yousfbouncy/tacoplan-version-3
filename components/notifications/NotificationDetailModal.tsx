@@ -132,8 +132,16 @@ export default function NotificationDetailModal({
               {actions.map((action, index) => (
                 <NotificationActionButton key={index} label={action.label}
                   onPress={async () => {
-                    const opened = await openNotificationUrl(action.url);
-                    if (opened) onClose();
+                    const opened = await openNotificationUrl(action.url, {
+                      keepCurrentScreen: !!form,
+                    });
+                    if (!opened) {
+                      setError("No se pudo abrir el enlace. Inténtalo de nuevo.");
+                      return;
+                    }
+                    // Do not dismiss a survey/form or discard its selected answers
+                    // when opening a link. Only ordinary alerts close on link tap.
+                    if (!form) onClose();
                   }} />
               ))}
               <Pressable style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.9 }]} onPress={onClose}>
