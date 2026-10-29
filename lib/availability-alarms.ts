@@ -65,7 +65,12 @@ async function reconcileAvailabilityAlarms(
     const oldIds = JSON.parse(await AsyncStorage.getItem(NATIVE_IDS_KEY) || "[]") as string[];
     for (const id of oldIds) await cancelAvailabilityAlarm(id).catch(() => {});
     await AsyncStorage.setItem(NATIVE_IDS_KEY, "[]");
-    if (!enabled || !shift || (context?.shiftId === shift.id && !context.aplica13h15h)) return;
+    if (!enabled || !shift || (context?.shiftId === shift.id && !context.aplica13h15h)) {
+      const Notifications = await import("expo-notifications");
+      const legacy = await Notifications.getAllScheduledNotificationsAsync();
+      await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true).map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+      return;
+    }
     const alerts = planAvailabilityAlarms(shift, context, enabled);
     const ids: string[] = [];
     try {
