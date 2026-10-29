@@ -6,17 +6,18 @@ import AlarmKit
 @available(iOS 26.0, *)
 struct EmptyAlarmMetadata: AlarmMetadata {}
 
-@available(iOS 26.0, *)
 public final class TacoplanAlarmKitModule: Module {
   public func definition() -> ModuleDefinition {
     Name("TacoplanAlarmKit")
 
     AsyncFunction("requestAuthorization") { () async throws -> String in
+      guard #available(iOS 26.0, *) else { throw NSError(domain: "TacoplanAlarmKit", code: 26, userInfo: [NSLocalizedDescriptionKey: "Se necesita iOS 26 o superior"]) }
       let state = try await AlarmManager.shared.requestAuthorization()
       return String(describing: state)
     }
 
     AsyncFunction("schedule") { (identifier: String, epochMillis: Double, title: String) async throws in
+      guard #available(iOS 26.0, *) else { throw NSError(domain: "TacoplanAlarmKit", code: 26, userInfo: [NSLocalizedDescriptionKey: "Se necesita iOS 26 o superior"]) }
       guard let id = UUID(uuidString: identifier) else {
         throw NSError(domain: "TacoplanAlarmKit", code: 1, userInfo: [NSLocalizedDescriptionKey: "ID de alarma inválido"])
       }
@@ -38,11 +39,13 @@ public final class TacoplanAlarmKitModule: Module {
     }
 
     AsyncFunction("cancel") { (identifier: String) throws in
+      guard #available(iOS 26.0, *) else { return }
       guard let id = UUID(uuidString: identifier) else { return }
       try AlarmManager.shared.cancel(id: id)
     }
 
     AsyncFunction("test") { () async throws in
+      guard #available(iOS 26.0, *) else { throw NSError(domain: "TacoplanAlarmKit", code: 26, userInfo: [NSLocalizedDescriptionKey: "Se necesita iOS 26 o superior"]) }
       let id = UUID()
       let stopButton = AlarmButton(text: "Detener", textColor: .white, systemImageName: "stop.circle")
       let alert = AlarmPresentation.Alert(title: "Tacoplan · prueba", stopButton: stopButton)
