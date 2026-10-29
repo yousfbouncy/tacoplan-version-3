@@ -31,7 +31,7 @@ public final class TacoplanAlarmKitModule: Module {
         throw NSError(domain: "TacoplanAlarmKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "Permiso de alarmas denegado"])
       }
       let stopButton = AlarmButton(text: "Detener", textColor: .white, systemImageName: "stop.circle")
-      let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title), stopButton: stopButton)
+      let alert = AlarmPresentation.Alert(title: "Tacoplan · disponibilidad", stopButton: stopButton)
       let attrs = AlarmAttributes<EmptyAlarmMetadata>(presentation: AlarmPresentation(alert: alert), tintColor: .orange)
       let config = AlarmManager.AlarmConfiguration<EmptyAlarmMetadata>(schedule: .fixed(date), attributes: attrs)
       _ = try await AlarmManager.shared.schedule(id: id, configuration: config)
