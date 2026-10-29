@@ -75,6 +75,9 @@ async function reconcileAvailabilityAlarms(
         ids.push(id);
         await AsyncStorage.setItem(NATIVE_IDS_KEY, JSON.stringify(ids));
       }
+      const Notifications = await import("expo-notifications");
+      const previouslyScheduled = await Notifications.getAllScheduledNotificationsAsync();
+      await Promise.all(previouslyScheduled.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true).map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
       return;
     } catch (error) {
       console.warn("AlarmKit no pudo programar avisos, usando notificaciones:", error);
