@@ -4,6 +4,9 @@ import SwiftUI
 import AlarmKit
 
 @available(iOS 26.0, *)
+struct EmptyAlarmMetadata: AlarmMetadata {}
+
+@available(iOS 26.0, *)
 public final class TacoplanAlarmKitModule: Module {
   public func definition() -> ModuleDefinition {
     Name("TacoplanAlarmKit")
@@ -30,7 +33,7 @@ public final class TacoplanAlarmKitModule: Module {
       let stopButton = AlarmButton(text: "Detener", textColor: .white, systemImageName: "stop.circle")
       let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title), stopButton: stopButton)
       let attrs = AlarmAttributes<EmptyAlarmMetadata>(presentation: AlarmPresentation(alert: alert), tintColor: .orange)
-      let config = AlarmManager.AlarmConfiguration(schedule: .fixed(date), attributes: attrs)
+      let config = AlarmManager.AlarmConfiguration<EmptyAlarmMetadata>(schedule: .fixed(date), attributes: attrs)
       _ = try await AlarmManager.shared.schedule(id: id, configuration: config)
     }
 
@@ -50,7 +53,7 @@ public final class TacoplanAlarmKitModule: Module {
       guard AlarmManager.shared.authorizationState == .authorized else {
         throw NSError(domain: "TacoplanAlarmKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "Permiso de alarmas denegado"])
       }
-      let config = AlarmManager.AlarmConfiguration(schedule: .fixed(Date().addingTimeInterval(10)), attributes: attrs)
+      let config = AlarmManager.AlarmConfiguration<EmptyAlarmMetadata>(schedule: .fixed(Date().addingTimeInterval(10)), attributes: attrs)
       _ = try await AlarmManager.shared.schedule(id: id, configuration: config)
     }
   }
