@@ -37,6 +37,7 @@ import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } fro
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
+import { testAvailabilityAlarm } from "@/lib/alarmkit-bridge";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
 
 function safeHaptic() {
@@ -1947,6 +1948,15 @@ export default function UsuarioScreen() {
     }
   };
 
+  const runAlarmKitTest = async () => {
+    try {
+      await testAvailabilityAlarm();
+      Alert.alert("Alarma programada", "La alarma real de Tacoplan debería sonar en 10 segundos. Puedes bloquear el iPhone.");
+    } catch (e: any) {
+      Alert.alert("No se pudo programar la alarma", e?.message || "Comprueba el permiso de AlarmKit.");
+    }
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
       <ScreenBackdrop />
@@ -1996,6 +2006,12 @@ export default function UsuarioScreen() {
               <Pressable accessibilityRole="button" onPress={() => openSection("notificaciones")} style={{ flex: 1 }}><Text style={styles.quickActionTitle}>Alarmas de disponibilidad</Text><Text style={styles.quickActionSubtitle}>{notificationsEnabled ? "Avisos antes del límite de 13 h / 15 h" : "Activa primero las notificaciones"}</Text></Pressable>
               <Switch accessibilityLabel="Alarmas de disponibilidad" value={availabilityAlarmsEnabled && notificationsEnabled} onValueChange={toggleAvailabilityAlarms} disabled={!notificationsEnabled || savingNotifPrefs || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
             </View>
+            {Platform.OS === "ios" && Number(Platform.Version) >= 26 && (
+              <Pressable onPress={runAlarmKitTest} accessibilityRole="button" style={{ paddingVertical: 14, paddingHorizontal: 16 }}>
+                <Text style={{ color: Colors.light.tint, fontWeight: "700" }}>Probar alarma real de iPhone (10 segundos)</Text>
+                <Text style={{ color: "#64748B", marginTop: 4 }}>No modifica tu jornada ni tus descansos.</Text>
+              </Pressable>
+            )}
           </View>
         )}
         {!showOnlySection ? (
