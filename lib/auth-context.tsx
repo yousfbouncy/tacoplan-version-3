@@ -661,7 +661,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshAdminStatus]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    let result: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>;
+    let result: Awaited<ReturnType<typeof supabase.auth.setSession>>;
     if (email.includes("@")) {
       result = await supabase.auth.signInWithPassword({ email, password });
     } else {
