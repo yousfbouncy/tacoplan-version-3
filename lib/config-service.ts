@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 import { userScopedKey } from "@/lib/user-scope";
 import { supabase } from "@/lib/supabase";
 import { fetchDayExtras, fetchDietRates, fetchHolidays, upsertDayExtras, upsertDietRates } from "@/lib/user-cloud";
@@ -246,6 +247,53 @@ function mapFerryRowToConfig(row: any | null): Record<string, any> {
   return out;
 }
 
+type EmployerConfig = {
+ base_name?: string | null;
+ agreement?: string | null;
+ diet_rates?: Record<string, unknown>;
+ plus_rates?: Record<string, unknown>;
+ payroll_terms?: Record<string, unknown>;
+};
+async function fetchEmployerSettings(): Promise<{companyId:string;config:EmployerConfig}|null>{
+ // Native client reads only its own company configuration through JWT-scoped backend.
+ if(Platform.OS==="web")return null;
+ const session=await supabase.auth.getSession().catch(()=>null);
+ const access=session?.data?.session?.access_token;
+ if(!access)return null;
+ const abort=new AbortController();
+ const timeout=setTimeout(()=>abort.abort(),5000);
+ try{
+  const res=await fetch("https://tacoplan.es/api/empresas/mobile-config",{
+   headers:{Authorization:"Bearer "+access},signal:abort.signal
+  });
+  if(!res.ok)return null;
+  const data=await res.json();
+  return data?.managed===true&&data.companyId&&data.config?{companyId:String(data.companyId),config:data.config}:null;
+ }catch{return null;}finally{clearTimeout(timeout);}
+}
+function employerOverrides(data:{companyId:string;config:EmployerConfig}|null):Record<string,any>{
+ if(!data)return {};
+ const out:Record<string,any>={_enterprise_managed:true,_enterprise_company_id:data.companyId};
+ if(data.config.base_name)out.base_name=String(data.config.base_name);
+ if(data.config.agreement)out._enterprise_agreement=String(data.config.agreement);
+ const rates=data.config.diet_rates||{};
+ for(const [key,value] of Object.entries(rates)){
+  const map=key.match(/^(nacional|internacional|regional|nac|intl|reg)_(100|60|30)$/i);
+  if(!map)continue;
+  const prefix=({nacional:"nac",internacional:"intl",regional:"reg",nac:"nac",intl:"intl",reg:"reg"} as Record<string,string>)[map[1].toLowerCase()];
+  const numeric=Number(String(value).replace(",","."));
+  if(prefix&&Number.isFinite(numeric)&&numeric>=0)out[prefix+"_"+map[2]]=String(numeric);
+ }
+ const extras=data.config.plus_rates||{};
+ for(const [from,to] of [["domingo","extra_sunday"],["festivo","extra_holiday"],["sabado","extra_saturday"],["extra_sunday","extra_sunday"],["extra_holiday","extra_holiday"],["extra_saturday","extra_saturday"]]){
+  const value=extras[from];const numeric=Number(String(value??"").replace(",","."));
+  if(value!=null&&Number.isFinite(numeric)&&numeric>=0)out[to]=String(numeric);
+ }
+ if(data.config.payroll_terms&&typeof data.config.payroll_terms==="object")
+  out._enterprise_payroll_terms=data.config.payroll_terms;
+ return out;
+}
+
 export async function getUserConfig(userId: string): Promise<UserConfig> {
   await Promise.all([
     migrateLegacyKeyIfNeeded(SETTINGS_KEY, userId),
@@ -308,7 +356,8 @@ export async function getUserConfig(userId: string): Promise<UserConfig> {
       ...mapExtrasToSettings(extras),
     };
 
-    const mergedSettings = mergePreferLocal(localSettings, fromCloud);
+    const employer=await fetchEmployerSettings();
+    const mergedSettings = {...mergePreferLocal(localSettings, fromCloud),...employerOverrides(employer)};
     const mergedFerry = mergePreferLocal(localFerry, mapFerryRowToConfig(ferryRow));
 
     await AsyncStorage.setItem(await userScopedKey(SETTINGS_KEY, userId), JSON.stringify(mergedSettings));

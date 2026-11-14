@@ -661,7 +661,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshAdminStatus]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    let result: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>;
+    if (email.includes("@")) {
+      result = await supabase.auth.signInWithPassword({ email, password });
+    } else {
+      // Enterprise usernames resolve exclusively on the secure server.
+      try {
+        const response = await fetch("https://tacoplan.es/api/empresas/username-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: email.trim().toLowerCase(), password }),
+        });
+        const payload = await response.json();
+        if (!response.ok) return { ok: false, message: payload.error || "Usuario o contraseña incorrectos" };
+        result = await supabase.auth.setSession({
+          access_token: payload.access_token,
+          refresh_token: payload.refresh_token,
+        });
+      } catch {
+        return { ok: false, message: "No se pudo conectar con Tacoplan Empresas" };
+      }
+    }
+    const { data, error } = result;
     if (error) {
       const msg = error.message === "Invalid login credentials"
         ? "Email o contrasena incorrectos"
