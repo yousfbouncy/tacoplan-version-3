@@ -15,7 +15,8 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para autocompletar el lugar de fin de jornada (provincia y país).",
         "NSBluetoothAlwaysUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2 y registrar automáticamente conducciones, pausas y países.",
-        "NSBluetoothPeripheralUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2."
+        "NSBluetoothPeripheralUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2.",
+        "NSAlarmKitUsageDescription": "Tacoplan utiliza alarmas del sistema para avisarte antes de alcanzar los límites de tu jornada."
       }
     },
     "android": {
@@ -33,7 +34,8 @@
         "BLUETOOTH_ADMIN",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
+        "FOREGROUND_SERVICE_LOCATION",
+        "SCHEDULE_EXACT_ALARM"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#0F4C75",
@@ -63,7 +65,16 @@
       ],
       "expo-web-browser",
       "expo-updates",
-      "expo-notifications",
+      "./plugins/withTrafficAlertSound",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/tacoplan-viaje.wav"
+          ],
+          "enableRemoteNotifications": true
+        }
+      ],
       "./plugins/withWidgetRefreshPeriod",
       [
         "expo-widgets",
