@@ -1193,6 +1193,8 @@ export async function pullTripsFromCloud(userId: string): Promise<number> {
       salidaReal: p.salidaReal || null,
       llegadaConfirmada: !!p.llegadaConfirmada,
       salidaConfirmada: !!p.salidaConfirmada,
+      observaciones: typeof p.observaciones === "string" ? p.observaciones : null,
+      remolque: typeof p.remolque === "string" ? p.remolque : null,
     })) : [];
     return {
       id: String(row.id), cliente: row.cliente || null, modoViaje: mode,
@@ -1251,7 +1253,7 @@ async function runSyncAll(
     pushed += tripsPushed;
     // Pull after push so trips assigned by Traffic appear without replacing
     // local-only records or accidentally re-uploading a stale cloud version.
-    const tripsPulled = await pullTripsFromCloud(authUser.id);
+    await pullTripsFromCloud(authUser.id);
     const pending = await getPendingSyncData();
     let hasNatPending = false;
     try {
