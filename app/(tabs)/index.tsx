@@ -922,12 +922,6 @@ export default function DashboardScreen() {
     };
   }, [abierta?.id, tacho.closeJornadaHint, isCrossSundayMonday, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, conduccionParsed.minutes, kmFin]);
 
-  useEffect(() => {
-    if (!estado) return;
-    // #region debug-point E:dashboard-legal-state
-    fetch("http://192.168.1.248:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"ten-hour-extension-reset",runId:"pre-fix",hypothesisId:"E",location:"app/(tabs)/index.tsx:estadoQuery",msg:"[DEBUG] dashboard received legal state",data:{platform:Platform.OS,conduccionSemanalMin:estado.conduccionSemanalMin,conduccionBisemanalMin:estado.conduccionBisemanalMin,extensiones10h:estado.extensiones10h,restanteSemanalMin:estado.restanteSemanalMin,restanteBisemanalMin:estado.restanteBisemanalMin,alertas:estado.alertas},ts:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [estado]);
 
   const compensationInfo = useMemo(() => {
     const comp = (estado as any)?.compensacionAgregada as any;
