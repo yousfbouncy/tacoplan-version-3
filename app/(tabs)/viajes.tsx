@@ -38,6 +38,7 @@ export default function ViajesScreen() {
     COMPLETO: t("viajes.complete"),
     SOLO_CARGA: t("viajes.loadOnly"),
     SOLO_DESCARGA: t("viajes.unloadOnly"),
+    ENTREGA_REMOLQUE: "Cargar y soltar remolque",
   };
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -248,7 +249,7 @@ export default function ViajesScreen() {
           <View style={styles.paradasPreview}>
             {item.paradas.slice(0, 3).map((p, i) => (
               <Text key={p.id} style={styles.paradaPreviewText} numberOfLines={1}>
-                {p.tipo === "CARGA" ? "↓" : "↑"} {p.lugar}
+                {p.tipo === "ENTREGA_REMOLQUE" ? "🚛 Soltar remolque · " : p.tipo === "CARGA" ? "↓ " : "↑ "}{p.lugar}
               </Text>
             ))}
             {item.paradas.length > 3 && (
