@@ -6,14 +6,15 @@ const turno = { id: "abc", inicio: "2026-10-26T08:00:00+01:00" };
 const inicio = Date.parse(turno.inicio);
 const minutosDesdeInicio = (fecha: string) => (Date.parse(fecha) - inicio) / 60000;
 
-test("ampliación disponible: 13h a 10 minutos y 15h a 30 minutos", () => {
+test("ampliación disponible: 13h a 10 minutos y 15h a 30 y 10 minutos", () => {
   const avisos = crearAvisosAmplitud({ ...turno, ampliacion15h: "disponible" }, 0);
   assert.deepEqual(avisos.map(a => [a.limite, a.minutosAntes, a.nivel]),
-    [[13, 10, "suave"], [15, 30, "urgente"]]);
-  assert.deepEqual(avisos.map(a => minutosDesdeInicio(a.fecha)), [770, 870]);
-  assert.deepEqual(avisos.map(a => a.id), ["amplitud:abc:13:10", "amplitud:abc:15:30"]);
+    [[13, 10, "suave"], [15, 30, "urgente"], [15, 10, "urgente"]]);
+  assert.deepEqual(avisos.map(a => minutosDesdeInicio(a.fecha)), [770, 870, 890]);
+  assert.deepEqual(avisos.map(a => a.id), ["amplitud:abc:13:10", "amplitud:abc:15:30", "amplitud:abc:15:10"]);
   assert.match(avisos[0].mensaje, /10 minutos/);
   assert.match(avisos[1].mensaje, /30 minutos/);
+  assert.match(avisos[2].mensaje, /10 minutos/);
 });
 
 test("ampliación agotada: dos avisos urgentes para 13h, a 30 y 10 minutos", () => {
