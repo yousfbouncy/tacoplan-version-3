@@ -20,6 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/driver-theme";
+import { supabase } from "@/lib/supabase";
+import { pullTripsFromCloud } from "@/lib/sync-service";
 import { todayStr, nowTimeStr, formatFecha } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n-context";
 import {
@@ -38,6 +40,7 @@ export default function ViajesScreen() {
     COMPLETO: t("viajes.complete"),
     SOLO_CARGA: t("viajes.loadOnly"),
     SOLO_DESCARGA: t("viajes.unloadOnly"),
+    ENTREGA_REMOLQUE: "Cargar y soltar remolque",
   };
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -63,7 +66,21 @@ export default function ViajesScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       invalidateAll();
+      // Refresh assigned trips each time the driver opens Viajes. The
+      // local records stay usable when offline or Supabase is unavailable.
+      void (async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        try {
+          await pullTripsFromCloud(session.user.id);
+          if (active) invalidateAll();
+        } catch (error) {
+          console.warn("[Viajes] No se pudieron descargar las asignaciones", error);
+        }
+      })();
+      return () => { active = false; };
     }, [invalidateAll])
   );
 
@@ -248,7 +265,7 @@ export default function ViajesScreen() {
           <View style={styles.paradasPreview}>
             {item.paradas.slice(0, 3).map((p, i) => (
               <Text key={p.id} style={styles.paradaPreviewText} numberOfLines={1}>
-                {p.tipo === "CARGA" ? "↓" : "↑"} {p.lugar}
+                {p.tipo === "ENTREGA_REMOLQUE" ? "🚛 Soltar remolque · " : p.tipo === "CARGA" ? "↓ " : "↑ "}{p.lugar}
               </Text>
             ))}
             {item.paradas.length > 3 && (

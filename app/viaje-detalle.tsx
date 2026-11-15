@@ -209,7 +209,7 @@ export default function ViajeDetalleScreen() {
   const openEditParada = (p: Parada) => {
     setEditParadaModal(p);
     setEditParadaLugar(p.lugar);
-    setEditParadaTipo(p.tipo);
+    setEditParadaTipo(p.tipo === "ENTREGA_REMOLQUE" ? "CARGA" : p.tipo);
     setEditParadaCitaFecha(p.citaFecha || "");
     setEditParadaCitaHora(p.citaHora || "");
   };
@@ -365,13 +365,14 @@ export default function ViajeDetalleScreen() {
   const isEnCurso = viaje.estado === "EN_CURSO";
   const cargas = viaje.paradas.filter((p) => p.tipo === "CARGA");
   const descargas = viaje.paradas.filter((p) => p.tipo === "DESCARGA");
+  const entregasRemolque = viaje.paradas.filter((p) => p.tipo === "ENTREGA_REMOLQUE");
 
   const renderParada = (p: Parada, idx: number) => {
     const isCarga = p.tipo === "CARGA";
     const color = isCarga ? Colors.light.success : Colors.light.accent;
-    const label = isCarga ? t("viajes.load").toUpperCase() : t("viajes.unload").toUpperCase();
-    const llegadaBtnLabel = isCarga ? t("viajes.arrivalToLoad") : t("viajes.arrivalToUnload");
-    const salidaBtnLabel = isCarga ? t("viajes.departureFromLoad") : t("viajes.departureFromUnload");
+    const label = p.tipo === "ENTREGA_REMOLQUE" ? "SOLTAR REMOLQUE" : isCarga ? t("viajes.load").toUpperCase() : t("viajes.unload").toUpperCase();
+    const llegadaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Llegada para entregar remolque" : isCarga ? t("viajes.arrivalToLoad") : t("viajes.arrivalToUnload");
+    const salidaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Salida tras soltar remolque" : isCarga ? t("viajes.departureFromLoad") : t("viajes.departureFromUnload");
 
     return (
       <View key={p.id} style={[styles.paradaCard, { borderLeftColor: color }]}>
@@ -381,7 +382,7 @@ export default function ViajeDetalleScreen() {
           </View>
           <Text style={[styles.paradaLugar, { flex: 1 }]}>{p.lugar}</Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Pressable onPress={() => openEditParada(p)} hitSlop={8}>
+            <Pressable disabled={p.tipo === "ENTREGA_REMOLQUE"} onPress={() => openEditParada(p)} hitSlop={8}>
               <Ionicons name="pencil-outline" size={16} color={Colors.light.textSecondary} />
             </Pressable>
             {viaje.paradas.length > 1 && (
@@ -392,6 +393,8 @@ export default function ViajeDetalleScreen() {
           </View>
         </View>
 
+        {p.remolque ? <Text style={styles.citaText}>Remolque: {p.remolque}</Text> : null}
+        {p.observaciones ? <Text style={styles.citaText}>Indicaciones de Tráfico: {p.observaciones}</Text> : null}
         <Text style={styles.citaText}>
           {t("viajes.appointment")}: {p.citaFecha ? `${p.citaFecha}${p.citaHora ? ` ${p.citaHora}` : ""}` : t("viajes.noAppointment")}
         </Text>
@@ -478,7 +481,7 @@ export default function ViajeDetalleScreen() {
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>{t("viajes.mode")}</Text>
-            <Text style={styles.infoValue}>{viaje.modoViaje === "COMPLETO" ? t("viajes.complete") : viaje.modoViaje === "SOLO_CARGA" ? t("viajes.loadOnly") : t("viajes.unloadOnly")}</Text>
+            <Text style={styles.infoValue}>{viaje.modoViaje === "ENTREGA_REMOLQUE" ? "Cargar y soltar remolque" : viaje.modoViaje === "COMPLETO" ? t("viajes.complete") : viaje.modoViaje === "SOLO_CARGA" ? t("viajes.loadOnly") : t("viajes.unloadOnly")}</Text>
           </View>
           {viaje.cliente && (
             <View style={styles.infoRow}>
@@ -505,6 +508,13 @@ export default function ViajeDetalleScreen() {
           <>
             <Text style={styles.sectionTitle}>{t("viajes.unloads")}</Text>
             {descargas.map((p, i) => renderParada(p, i))}
+          </>
+        )}
+
+        {entregasRemolque.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Entrega de remolque (sin descargar)</Text>
+            {entregasRemolque.map((p, i) => renderParada(p, i))}
           </>
         )}
 
