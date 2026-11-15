@@ -1126,6 +1126,39 @@ async function collectLocalSettings(): Promise<{ profile: any; dietasRates: any[
   }
 }
 
+/**
+ * Push locally recorded trips to the user's own Supabase rows.
+ * Upsert only when local updatedAt is newer than the cloud row; do not
+ * destroy a trip modified on another device or write anyone else's data.
+ * A later sync also uploads an existing trip created before this feature.
+ */
+async function syncTripsToCloud(userId: string): Promise<number> {
+  const trips = await LS.getAllViajes();
+  if (!trips.length) return 0;
+  const { data: existing, error: lookupError } = await supabase.from("viajes")
+    .select("id,updated_at").eq("user_id", userId);
+  if (lookupError) throw new Error("No se pudo consultar la sincronización de viajes: " + lookupError.message);
+  const remote = new Map((existing || []).map((row: any) => [String(row.id), String(row.updated_at || "")]));
+  let uploaded = 0;
+  for (const trip of trips) {
+    if (!trip.id) continue;
+    const localUpdated = trip.updatedAt || trip.createdAt;
+    if (remote.has(trip.id) && (remote.get(trip.id) || "") >= localUpdated) continue;
+    const row = {
+      id: trip.id, user_id: userId, cliente: trip.cliente ?? null,
+      modo_viaje: trip.modoViaje, notas: trip.notas ?? null,
+      fin_lugar: trip.finLugar ?? null, fin_hora: trip.finHora ?? null,
+      fin_viaje_nota: trip.finViajeNota ?? null, estado: trip.estado,
+      paradas: trip.paradas || [], created_at: trip.createdAt,
+      updated_at: localUpdated,
+    };
+    const { error } = await supabase.from("viajes").upsert(row, { onConflict: "id" });
+    if (error) throw new Error("No se pudo sincronizar el viaje " + trip.id + ": " + error.message);
+    uploaded++;
+  }
+  return uploaded;
+}
+
 let activeSync: Promise<SyncResult> | null = null;
 export function syncAll(getAccessToken: () => Promise<string | null>): Promise<SyncResult> {
   if (activeSync) return activeSync;
@@ -1166,6 +1199,9 @@ async function runSyncAll(
   let merged = 0;
 
   try {
+    // Synchronize trips even when there are no pending jornadas.
+    const tripsPushed = await syncTripsToCloud(authUser.id);
+    pushed += tripsPushed;
     const pending = await getPendingSyncData();
     let hasNatPending = false;
     try {
