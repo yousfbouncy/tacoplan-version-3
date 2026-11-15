@@ -1,0 +1,26 @@
+name: Verify Tacoplan alarm changes
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/alertasDisponibilidad.ts'
+      - 'lib/availability-alarms.ts'
+      - 'lib/alarmkit-bridge.ts'
+      - 'app/(tabs)/index.tsx'
+      - 'tests/alertasDisponibilidad.test.ts'
+      - '.github/workflows/alarms-mobile-check.yml'
+  workflow_dispatch:
+jobs:
+  test-and-typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test

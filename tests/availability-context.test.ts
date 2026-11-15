@@ -25,11 +25,11 @@ test("13 h: exhausted extensions give two urgent alerts, at 30 and 10 minutes", 
   const start = new Date("2026-10-27T08:00:00").getTime();
   assert.deepEqual(pairs(3).map(a => (Date.parse(a.fecha)-start)/60000), [750,770]);
 });
-test("15 h: available extension gives 13h at 10 minutes and 15h at 30 minutes", () => {
+test("15 h: available extension gives 13h at 10 minutes and 15h at 30 and 10 minutes", () => {
   const alerts = pairs(2);
-  assert.deepEqual(alerts.map(a => [a.limite,a.minutosAntes,a.nivel]), [[13,10,"suave"],[15,30,"urgente"]]);
+  assert.deepEqual(alerts.map(a => [a.limite,a.minutosAntes,a.nivel]), [[13,10,"suave"],[15,30,"urgente"],[15,10,"urgente"]]);
   const start = new Date("2026-10-27T08:00:00").getTime();
-  assert.deepEqual(alerts.map(a => (Date.parse(a.fecha)-start)/60000), [770,870]);
+  assert.deepEqual(alerts.map(a => (Date.parse(a.fecha)-start)/60000), [770,870,890]);
 });
 test("remaining extensions use the observed cycle, not Monday or driving extensions", () => {
   for (const n of [0,1,2,3,4]) {
@@ -70,8 +70,8 @@ test("closed, disabled, invalid and elapsed shifts do not schedule alerts; repea
   assert.deepEqual(planAvailabilityAlarms(shift,ctx,false,0),[]);
   assert.deepEqual(planAvailabilityAlarms({...shift,horaInicio:"bad"},ctx,true,0),[]);
   const alerts = planAvailabilityAlarms(shift,ctx,true,0);
-  assert.deepEqual(planAvailabilityAlarms(shift,ctx,true,Date.parse(alerts[0].fecha)).map(a=>a.limite),[15]);
-  assert.deepEqual(planAvailabilityAlarms(shift,ctx,true,Date.parse(alerts[1].fecha)),[]);
+  assert.deepEqual(planAvailabilityAlarms(shift,ctx,true,Date.parse(alerts[0].fecha)).map(a=>a.limite),[15,15]);
+  assert.deepEqual(planAvailabilityAlarms(shift,ctx,true,Date.parse(alerts[2].fecha)),[]);
   assert.deepEqual(planAvailabilityAlarms(shift,ctx,true,0), alerts);
 });
 test("overlaps, duplicate records and insufficient rest keep the condition unknown", () => {
