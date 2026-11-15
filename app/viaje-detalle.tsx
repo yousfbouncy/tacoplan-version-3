@@ -209,7 +209,7 @@ export default function ViajeDetalleScreen() {
   const openEditParada = (p: Parada) => {
     setEditParadaModal(p);
     setEditParadaLugar(p.lugar);
-    setEditParadaTipo(p.tipo);
+    setEditParadaTipo(p.tipo === "ENTREGA_REMOLQUE" ? "CARGA" : p.tipo);
     setEditParadaCitaFecha(p.citaFecha || "");
     setEditParadaCitaHora(p.citaHora || "");
   };
