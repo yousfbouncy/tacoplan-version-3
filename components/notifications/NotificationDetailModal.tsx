@@ -59,12 +59,12 @@ export default function NotificationDetailModal({
     if (!visible || !form || !notificationId || !user?.id) return;
     let active = true;
     setChecking(true);
-    void supabase.from("notification_form_responses").select("id")
+    void Promise.resolve(supabase.from("notification_form_responses").select("id")
       .eq("notification_id", notificationId).eq("user_id", user.id).maybeSingle()
       .then(({ data: previous, error: readError }) => {
         if (!active) return;
         if (!readError && previous?.id) setSubmitted(true);
-      }).finally(() => { if (active) setChecking(false); });
+      })).finally(() => { if (active) setChecking(false); });
     return () => { active = false; };
   }, [visible, notificationId, user?.id]);
 

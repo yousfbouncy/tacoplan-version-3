@@ -28,6 +28,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { userScopedKey } from "@/lib/user-scope";
+import { hydrateCompanyDriver } from "@/lib/enterprise-onboarding";
 import { supabase } from "@/lib/supabase";
 import {
   Inter_400Regular,
@@ -113,6 +114,22 @@ function OnboardingGate() {
           setNeedsOnboarding(!localCompleted);
           setChecking(false);
           return;
+        }
+
+        // Company settings are authoritative: complete invitation and hydrate
+        // this device before evaluating the local onboarding flag.
+        if(user?.id){
+          try {
+            const companyConfigured=await hydrateCompanyDriver(user.id);
+            if(companyConfigured){
+              setNeedsOnboarding(false);
+              setNeedsBaseLocation(false);
+              setChecking(false);
+              return;
+            }
+          } catch (error) {
+            console.warn("[ENTERPRISE] Onboarding hydration unavailable",error);
+          }
         }
 
         // Si este usuario ya terminó el alta y tiene una base local configurada,
