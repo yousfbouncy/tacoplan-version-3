@@ -1,0 +1,24 @@
+name: Mobile trip sync typecheck
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/sync-service.ts'
+      - 'lib/local-storage.ts'
+      - 'app/(tabs)/viajes.tsx'
+      - 'app/viaje-detalle.tsx'
+      - '.github/workflows/mobile-trip-sync-check.yml'
+  workflow_dispatch:
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
