@@ -1159,6 +1159,53 @@ async function syncTripsToCloud(userId: string): Promise<number> {
   return uploaded;
 }
 
+/**
+ * Fetches the user's assigned and self-created trips, preserving local
+ * edits and using the shared Supabase ID to prevent duplicates.
+ */
+export async function pullTripsFromCloud(userId: string): Promise<number> {
+  const { data, error } = await supabase.from("viajes")
+    .select("id,user_id,cliente,modo_viaje,notas,fin_lugar,fin_hora,fin_viaje_nota,estado,paradas,created_at,updated_at")
+    .eq("user_id", userId).order("created_at", { ascending: false }).limit(1000);
+  if (error) throw new Error("No se pudieron descargar los viajes: " + error.message);
+  const incoming: LS.Viaje[] = (data || []).map((row: any) => {
+    let notes = typeof row.notas === "string" ? row.notas : "";
+    try {
+      const parsed = JSON.parse(notes);
+      if (parsed && typeof parsed === "object" && parsed.origen === "trafico") {
+        notes = [
+          parsed.remolque ? "Remolque: " + parsed.remolque : "",
+          typeof parsed.observaciones === "string" ? parsed.observaciones : "",
+        ].filter(Boolean).join("\n");
+      }
+    } catch {}
+    const mode: LS.ModoViaje =
+      row.modo_viaje === "ENTREGA_REMOLQUE" ? "ENTREGA_REMOLQUE" :
+      row.modo_viaje === "SOLO_CARGA" || row.modo_viaje === "CARGA" ? "SOLO_CARGA" :
+      row.modo_viaje === "SOLO_DESCARGA" || row.modo_viaje === "DESCARGA" ? "SOLO_DESCARGA" : "COMPLETO";
+    const paradas: LS.Parada[] = Array.isArray(row.paradas) ? row.paradas.map((p: any, i: number) => ({
+      id: typeof p.id === "string" && p.id ? p.id : row.id + "-stop-" + i,
+      tipo: p.tipo === "DESCARGA" || p.tipo === "ENTREGA_REMOLQUE" ? p.tipo : "CARGA",
+      lugar: typeof p.lugar === "string" ? p.lugar : "",
+      citaFecha: p.citaFecha || null,
+      citaHora: p.citaHora || null,
+      llegadaReal: p.llegadaReal || null,
+      salidaReal: p.salidaReal || null,
+      llegadaConfirmada: !!p.llegadaConfirmada,
+      salidaConfirmada: !!p.salidaConfirmada,
+    })) : [];
+    return {
+      id: String(row.id), cliente: row.cliente || null, modoViaje: mode,
+      notas: notes || null, finLugar: row.fin_lugar || null,
+      finHora: row.fin_hora || null, finViajeNota: row.fin_viaje_nota || null,
+      estado: row.estado === "COMPLETADO" ? "COMPLETADO" : "EN_CURSO",
+      paradas, createdAt: row.created_at || row.updated_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+    };
+  });
+  return LS.mergeViajesFromCloud(incoming);
+}
+
 let activeSync: Promise<SyncResult> | null = null;
 export function syncAll(getAccessToken: () => Promise<string | null>): Promise<SyncResult> {
   if (activeSync) return activeSync;
@@ -1202,6 +1249,9 @@ async function runSyncAll(
     // Synchronize trips even when there are no pending jornadas.
     const tripsPushed = await syncTripsToCloud(authUser.id);
     pushed += tripsPushed;
+    // Pull after push so trips assigned by Traffic appear without replacing
+    // local-only records or accidentally re-uploading a stale cloud version.
+    const tripsPulled = await pullTripsFromCloud(authUser.id);
     const pending = await getPendingSyncData();
     let hasNatPending = false;
     try {
