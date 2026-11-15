@@ -382,7 +382,7 @@ export default function ViajeDetalleScreen() {
           </View>
           <Text style={[styles.paradaLugar, { flex: 1 }]}>{p.lugar}</Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Pressable onPress={() => openEditParada(p)} hitSlop={8}>
+            <Pressable disabled={p.tipo === "ENTREGA_REMOLQUE"} onPress={() => openEditParada(p)} hitSlop={8}>
               <Ionicons name="pencil-outline" size={16} color={Colors.light.textSecondary} />
             </Pressable>
             {viaje.paradas.length > 1 && (
