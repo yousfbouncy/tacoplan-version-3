@@ -28,6 +28,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { userScopedKey } from "@/lib/user-scope";
+import { hydrateCompanyDriver } from "@/lib/enterprise-onboarding";
 import { supabase } from "@/lib/supabase";
 import {
   Inter_400Regular,
@@ -115,35 +116,20 @@ function OnboardingGate() {
           return;
         }
 
-        // An employer may have created all onboarding settings before invitation.
-        // After the driver signs in, finish the verified invitation on the server
-        // BEFORE deciding whether to show the initial setup wizard.
-        // Never bypass the wizard if the API is unavailable and no cloud data exists.
-        try {
-          const auth = await supabase.auth.getSession();
-          const bearer = auth.data.session?.access_token;
-          if (bearer) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 6500);
-            try {
-              const result = await fetch("https://tacoplan.es/api/empresas/native-activate", {
-                method: "POST",
-                headers: { Authorization: "Bearer " + bearer, "Content-Type": "application/json" },
-                body: "{}",
-                signal: controller.signal,
-              });
-              if (!result.ok) {
-                const failure = await result.json().catch(() => ({}));
-                if (result.status !== 401) {
-                  console.warn("[ENTERPRISE] Pending employee activation:", failure?.error || result.status);
-                }
-              }
-            } finally {
-              clearTimeout(timer);
+        // Company settings are authoritative: complete invitation and hydrate
+        // this device before evaluating the local onboarding flag.
+        if(user?.id){
+          try {
+            const companyConfigured=await hydrateCompanyDriver(user.id);
+            if(companyConfigured){
+              setNeedsOnboarding(false);
+              setNeedsBaseLocation(false);
+              setChecking(false);
+              return;
             }
+          } catch (error) {
+            console.warn("[ENTERPRISE] Onboarding hydration unavailable",error);
           }
-        } catch (e) {
-          console.warn("[ENTERPRISE] Activation request unavailable; checking cloud profile", e);
         }
 
         // Si este usuario ya terminó el alta y tiene una base local configurada,
