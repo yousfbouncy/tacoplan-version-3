@@ -371,8 +371,8 @@ export default function ViajeDetalleScreen() {
     const isCarga = p.tipo === "CARGA";
     const color = isCarga ? Colors.light.success : Colors.light.accent;
     const label = p.tipo === "ENTREGA_REMOLQUE" ? "SOLTAR REMOLQUE" : isCarga ? t("viajes.load").toUpperCase() : t("viajes.unload").toUpperCase();
-    const llegadaBtnLabel = isCarga ? t("viajes.arrivalToLoad") : t("viajes.arrivalToUnload");
-    const salidaBtnLabel = isCarga ? t("viajes.departureFromLoad") : t("viajes.departureFromUnload");
+    const llegadaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Llegada para entregar remolque" : isCarga ? t("viajes.arrivalToLoad") : t("viajes.arrivalToUnload");
+    const salidaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Salida tras soltar remolque" : isCarga ? t("viajes.departureFromLoad") : t("viajes.departureFromUnload");
 
     return (
       <View key={p.id} style={[styles.paradaCard, { borderLeftColor: color }]}>
