@@ -5872,11 +5872,11 @@ export async function importFromServer(serverJornadas: any[], serverCompensacion
   }
 }
 
-export type ModoViaje = "COMPLETO" | "SOLO_CARGA" | "SOLO_DESCARGA";
+export type ModoViaje = "COMPLETO" | "SOLO_CARGA" | "SOLO_DESCARGA" | "ENTREGA_REMOLQUE";
 
 export interface Parada {
   id: string;
-  tipo: "CARGA" | "DESCARGA";
+  tipo: "CARGA" | "DESCARGA" | "ENTREGA_REMOLQUE";
   lugar: string;
   citaFecha: string | null;
   citaHora: string | null;
@@ -6023,6 +6023,27 @@ export async function upsertViajesImported(viajes: Viaje[]): Promise<{ added: nu
   }
   if (changed) await saveAllViajes(Array.from(map.values()));
   return { added, skipped };
+}
+
+/**
+ * Non-destructive cloud merge. Keep the driver's local progress when the
+ * cloud copy has not changed; newly assigned traffic trips are added by ID.
+ */
+export async function mergeViajesFromCloud(incoming: Viaje[]): Promise<number> {
+  if (!incoming.length) return 0;
+  const local = await getAllViajes();
+  const existing = new Map(local.map(v => [v.id, v]));
+  let changed = 0;
+  for (const remote of incoming) {
+    if (!remote.id) continue;
+    const current = existing.get(remote.id);
+    if (!current || remote.updatedAt > current.updatedAt) {
+      existing.set(remote.id, remote);
+      changed++;
+    }
+  }
+  if (changed) await saveAllViajes([...existing.values()]);
+  return changed;
 }
 
 export async function crearViaje(data: {
