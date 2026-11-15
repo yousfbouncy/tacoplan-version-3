@@ -16,7 +16,7 @@ export interface AvisoAmplitud {
   mensaje: string;
 }
 /**
- * Con 15h disponibles: aviso 10 min antes de las 13h y 30 min antes de las 15h.
+ * Con 15h disponibles: recordatorio 10 min antes de las 13h y avisos 30 y 10 min antes de las 15h.
  * Sin ampliación confirmada (agotada o desconocida): dos avisos, 30 y 10 min
  * antes de las 13h. El estado "desconocida" nunca confirma la ampliación.
  */
@@ -26,7 +26,7 @@ export function crearAvisosAmplitud(turno: TurnoAlarma, ahora = Date.now()): Avi
 
   const avisos: Array<{ limite: 13 | 15; minutosAntes: 10 | 30 }> =
     turno.ampliacion15h === "disponible"
-      ? [{ limite: 13, minutosAntes: 10 }, { limite: 15, minutosAntes: 30 }]
+      ? [{ limite: 13, minutosAntes: 10 }, { limite: 15, minutosAntes: 30 }, { limite: 15, minutosAntes: 10 }]
       : [{ limite: 13, minutosAntes: 30 }, { limite: 13, minutosAntes: 10 }];
 
   return avisos.map(({ limite, minutosAntes }): AvisoAmplitud => {
