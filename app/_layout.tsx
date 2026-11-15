@@ -115,6 +115,37 @@ function OnboardingGate() {
           return;
         }
 
+        // An employer may have created all onboarding settings before invitation.
+        // After the driver signs in, finish the verified invitation on the server
+        // BEFORE deciding whether to show the initial setup wizard.
+        // Never bypass the wizard if the API is unavailable and no cloud data exists.
+        try {
+          const auth = await supabase.auth.getSession();
+          const bearer = auth.data.session?.access_token;
+          if (bearer) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 6500);
+            try {
+              const result = await fetch("https://tacoplan.es/api/empresas/native-activate", {
+                method: "POST",
+                headers: { Authorization: "Bearer " + bearer, "Content-Type": "application/json" },
+                body: "{}",
+                signal: controller.signal,
+              });
+              if (!result.ok) {
+                const failure = await result.json().catch(() => ({}));
+                if (result.status !== 401) {
+                  console.warn("[ENTERPRISE] Pending employee activation:", failure?.error || result.status);
+                }
+              }
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+        } catch (e) {
+          console.warn("[ENTERPRISE] Activation request unavailable; checking cloud profile", e);
+        }
+
         // Si este usuario ya terminó el alta y tiene una base local configurada,
         // abrir Inicio sin bloquear cada arranque por una petición al perfil.
         // Un dispositivo nuevo o una configuración incompleta siguen el control remoto.
