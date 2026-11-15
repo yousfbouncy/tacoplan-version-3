@@ -5884,6 +5884,8 @@ export interface Parada {
   salidaReal: string | null;
   llegadaConfirmada: boolean;
   salidaConfirmada: boolean;
+  observaciones?: string | null;
+  remolque?: string | null;
 }
 
 export interface Viaje {
