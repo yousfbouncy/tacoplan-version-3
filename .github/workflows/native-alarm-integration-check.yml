@@ -1,0 +1,54 @@
+name: Native alarms and traffic push validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/tacoplan-android-alarm/**'
+      - 'modules/tacoplan-alarmkit/**'
+      - 'lib/availability-alarms.ts'
+      - 'app/_layout.tsx'
+      - 'app/(tabs)/usuario.tsx'
+      - 'plugins/withTrafficAlertSound.js'
+      - 'app.json'
+      - '.github/workflows/native-alarm-integration-check.yml'
+  workflow_dispatch:
+jobs:
+  js-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - name: Validate generated WAV is nonempty
+        run: |
+          node - <<'NODE'
+          require('./plugins/withTrafficAlertSound.js')({});
+          const fs = require('node:fs');
+          const wav = fs.readFileSync('./assets/sounds/tacoplan-viaje.wav');
+          if (wav.subarray(0,4).toString() !== 'RIFF' || wav.subarray(8,12).toString() !== 'WAVE' || wav.length < 1000) throw Error('Invalid WAV');
+          console.log('Original alarm sound generated', wav.length, 'bytes');
+          NODE
+  android-compile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci --ignore-scripts
+      - run: npx expo prebuild --platform android --no-install --clean
+      - run: cd android && ./gradlew :tacoplan-android-alarm:compileDebugKotlin --no-daemon --stacktrace
