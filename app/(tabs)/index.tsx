@@ -4,6 +4,8 @@ import type { BaseLocationConfig } from "@/lib/base-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
+import DriverActivityPanel from "@/components/DriverActivityPanel";
+import {loadDriverActivities,closeDriverActivities,saveDriverActivities} from "@/lib/driver-activities";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -1807,6 +1809,18 @@ export default function DashboardScreen() {
       return result;
     },
     onSuccess: async (closed: Jornada) => {
+      // Cerrar la actividad manual a la hora efectiva del fin de jornada.
+      // Nunca bloquear el cierre ya guardado si el registro de actividades falla.
+      if (user?.id && closed.id) {
+        try {
+          const existing = await loadDriverActivities(user.id, String(closed.id));
+          const closedAt = closed.endAt ? new Date(closed.endAt) : new Date();
+          await saveDriverActivities(user.id, closeDriverActivities(existing,
+            Number.isFinite(closedAt.getTime()) ? closedAt : new Date()));
+        } catch (error) {
+          console.warn("[ACTIVITIES] No se pudo cerrar la actividad manual", error);
+        }
+      }
       // Reflejar el cierre inmediatamente, sin esperar al siguiente refresco.
       qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), null);
       // La jornada ya está guardada como cerrada: anular inmediatamente todas
@@ -3108,6 +3122,8 @@ export default function DashboardScreen() {
                 <Ionicons name="stop" size={18} color="#FFFFFF" />
                 <Text style={styles.activeShiftCloseText}>Cerrar jornada</Text>
               </Pressable>
+
+            {user?.id && abierta?.id ? <DriverActivityPanel key={String(abierta.id)} userId={user.id} shiftId={String(abierta.id)} /> : null}
 
             {abierta.descansoAnteriorMin != null && (
               <View style={{

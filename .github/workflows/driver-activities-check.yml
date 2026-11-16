@@ -1,0 +1,23 @@
+name: Verify driver activity controls
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'components/DriverActivityPanel.tsx'
+      - 'lib/driver-activities.ts'
+      - 'tests/driver-activities.test.ts'
+      - 'app/(tabs)/index.tsx'
+      - '.github/workflows/driver-activities-check.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
