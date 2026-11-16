@@ -31,7 +31,7 @@ jobs:
           node - <<'NODE'
           require('./plugins/withTrafficAlertSound.js')({});
           const fs = require('node:fs');
-          const wav = fs.readFileSync('./assets/sounds/tacoplan-viaje.wav');
+          const wav = fs.readFileSync('./assets/sounds/tacoplan_viaje.wav');
           if (wav.subarray(0,4).toString() !== 'RIFF' || wav.subarray(8,12).toString() !== 'WAVE' || wav.length < 1000) throw Error('Invalid WAV');
           console.log('Original alarm sound generated', wav.length, 'bytes');
           NODE
