@@ -352,6 +352,8 @@ export default function DashboardScreen() {
   const [secondDriverName, setSecondDriverName] = useState("");
 
   const [showInicioForm, setShowInicioForm] = useState(false);
+  // A cloud refresh must never dismiss a driver action in progress.
+  const [confirmedStart, setConfirmedStart] = useState<Jornada | null>(null);
   const [showFinForm, setShowFinForm] = useState(false);
   const [legalExpanded, setLegalExpanded] = useState(false);
   useEffect(() => {
@@ -798,10 +800,13 @@ export default function DashboardScreen() {
   }, [isMoroccoMode, ferryConfig.paymentMode, moroccoRouteType, moroccoPernocta, moroccoDayExtras, customRates, dayExtras]);
 
   useEffect(() => {
+    // Quietly refresh ancillary values without interrupting the start form.
+    // The saved local shift stays authoritative until the query catches up.
     for (const name of ["jornada-abierta", "estado-legal", "legal-preview", "last-closed"]) {
+      if (name === "jornada-abierta" && showInicioForm) continue;
       void qc.invalidateQueries({ queryKey: dashboardQueryKey(name, user?.id) });
     }
-  }, [syncVersion, user?.id, qc]);
+  }, [syncVersion, user?.id, qc, showInicioForm]);
 
   const abiertaQuery = useQuery<Jornada | null>({
     queryKey: dashboardQueryKey("jornada-abierta", user?.id),
@@ -825,7 +830,7 @@ export default function DashboardScreen() {
         const key = dashboardQueryKey(name, user?.id);
         const state = qc.getQueryState(key);
         // No cancelar una lectura en curso ni relanzar peticiones recientes.
-        if (!state || state.fetchStatus === "fetching") continue;
+        if (!state || state.fetchStatus === "fetching" || (name === "jornada-abierta" && showInicioForm)) continue;
         void qc.refetchQueries({ queryKey: key, type: "active", stale: true });
       }
     };
@@ -834,7 +839,7 @@ export default function DashboardScreen() {
       if (state === "active") refreshIfStale();
     });
     return () => sub.remove();
-  }, [qc, user?.id]));
+  }, [qc, user?.id, showInicioForm]));
 
   useEffect(() => {
     if (!showFinForm) return;
@@ -900,8 +905,13 @@ export default function DashboardScreen() {
   const legalPreview = legalPreviewQuery.data;
 
   const cachedShift = lastResolvedShift?.userId === user?.id ? lastResolvedShift : null;
-  const abierta = ferryJustClosed ? null :
-    abiertaQuery.isSuccess ? abiertaQuery.data : cachedShift?.shift ?? null;
+  // The start form is an active user action. An unrelated cloud refresh must
+  // not replace it; after saving, keep the locally confirmed shift visible
+  // until the async query catches up with its exact ID.
+  const resolvedAbierta = abiertaQuery.isSuccess ? abiertaQuery.data : cachedShift?.shift ?? null;
+  const abierta = ferryJustClosed ? null : showInicioForm ? null :
+    confirmedStart && (!resolvedAbierta || resolvedAbierta.id !== confirmedStart.id)
+      ? confirmedStart : resolvedAbierta;
   const estado = estadoQuery.data;
 
   const isCrossSundayMonday = useMemo(() => {
@@ -1156,7 +1166,9 @@ export default function DashboardScreen() {
     },
     onSuccess: async (newJornada: Jornada) => {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setConfirmedStart(newJornada);
       setShowInicioForm(false);
+      void qc.cancelQueries({ queryKey: dashboardQueryKey("jornada-abierta", user?.id) });
       qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), newJornada);
       setFerryJustClosed(null);
       setInicioLugar("");
@@ -1822,6 +1834,7 @@ export default function DashboardScreen() {
         }
       }
       // Reflejar el cierre inmediatamente, sin esperar al siguiente refresco.
+      setConfirmedStart(null);
       qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), null);
       // La jornada ya está guardada como cerrada: anular inmediatamente todas
       // sus alarmas pendientes y visibles, incluso antes de actualizar la UI.
@@ -1910,7 +1923,7 @@ export default function DashboardScreen() {
     },
   });
 
-  const isLoading = abiertaQuery.isPending && !cachedShift;
+  const isLoading = abiertaQuery.isPending && !cachedShift && !showInicioForm && !confirmedStart;
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const handleManualRefresh = useCallback(async () => {
     if (manualRefreshing) return;
