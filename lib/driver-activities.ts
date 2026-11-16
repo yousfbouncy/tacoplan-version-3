@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "@/lib/supabase";
 
 export type DriverActivity = "DRIVING" | "REST" | "AVAILABLE" | "WORK";
 export type ActivitySegment = { type: DriverActivity; startedAt: string; endedAt: string | null };
@@ -19,11 +20,74 @@ export function sanitizeLog(input: unknown, shiftId: string): ActivityLog {
   return {shiftId, segments};
 }
 
+// Traffic and the app share these server-side segments. The phone remains usable offline.
+const cloudType: Record<DriverActivity,string> = {
+  DRIVING:"CONDUCCION", REST:"DESCANSO", AVAILABLE:"DISPONIBILIDAD", WORK:"OTROS_TRABAJOS",
+};
+const fromCloudType: Record<string,DriverActivity> = Object.fromEntries(
+  Object.entries(cloudType).map(([key,value])=>[value,key as DriverActivity])
+) as Record<string,DriverActivity>;
+const syncJobs = new Map<string,Promise<boolean>>();
+
+function parseStoredLog(raw: string | null, shiftId: string): ActivityLog {
+  if (!raw) return {shiftId,segments:[]};
+  try {return sanitizeLog(JSON.parse(raw),shiftId);}
+  catch {return {shiftId,segments:[]};}
+}
+
 export async function loadDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
-  const value = await AsyncStorage.getItem(key(userId, shiftId));
-  if (!value) return {shiftId, segments:[]};
-  try { return sanitizeLog(JSON.parse(value), shiftId); }
-  catch { return {shiftId, segments:[]}; }
+  const stored = parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+  if (stored.segments.length) return stored;
+  // Hydrate when opening the same shift from a different device or after a reinstall.
+  // Do not overwrite locally pending activity changes.
+  try {
+    const {data,error} = await supabase.from("tacho_activities")
+      .select("tipo,inicio,fin,segment_index")
+      .eq("user_id",userId).eq("shift_id",shiftId).eq("source","manual")
+      .order("segment_index",{ascending:true});
+    if (error || !data?.length) return stored;
+    const log = sanitizeLog({segments:data.map(row=>({
+      type:fromCloudType[String(row.tipo)],
+      startedAt:String(row.inicio),
+      endedAt:row.fin===null?null:String(row.fin),
+    }))},shiftId);
+    if (log.segments.length) await AsyncStorage.setItem(key(userId,shiftId),JSON.stringify(log));
+    return log;
+  } catch { return stored; }
+}
+
+export function syncDriverActivities(userId: string, shiftId: string): Promise<boolean> {
+  const storageKey=key(userId,shiftId);
+  // Serialize writes per shift and always read the newest local state: late HTTP
+  // responses must not reopen an already closed segment.
+  const previous=syncJobs.get(storageKey) || Promise.resolve(true);
+  const next=previous.catch(()=>false).then(async()=>{
+    const log=parseStoredLog(await AsyncStorage.getItem(storageKey),shiftId);
+    if (!log.segments.length) return true;
+    const rows=log.segments.map((segment,index)=>{
+      const start=Date.parse(segment.startedAt);
+      const end=segment.endedAt?Date.parse(segment.endedAt):null;
+      return {
+        id:"manual:"+userId+":"+shiftId+":"+index,
+        user_id:userId,shift_id:shiftId,segment_index:index,
+        tipo:cloudType[segment.type],source:"manual",
+        inicio:segment.startedAt,fin:segment.endedAt,
+        fecha:segment.startedAt.slice(0,10),
+        duracion_min:end===null?0:Math.max(0,Math.floor((end-start)/60000)),
+        updated_at:new Date().toISOString(),
+      };
+    });
+    const {error}=await supabase.from("tacho_activities").upsert(rows,{onConflict:"id"});
+    if (error) throw error;
+    return true;
+  }).catch(error=>{
+    console.warn("[ACTIVITIES] Cloud sync pending; will retry",error);
+    return false;
+  }).finally(()=>{
+    if(syncJobs.get(storageKey)===next)syncJobs.delete(storageKey);
+  });
+  syncJobs.set(storageKey,next);
+  return next;
 }
 
 export function changeDriverActivity(log: ActivityLog, next: DriverActivity, now = new Date()): ActivityLog {
@@ -49,6 +113,8 @@ export function closeDriverActivities(log: ActivityLog, now = new Date()): Activ
 
 export async function saveDriverActivities(userId: string, log: ActivityLog): Promise<void> {
   await AsyncStorage.setItem(key(userId,log.shiftId), JSON.stringify(log));
+  // Save locally first; when offline the activity is never lost or blocked.
+  void syncDriverActivities(userId,log.shiftId);
 }
 
 export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
