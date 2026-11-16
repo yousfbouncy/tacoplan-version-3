@@ -1,4 +1,4 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule } from "expo";
 
 type AlarmModule = {
   schedule(id: string, epochMillis: number, title: string, body: string): Promise<"exact" | "inexact">;
