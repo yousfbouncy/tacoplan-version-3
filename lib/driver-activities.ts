@@ -76,6 +76,22 @@ export async function loadDriverActivities(userId: string, shiftId: string): Pro
   } catch { return stored; }
 }
 
+export function buildActivitySyncRows(userId:string,log:ActivityLog,updatedAt=new Date()) {
+  return log.segments.map((segment,index)=>{
+    const start=Date.parse(segment.startedAt);
+    const end=segment.endedAt?Date.parse(segment.endedAt):null;
+    return {
+      id:"manual:"+userId+":"+log.shiftId+":"+index,
+      user_id:userId,shift_id:log.shiftId,segment_index:index,
+      tipo:cloudType[segment.type],source:"manual",
+      inicio:segment.startedAt,fin:segment.endedAt,
+      fecha:segment.startedAt.slice(0,10),
+      duracion_min:end===null?0:Math.max(0,Math.floor((end-start)/60000)),
+      updated_at:updatedAt.toISOString(),
+    };
+  });
+}
+
 export function syncDriverActivities(userId: string, shiftId: string): Promise<boolean> {
   const storageKey=key(userId,shiftId);
   // Serialize writes per shift and always read the newest local state: late HTTP
@@ -85,19 +101,7 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
     const snapshot=await AsyncStorage.getItem(storageKey);
     const log=parseStoredLog(snapshot,shiftId);
     if (!log.segments.length) { await updatePending(userId,shiftId,false); return true; }
-    const rows=log.segments.map((segment,index)=>{
-      const start=Date.parse(segment.startedAt);
-      const end=segment.endedAt?Date.parse(segment.endedAt):null;
-      return {
-        id:"manual:"+userId+":"+shiftId+":"+index,
-        user_id:userId,shift_id:shiftId,segment_index:index,
-        tipo:cloudType[segment.type],source:"manual",
-        inicio:segment.startedAt,fin:segment.endedAt,
-        fecha:segment.startedAt.slice(0,10),
-        duracion_min:end===null?0:Math.max(0,Math.floor((end-start)/60000)),
-        updated_at:new Date().toISOString(),
-      };
-    });
+    const rows=buildActivitySyncRows(userId,log);
     const {supabase}=await import("@/lib/supabase");
     const {error}=await supabase.from("tacho_activities").upsert(rows,{onConflict:"id"});
     if (error) throw error;
