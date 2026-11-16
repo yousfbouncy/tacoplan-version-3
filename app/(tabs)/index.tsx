@@ -111,6 +111,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { AVAILABILITY_ALARMS_KEY, cancelAvailabilityAlarmsForClosedShift, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
 import { supabase } from "@/lib/supabase";
+import { validateVacationPeriod, isVacationDay, calendarDateInTimeZone } from "@/lib/vacation-period";
 import {
   fetchDayExtras,
   fetchDietRates,
@@ -545,6 +546,25 @@ export default function DashboardScreen() {
   const [showStartPlan, setShowStartPlan] = useState(false);
   const [startPlanData, setStartPlanData] = useState<LegalPlan | null>(null);
   const [chosenRest, setChosenRest] = useState<number | null>(null);
+  const [chosenVacation, setChosenVacation] = useState(false);
+  const [vacationStart, setVacationStart] = useState("");
+  const [vacationEnd, setVacationEnd] = useState("");
+  const [vacationSaving, setVacationSaving] = useState(false);
+  const vacationQuery = useQuery({
+    queryKey: ["driver-vacation", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles")
+        .select("vacation_start_date,vacation_end_date").eq("id", user!.id).single();
+      if (error) throw error;
+      return { startDate: data.vacation_start_date as string | null, endDate: data.vacation_end_date as string | null };
+    },
+    staleTime: 30_000,
+  });
+  const vacationPeriod = vacationQuery.data?.startDate && vacationQuery.data?.endDate
+    ? { startDate: vacationQuery.data.startDate, endDate: vacationQuery.data.endDate } : null;
+  const vacationToday = calendarDateInTimeZone(new Date());
+  const vacationActive = isVacationDay(vacationPeriod, vacationToday);
   const [closedJornadaId, setClosedJornadaId] = useState<string | null>(null);
   const [closePlanData, setClosePlanData] = useState<LegalPlan | null>(null);
   const [ferryJustClosed, setFerryJustClosed] = useState<Jornada | null>(null);
@@ -1833,6 +1853,9 @@ export default function DashboardScreen() {
         }, locale);
         setClosePlanData(plan);
         setChosenRest(null);
+        setChosenVacation(false);
+        setVacationStart("");
+        setVacationEnd("");
         setShowLegalModal(true);
       }
 
@@ -2905,7 +2928,28 @@ export default function DashboardScreen() {
             );
           })()}
 
-          {lastClosed && (() => {
+          {vacationPeriod && !abierta && vacationToday <= vacationPeriod.endDate && (
+            <View style={[styles.card, { marginBottom: 16, gap: 9 }]}>
+              <Text style={styles.cardTitle}><Ionicons name="sunny" size={19} color={Colors.light.tint} /> Vacaciones {vacationActive ? "en curso" : "programadas"}</Text>
+              <Text style={{ color: Colors.light.textSecondary }}>
+                Del {vacationPeriod.startDate} al {vacationPeriod.endDate}, incluidos.
+                Durante estas fechas no recibirás recordatorios por falta de registro de jornada.
+                Los avisos generales y los viajes de Tráfico seguirán activos.
+              </Text>
+              <Pressable onPress={() => Alert.alert("Cancelar vacaciones", "¿Volver a activar los recordatorios de jornada desde ahora?", [
+                { text: "Conservar", style: "cancel" },
+                { text: "Cancelar vacaciones", style: "destructive", onPress: async () => {
+                  if (!user?.id) return;
+                  const { error } = await supabase.from("profiles").update({ vacation_start_date: null, vacation_end_date: null }).eq("id", user.id);
+                  if (error) Alert.alert("Vacaciones", "No se pudo cancelar el periodo. Comprueba la conexión.");
+                  else await qc.invalidateQueries({ queryKey: ["driver-vacation", user.id] });
+                }},
+              ])} style={{ paddingVertical: 8 }}>
+                <Text style={{ color: Colors.light.tint, fontFamily: "Inter_600SemiBold" }}>Cancelar vacaciones</Text>
+              </Pressable>
+            </View>
+          )}
+          {lastClosed && !vacationActive && (() => {
             const rest = restCountdown(lastClosed, !!abierta, countdownNow);
             if (!rest) return null;
             const totalMin = rest.totalMin;
@@ -4274,7 +4318,7 @@ export default function DashboardScreen() {
                           opacity: enabled ? 1 : 0.4,
                         },
                       ]}
-                      onPress={() => enabled && setChosenRest(opt.minutes)}
+                      onPress={() => { if (enabled) { setChosenVacation(false); setChosenRest(opt.minutes); } }}
                       disabled={!enabled}
                     >
                       <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.text }}>
@@ -4337,11 +4381,12 @@ export default function DashboardScreen() {
                             "Tienes compensación pendiente esta semana. Si haces solo este descanso, puede quedar deuda pendiente.",
                             [
                               { text: t("common.cancel"), style: "cancel" },
-                              { text: "Continuar", onPress: () => setChosenRest(opt.minutes) },
+                              { text: "Continuar", onPress: () => { setChosenVacation(false); setChosenRest(opt.minutes); } },
                             ],
                           );
                           return;
                         }
+                        setChosenVacation(false);
                         setChosenRest(opt.minutes);
                       }}
                       disabled={!opt.enabled}
@@ -4363,7 +4408,40 @@ export default function DashboardScreen() {
                   ))}
                 </View>
 
-                {chosenRest && closePlanData.restOptions.find(o => o.minutes === chosenRest) && (() => {
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => { setChosenVacation(true); setChosenRest(null); }}
+                  style={{ paddingVertical: 13, paddingHorizontal: 12, borderRadius: 10, borderWidth: 2,
+                    borderColor: chosenVacation ? Colors.light.tint : Colors.light.border,
+                    backgroundColor: chosenVacation ? Colors.light.tint + "12" : Colors.light.background, marginTop: 10 }}>
+                  <Text style={{ fontFamily: "Inter_700Bold", fontSize: 16, color: Colors.light.tint }}>
+                    <Ionicons name="sunny-outline" size={19} /> Vacaciones
+                  </Text>
+                  <Text style={{ fontSize: 12, color: Colors.light.textSecondary, marginTop: 4 }}>
+                    Suspender únicamente los recordatorios de registro de jornada durante las fechas seleccionadas.
+                  </Text>
+                </Pressable>
+                {chosenVacation && (
+                  <View style={{ gap: 9, marginTop: 10 }}>
+                    <Text style={{ fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>Inicio de vacaciones (AAAA-MM-DD)</Text>
+                    <TextInput accessibilityLabel="Fecha de inicio de vacaciones" placeholder="2026-12-01"
+                      keyboardType="numbers-and-punctuation" value={vacationStart} maxLength={10}
+                      onChangeText={setVacationStart} autoCapitalize="none"
+                      style={{ borderWidth: 1, borderColor: Colors.light.border, borderRadius: 10,
+                        padding: 12, color: Colors.light.text, backgroundColor: Colors.light.background }} />
+                    <Text style={{ fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>Último día de vacaciones (AAAA-MM-DD)</Text>
+                    <TextInput accessibilityLabel="Fecha de fin de vacaciones" placeholder="2026-12-15"
+                      keyboardType="numbers-and-punctuation" value={vacationEnd} maxLength={10}
+                      onChangeText={setVacationEnd} autoCapitalize="none"
+                      style={{ borderWidth: 1, borderColor: Colors.light.border, borderRadius: 10,
+                        padding: 12, color: Colors.light.text, backgroundColor: Colors.light.background }} />
+                    <Text style={{ color: Colors.light.textSecondary, fontSize: 12 }}>
+                      Los recordatorios volverán automáticamente el día siguiente al último día indicado.
+                      No se silencian noticias de Tacoplan ni asignaciones de Tráfico.
+                    </Text>
+                  </View>
+                )}
+                {chosenRest && !chosenVacation && closePlanData.restOptions.find(o => o.minutes === chosenRest) && (() => {
                   const opt = closePlanData.restOptions.find(o => o.minutes === chosenRest)!;
                   return (
                     <View style={{ backgroundColor: Colors.light.background, borderRadius: 10, padding: 12, gap: 6 }}>
@@ -4417,6 +4495,28 @@ export default function DashboardScreen() {
             <Pressable
               style={({ pressed }) => [styles.modalBtnPrimary, { opacity: pressed ? 0.85 : 1, marginTop: 16 }]}
               onPress={async () => {
+                if (chosenVacation) {
+                  const invalid = validateVacationPeriod(vacationStart.trim(), vacationEnd.trim());
+                  if (invalid) { Alert.alert("Fechas de vacaciones", invalid); return; }
+                  if (!user?.id) { Alert.alert("Vacaciones", "Inicia sesión para guardar las fechas."); return; }
+                  setVacationSaving(true);
+                  try {
+                    const { error } = await supabase.from("profiles").update({
+                      vacation_start_date: vacationStart.trim(), vacation_end_date: vacationEnd.trim(),
+                    }).eq("id", user.id);
+                    if (error) throw error;
+                    await qc.invalidateQueries({ queryKey: ["driver-vacation", user.id] });
+                  } catch (error) {
+                    Alert.alert("Vacaciones", "No se han guardado las fechas. Comprueba la conexión e inténtalo otra vez.");
+                    setVacationSaving(false);
+                    return;
+                  }
+                  setVacationSaving(false);
+                  setChosenVacation(false);
+                  setSplitRestManual(false);
+                  setShowLegalModal(false);
+                  return;
+                }
                 if (chosenRest && closedJornadaId) {
                   const opt = closePlanData?.restOptions.find(o => o.minutes === chosenRest);
                   if (opt) {
@@ -4436,7 +4536,7 @@ export default function DashboardScreen() {
                 setShowLegalModal(false);
               }}
             >
-              <Text style={styles.modalBtnText}>{t("common.understood")}</Text>
+              <Text style={styles.modalBtnText}>{vacationSaving ? "Guardando..." : chosenVacation ? "Guardar vacaciones" : t("common.understood")}</Text>
             </Pressable>
            </ScrollView>
           </View>
