@@ -25,22 +25,30 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   const [log,setLog]=useState<ActivityLog|null>(null);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
+  const [syncState,setSyncState]=useState<"idle"|"pending"|"syncing"|"synced">("idle");
   const lock=useRef(false);
   useEffect(()=>{
     let valid=true;
     setLog(null);
-    loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
+    setSyncState("idle");
+    loadDriverActivities(userId,shiftId).then(v=>{if(valid){setLog(v);if(v.segments.length)setSyncState("pending");}}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
     return ()=>{valid=false};
   },[userId,shiftId]);
   useEffect(()=>{
     if (!log?.segments.length) return;
     // Retry queued local changes after returning online / reopening the app.
-    void syncDriverActivities(userId,shiftId);
+    let valid=true;
+    const check=async()=>{
+      setSyncState("syncing");
+      const ok=await syncDriverActivities(userId,shiftId);
+      if(valid)setSyncState(ok?"synced":"pending");
+    };
+    void check();
     const app=AppState.addEventListener("change",state=>{
-      if(state==="active")void syncDriverActivities(userId,shiftId);
+      if(state==="active")void check();
     });
-    const timer=setInterval(()=>{void syncDriverActivities(userId,shiftId);},30000);
-    return ()=>{app.remove();clearInterval(timer);};
+    const timer=setInterval(()=>{void check();},30000);
+    return ()=>{valid=false;app.remove();clearInterval(timer);};
   },[userId,shiftId,Boolean(log?.segments.length)]);
   useEffect(()=>{
     if(!log||!closed||!log.segments.some(s=>s.endedAt===null))return;
@@ -64,7 +72,10 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       await saveDriverActivities(userId,next);
       setNow(Date.now());
       setLog(next);
-    }catch(e){console.warn("[ACTIVITIES] Failed to save",e)}
+      setSyncState("syncing");
+      const ok=await syncDriverActivities(userId,shiftId);
+      setSyncState(ok?"synced":"pending");
+    }catch(e){setSyncState("pending");console.warn("[ACTIVITIES] Failed to save",e)}
     finally{lock.current=false;setSaving(false)}
   },[userId,log,closed]);
   return <View style={{backgroundColor:colors.panel,borderRadius:18,padding:16,marginBottom:15,gap:12}}>
@@ -90,6 +101,14 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     <Text style={{color:colors.sub,fontSize:12}}>
       Conducción desde la última pausa de 45 min: {format(totals.continuousDrivingMs)}
     </Text>
+    {log?.segments.length ? <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
+      <Text accessibilityRole="text" style={{color:syncState==="synced"?"#8CE6C0":"#FFD18A",fontSize:12,flex:1}}>
+        {syncState==="synced"?"✓ Actividades sincronizadas con Tráfico":syncState==="syncing"?"Sincronizando con Tráfico…":"Guardadas en el móvil · Pendientes de sincronización"}
+      </Text>
+      {syncState==="pending"?<Pressable accessibilityRole="button" onPress={async()=>{setSyncState("syncing");const ok=await syncDriverActivities(userId,shiftId);setSyncState(ok?"synced":"pending");}}>
+        <Text style={{color:"#99CDFF",fontWeight:"700",fontSize:12}}>Reintentar</Text>
+      </Pressable>:null}
+    </View>:null}
     <Text style={{color:colors.sub,fontSize:11}}>Registro manual orientativo · No sustituye al tacógrafo. AutoStart de actividades pendiente de integrar.</Text>
   </View>;
 }
