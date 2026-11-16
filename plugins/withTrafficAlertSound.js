@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-module.exports = function withTrafficAlertSound(config) {
+function generateTrafficAlertSound() {
   const sampleRate = 22050;
   const notes = [
     { frequency: 880, duration: 0.15 },
@@ -46,5 +46,9 @@ module.exports = function withTrafficAlertSound(config) {
   const destination = path.join(__dirname, "..", "assets", "sounds", "tacoplan_viaje.wav");
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (!fs.existsSync(destination) || !fs.readFileSync(destination).equals(wav)) fs.writeFileSync(destination, wav);
-  return config;
-};
+}
+
+// Generate as soon as Expo loads the config plugin, before notification mods
+// try to copy the WAV into Android/iOS native resources.
+generateTrafficAlertSound();
+module.exports = (config) => config;
