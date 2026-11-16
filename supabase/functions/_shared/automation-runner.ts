@@ -426,13 +426,21 @@ export async function handleRunNotificationAutomations(req: Request): Promise<Re
         }
         const { data: profiles, error: profilesErr } = await admin
           .from("profiles")
-          .select("id,created_at,last_jornada_at,last_inactivity_notification_sent_at,notifications_enabled,push_reminders_enabled")
+          .select("id,created_at,last_jornada_at,last_inactivity_notification_sent_at,notifications_enabled,push_reminders_enabled,vacation_start_date,vacation_end_date")
           .eq("push_reminders_enabled", true)
           .eq("notifications_enabled", true)
           .limit(5000);
         if (profilesErr) throw profilesErr;
 
+        // Server-side guard: even with the app closed, jornada inactivity reminders
+        // are paused for the driver's selected inclusive vacation dates.
+        // General Tacoplan, admin and trip notifications are deliberately unaffected.
+        const todayLocal = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit",
+        }).format(nowDate);
         const candidates = (profiles || []).filter((p: any) => {
+          if (p.vacation_start_date && p.vacation_end_date &&
+              todayLocal >= p.vacation_start_date && todayLocal <= p.vacation_end_date) return false;
           const last = p.last_jornada_at || p.created_at;
           if (!last) return false;
           if (String(last) > thresholdInactivity) return false;
