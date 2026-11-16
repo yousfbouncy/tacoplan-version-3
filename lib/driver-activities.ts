@@ -28,6 +28,26 @@ const fromCloudType: Record<string,DriverActivity> = Object.fromEntries(
   Object.entries(cloudType).map(([key,value])=>[value,key as DriverActivity])
 ) as Record<string,DriverActivity>;
 const syncJobs = new Map<string,Promise<boolean>>();
+const pendingPrefix = "tacoplan_driver_activity_pending_v1:";
+const migrationPrefix = "tacoplan_driver_activity_migrated_v1:";
+const queueLocks = new Map<string,Promise<void>>();
+
+async function updatePending(userId:string, shiftId:string, add:boolean):Promise<void> {
+  const queueKey=pendingPrefix+userId;
+  const previous=queueLocks.get(queueKey) || Promise.resolve();
+  const next=previous.catch(()=>{}).then(async()=>{
+    const raw=await AsyncStorage.getItem(queueKey);
+    let shifts:string[]=[];
+    try { const parsed=JSON.parse(raw||"[]"); if(Array.isArray(parsed))shifts=parsed.filter(x=>typeof x==="string"); } catch {}
+    const unique=new Set(shifts);
+    if(add)unique.add(shiftId);
+    else unique.delete(shiftId);
+    await AsyncStorage.setItem(queueKey,JSON.stringify(Array.from(unique)));
+  });
+  queueLocks.set(queueKey,next);
+  try { await next; } finally { if(queueLocks.get(queueKey)===next)queueLocks.delete(queueKey); }
+}
+
 
 function parseStoredLog(raw: string | null, shiftId: string): ActivityLog {
   if (!raw) return {shiftId,segments:[]};
@@ -62,7 +82,8 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
   // responses must not reopen an already closed segment.
   const previous=syncJobs.get(storageKey) || Promise.resolve(true);
   const next=previous.catch(()=>false).then(async()=>{
-    const log=parseStoredLog(await AsyncStorage.getItem(storageKey),shiftId);
+    const snapshot=await AsyncStorage.getItem(storageKey);
+    const log=parseStoredLog(snapshot,shiftId);
     if (!log.segments.length) return true;
     const rows=log.segments.map((segment,index)=>{
       const start=Date.parse(segment.startedAt);
@@ -79,6 +100,11 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
     });
     const {error}=await supabase.from("tacho_activities").upsert(rows,{onConflict:"id"});
     if (error) throw error;
+    // A newer local edit may have happened during this request. Do not mark
+    // that new edit as synced; the next pass will upload it.
+    if ((await AsyncStorage.getItem(storageKey))===snapshot) {
+      await updatePending(userId,shiftId,false);
+    }
     return true;
   }).catch(error=>{
     console.warn("[ACTIVITIES] Cloud sync pending; will retry",error);
@@ -88,6 +114,31 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
   });
   syncJobs.set(storageKey,next);
   return next;
+}
+
+export async function flushPendingDriverActivities(userId:string):Promise<void> {
+  if (!userId) return;
+  try {
+    const migrated=migrationPrefix+userId;
+    if (!(await AsyncStorage.getItem(migrated))) {
+      // Backfill activity logs saved by older releases before cloud sync existed.
+      const keys=await AsyncStorage.getAllKeys();
+      const prefix="tacoplan_driver_activities_v1:"+userId+":";
+      for(const storageKey of keys.filter(k=>k.startsWith(prefix))) {
+        await updatePending(userId,storageKey.slice(prefix.length),true);
+      }
+      await AsyncStorage.setItem(migrated,"true");
+    }
+    const raw=await AsyncStorage.getItem(pendingPrefix+userId);
+    const shifts=JSON.parse(raw||"[]") as unknown;
+    if(!Array.isArray(shifts)) return;
+    // Limit concurrency to avoid overloading Supabase on reconnect.
+    for(let index=0;index<shifts.length;index+=5) {
+      await Promise.all(shifts.slice(index,index+5)
+        .filter((shift):shift is string=>typeof shift==="string")
+        .map(shift=>syncDriverActivities(userId,shift)));
+    }
+  }catch(error){console.warn("[ACTIVITIES] Pending activity replay failed",error);}
 }
 
 export function changeDriverActivity(log: ActivityLog, next: DriverActivity, now = new Date()): ActivityLog {
@@ -113,6 +164,7 @@ export function closeDriverActivities(log: ActivityLog, now = new Date()): Activ
 
 export async function saveDriverActivities(userId: string, log: ActivityLog): Promise<void> {
   await AsyncStorage.setItem(key(userId,log.shiftId), JSON.stringify(log));
+  await updatePending(userId,log.shiftId,true);
   // Save locally first; when offline the activity is never lost or blocked.
   void syncDriverActivities(userId,log.shiftId);
 }
