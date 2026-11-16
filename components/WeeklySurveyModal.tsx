@@ -124,6 +124,8 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
   const rightToLeft = language === "ar";
 
   const [visible, setVisible] = useState(false);
+  const [remoteEnabled, setRemoteEnabled] = useState(false);
+  const [mandatory, setMandatory] = useState(true);
   const [satisfaction, setSatisfaction] = useState<Satisfaction | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [suggestion, setSuggestion] = useState("");
@@ -142,8 +144,39 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
     }
     if (savingRef.current) return;
 
-    const weekStart = thisWeekStartedAt();
-    lastCheckedWeek.current = weekStart;
+    lastCheckedWeek.current = thisWeekStartedAt();
+    // Never block entry when remote configuration is missing or unreadable.
+    const config = await supabase.from("tacoplan_survey_settings")
+      .select("enabled,mandatory,frequency,audience")
+      .eq("id", "weekly_survey").maybeSingle();
+    if (id !== checkId.current || savingRef.current) return;
+    if (config.error || !config.data || !config.data.enabled) {
+      setRemoteEnabled(false);
+      setVisible(false);
+      retryAfter.current = Date.now() + 2 * 60 * 1000;
+      return;
+    }
+    setRemoteEnabled(true);
+    setMandatory(config.data.mandatory !== false);
+    const audience = String(config.data.audience || "all");
+    if (audience === "new_users") {
+      const profile = await supabase.from("profiles").select("created_at").eq("id", user.id).maybeSingle();
+      if (id !== checkId.current) return;
+      const created = profile.data?.created_at ? Date.parse(profile.data.created_at) : NaN;
+      if (profile.error || !Number.isFinite(created) || Date.now() - created > 7 * 86400000) {
+        setVisible(false);
+        return;
+      }
+    } else if (audience === "first_jornada" || audience === "recurring") {
+      const journeys = await supabase.from("jornadas").select("id").eq("user_id",user.id).limit(2);
+      if (id !== checkId.current) return;
+      if (journeys.error) { setVisible(false); return; }
+      const count = journeys.data?.length || 0;
+      if (audience === "first_jornada" ? count !== 1 : count < 2) {
+        setVisible(false);
+        return;
+      }
+    }
     const { data, error: queryError } = await supabase
       .from("tacoplan_survey_responses")
       .select("updated_at")
@@ -152,17 +185,25 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
 
     if (id !== checkId.current || savingRef.current) return;
     if (queryError) {
-      // Retry an unsuccessful check while the app stays open. Do not treat a
-      // failed read as a completed survey, and do not close an already-open modal.
-      // We avoid blocking access indefinitely if the service is offline.
       retryAfter.current = Date.now() + 2 * 60 * 1000;
+      setVisible(false);
       return;
     }
     retryAfter.current = 0;
-    const lastResponse = data?.updated_at ? new Date(data.updated_at).getTime() : 0;
-    // A skipped week never counts as answered. Only a saved response during
-    // the current Monday-Sunday week satisfies this week's requirement.
-    setVisible(!Number.isFinite(lastResponse) || lastResponse < thisWeekStartedAt());
+    const responseAt = data?.updated_at ? Date.parse(data.updated_at) : 0;
+    const frequency = String(config.data.frequency || "weekly");
+    const now = new Date();
+    let windowStart = thisWeekStartedAt();
+    if (frequency === "once") windowStart = 0;
+    else if (frequency === "every_2_days") windowStart = Date.now() - 2 * 86400000;
+    else if (frequency === "biweekly") {
+      const monday = thisWeekStartedAt();
+      const epochMonday = new Date(2020,0,6).getTime();
+      const weekIndex = Math.floor((monday - epochMonday) / (7 * 86400000));
+      windowStart = monday - ((weekIndex % 2 + 2) % 2) * 7 * 86400000;
+    } else if (frequency === "monthly") windowStart = new Date(now.getFullYear(),now.getMonth(),1).getTime();
+    setVisible(!Number.isFinite(responseAt) || responseAt < windowStart);
+
   }, [enabled, user?.id]);
 
   useEffect(() => {
@@ -213,12 +254,12 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
 
   return (
     <Modal
-      visible={visible && enabled}
+      visible={visible && enabled && remoteEnabled}
       animationType="fade"
       transparent
       presentationStyle="overFullScreen"
       statusBarTranslucent
-      onRequestClose={() => { /* Required survey: hardware back cannot dismiss it. */ }}
+      onRequestClose={() => { if (!mandatory) setVisible(false); }}
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -287,6 +328,7 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
             />
             {!!error && <Text style={styles.error}>{error}</Text>}
             <Text style={[styles.footer, rightToLeft && styles.rtl]}>{copy.footer}</Text>
+            {!mandatory && <Pressable onPress={() => setVisible(false)} accessibilityRole="button"><Text style={styles.footer}>Ahora no</Text></Pressable>}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: !satisfaction || !difficulty || saving }}
