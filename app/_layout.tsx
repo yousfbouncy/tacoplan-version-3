@@ -68,7 +68,7 @@ function AuthGate() {
             name: "Nuevos viajes de Tráfico",
             importance: Notifications.AndroidImportance.MAX,
             vibrationPattern: [0, 180, 90, 180, 90, 180, 90, 270],
-            sound: "tacoplan-viaje.wav",
+            sound: "tacoplan_viaje.wav",
           });
         }
 
