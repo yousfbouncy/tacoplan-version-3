@@ -70,7 +70,7 @@
         "expo-notifications",
         {
           "sounds": [
-            "./assets/sounds/tacoplan-viaje.wav"
+            "./assets/sounds/tacoplan_viaje.wav"
           ],
           "enableRemoteNotifications": true
         }
