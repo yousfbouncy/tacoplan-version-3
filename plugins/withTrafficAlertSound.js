@@ -43,7 +43,7 @@ module.exports = function withTrafficAlertSound(config) {
   wav.write("data", 36);
   wav.writeUInt32LE(pcm.length, 40);
   pcm.copy(wav, 44);
-  const destination = path.join(__dirname, "..", "assets", "sounds", "tacoplan-viaje.wav");
+  const destination = path.join(__dirname, "..", "assets", "sounds", "tacoplan_viaje.wav");
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   if (!fs.existsSync(destination) || !fs.readFileSync(destination).equals(wav)) fs.writeFileSync(destination, wav);
   return config;
