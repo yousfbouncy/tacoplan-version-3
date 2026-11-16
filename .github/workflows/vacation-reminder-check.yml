@@ -1,0 +1,26 @@
+name: Validate vacation reminders
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/(tabs)/index.tsx'
+      - 'lib/vacation-period.ts'
+      - 'tests/vacation-period.test.ts'
+      - 'supabase/functions/_shared/automation-runner.ts'
+      - 'supabase/functions/run-notification-schedules/index.ts'
+      - 'supabase/migrations/*vacation*'
+      - '.github/workflows/vacation-reminder-check.yml'
+jobs:
+  test-and-typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
