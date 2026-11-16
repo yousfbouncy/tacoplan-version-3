@@ -3102,7 +3102,77 @@ export default function UsuarioScreen() {
                 <View style={styles.ferryToggleLabel}><Ionicons name="time-outline" size={18} color={Colors.light.tint} /><Text style={styles.ferryToggleText}>Alarmas de disponibilidad (13 h / 15 h)</Text></View>
                 <Switch value={availabilityAlarmsEnabled && notificationsEnabled} onValueChange={() => { void toggleAvailabilityAlarms(); }} disabled={!notificationsEnabled || savingNotifPrefs || !userId} />
               </Pressable>
-              <Text style={styles.ferryHint}>Aviso local cinco minutos antes del límite aplicable. Solo se programa con una jornada abierta y permisos concedidos.</Text>
+              <Text style={styles.ferryHint}>Con ampliación confirmada: 10 min antes de 13 h y 30/10 min antes de 15 h. Sin confirmación: 30/10 min antes de 13 h. Las alarmas exactas requieren permiso del sistema.</Text>
+
+              {Platform.OS === "android" && (
+                <Pressable style={styles.ferryToggleRow} onPress={async () => {
+                  try {
+                    const { androidAlarm } = await import("../../modules/tacoplan-android-alarm/src");
+                    if (await androidAlarm.canScheduleExact()) {
+                      Alert.alert("Alarmas exactas", "Este dispositivo permite programar alarmas exactas.");
+                    } else {
+                      Alert.alert("Permiso de alarmas", "Android necesita autorizar las alarmas exactas para avisarte a la hora programada.", [
+                        { text: "Cancelar", style: "cancel" },
+                        { text: "Abrir ajustes", onPress: () => { void androidAlarm.openExactAlarmSettings(); } },
+                      ]);
+                    }
+                  } catch {
+                    Alert.alert("Requiere actualización", "Instala una versión de Tacoplan con alarmas nativas Android.");
+                  }
+                }}>
+                  <View style={styles.ferryToggleLabel}>
+                    <Ionicons name="alarm-outline" size={18} color={Colors.light.tint} />
+                    <Text style={styles.ferryToggleText}>Permisos de alarmas exactas (Android)</Text>
+                  </View>
+                </Pressable>
+              )}
+
+              <Pressable style={styles.ferryToggleRow} onPress={async () => {
+                try {
+                  if (Platform.OS === "ios" && Number(Platform.Version) >= 26) {
+                    const { testAvailabilityAlarm } = await import("@/lib/alarmkit-bridge");
+                    await testAvailabilityAlarm();
+                  } else if (Platform.OS === "android") {
+                    const { androidAlarm } = await import("../../modules/tacoplan-android-alarm/src");
+                    await androidAlarm.schedule("tacoplan-jornada-test", Date.now() + 10000,
+                      "Tacoplan · prueba de alarma", "Esta es una prueba; no cambia tu jornada.");
+                  } else {
+                    throw new Error("La prueba nativa requiere iOS 26 o Android.");
+                  }
+                  Alert.alert("Alarma de prueba", "Se ha programado para dentro de 10 segundos.");
+                } catch (error: any) {
+                  Alert.alert("No se pudo programar", error?.message || "Revisa los permisos y la versión de la aplicación.");
+                }
+              }}>
+                <View style={styles.ferryToggleLabel}>
+                  <Ionicons name="volume-high-outline" size={18} color={Colors.light.tint} />
+                  <Text style={styles.ferryToggleText}>Probar alarma nativa (10 segundos)</Text>
+                </View>
+              </Pressable>
+
+              <Pressable style={styles.ferryToggleRow} onPress={async () => {
+                try {
+                  const Notifications = await import("expo-notifications");
+                  await Notifications.scheduleNotificationAsync({
+                    content: {
+                      title: "Tacoplan · prueba de aviso de viaje",
+                      body: "Tu-tu-tu-tut: un viaje de Tráfico utilizará este aviso.",
+                      sound: "tacoplan-viaje.wav",
+                      data: { target: "test-traffic-sound" },
+                    },
+                    trigger: null,
+                  });
+                } catch (error: any) {
+                  Alert.alert("No se pudo probar", error?.message || "Revisa los permisos de notificaciones.");
+                }
+              }}>
+                <View style={styles.ferryToggleLabel}>
+                  <Ionicons name="musical-notes-outline" size={18} color={Colors.light.tint} />
+                  <Text style={styles.ferryToggleText}>Probar sonido de nuevo viaje</Text>
+                </View>
+              </Pressable>
+
+              <View style={styles.subsectionDivider} />
 
               <View style={styles.subsectionDivider} />
 
