@@ -3157,7 +3157,7 @@ export default function UsuarioScreen() {
                     content: {
                       title: "Tacoplan · prueba de aviso de viaje",
                       body: "Tu-tu-tu-tut: un viaje de Tráfico utilizará este aviso.",
-                      sound: "tacoplan-viaje.wav",
+                      sound: "tacoplan_viaje.wav",
                       data: { target: "test-traffic-sound" },
                     },
                     trigger: null,
