@@ -314,6 +314,25 @@ serve(async (req: Request) => {
         targetUserIds = (ids || []).map((row: any) => String(row.user_id || "")).filter(Boolean);
       }
       targetUserIds = targetUserIds.filter(Boolean);
+      // Only scheduled no-jornada reminders are suspended during vacations.
+      // Regular admin messages and traffic trip assignments remain untouched.
+      if ((targetType === "no_jornada_2_days" || targetType === "no_jornada_7_days")
+          && targetUserIds.length > 0) {
+        const todayLocal = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit",
+        }).format(now);
+        const vacationUsers = new Set<string>();
+        for (const ids of chunk(targetUserIds, 400)) {
+          const { data: periods, error: vacationErr } = await admin.from("profiles")
+            .select("id,vacation_start_date,vacation_end_date")
+            .in("id", ids)
+            .lte("vacation_start_date", todayLocal)
+            .gte("vacation_end_date", todayLocal);
+          if (vacationErr) throw vacationErr;
+          for (const period of periods || []) vacationUsers.add(String(period.id));
+        }
+        targetUserIds = targetUserIds.filter(id => !vacationUsers.has(id));
+      }
 
       const dispatchCreatedAt = now.toISOString();
       const dispatchInsert = await admin
