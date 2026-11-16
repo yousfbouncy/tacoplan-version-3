@@ -47,6 +47,7 @@ import Colors from "@/constants/colors";
 import AdminNotificationExtraControls, { AdminNotificationContentKindSelector, type ExtraAction, type EditableQuestion, type FormKind } from "@/components/admin/AdminNotificationExtraControls";
 import AdminNotificationFormResponses from "@/components/admin/AdminNotificationFormResponses";
 import AdminSurveyResults from "@/components/admin/AdminSurveyResults";
+import AdminSurveyControls from "@/components/admin/AdminSurveyControls";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -2241,7 +2242,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
         <Animated.View style={{ opacity: contentFade }}>
           {tab === "summary" ? summaryContent : null}
           {tab === "users" ? usersContent : null}
-          {tab === "surveys" ? <AdminSurveyResults /> : null}
+          {tab === "surveys" ? <><AdminSurveyControls /><AdminSurveyResults /></> : null}
           {tab === "notifications" ? notificationsContent : null}
           {tab === "scheduled" ? scheduledContent : null}
           {tab === "automations" ? automationsContent : null}
