@@ -822,6 +822,11 @@ export default function DashboardScreen() {
   useEffect(() => {
     if (!abiertaQuery.isSuccess) return;
     setLastResolvedShift({ userId: user?.id, shift: abiertaQuery.data ?? null });
+    // Release the optimistic view only after the query contains the same
+    // saved journey. Older refresh responses can never hide the new start.
+    setConfirmedStart((pending) =>
+      pending && abiertaQuery.data?.id === pending.id ? null : pending,
+    );
   }, [abiertaQuery.isSuccess, abiertaQuery.data, user?.id]);
 
   useFocusEffect(useCallback(() => {
@@ -1168,7 +1173,7 @@ export default function DashboardScreen() {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setConfirmedStart(newJornada);
       setShowInicioForm(false);
-      void qc.cancelQueries({ queryKey: dashboardQueryKey("jornada-abierta", user?.id) });
+      await qc.cancelQueries({ queryKey: dashboardQueryKey("jornada-abierta", user?.id) });
       qc.setQueryData(dashboardQueryKey("jornada-abierta", user?.id), newJornada);
       setFerryJustClosed(null);
       setInicioLugar("");
