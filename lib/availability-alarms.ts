@@ -61,6 +61,49 @@ async function reconcileAvailabilityAlarms(
   // El cierre tiene prioridad incluso frente a sincronizaciones en cola.
   if (shift?.id && closedShiftIds.has(shift.id)) return;
   if (Platform.OS === "web") return;
+  if (Platform.OS === "android") {
+    const key = "tacoplan_availability_android_native_ids";
+    try {
+      const { androidAlarm } = await import("../modules/tacoplan-android-alarm/src");
+      let previous: string[] = [];
+      try {
+        const saved = JSON.parse(await AsyncStorage.getItem(key) || "[]");
+        previous = Array.isArray(saved) ? saved.filter((v): v is string => typeof v === "string") : [];
+      } catch {}
+      for (const id of previous) await androidAlarm.cancel(id);
+      await AsyncStorage.setItem(key, "[]");
+      if (!enabled || !shift || (context?.shiftId === shift.id && !context.aplica13h15h)) {
+        const Notifications = await import("expo-notifications");
+        const legacy = await Notifications.getAllScheduledNotificationsAsync();
+        await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
+          .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        return;
+      }
+      const alerts = planAvailabilityAlarms(shift, context, enabled);
+      const ids: string[] = [];
+      try {
+        for (const alert of alerts) {
+          await androidAlarm.schedule(alert.id, Date.parse(alert.fecha),
+            `Tacoplan · límite de ${alert.limite} h`, alert.mensaje);
+          ids.push(alert.id);
+          await AsyncStorage.setItem(key, JSON.stringify(ids));
+        }
+        // The system AlarmManager now owns these alerts; remove old Expo
+        // scheduled notifications to avoid a second sound at the same time.
+        const Notifications = await import("expo-notifications");
+        const legacy = await Notifications.getAllScheduledNotificationsAsync();
+        await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
+          .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        return;
+      } catch (error) {
+        for (const id of ids) await androidAlarm.cancel(id).catch(() => {});
+        await AsyncStorage.setItem(key, "[]");
+        throw error;
+      }
+    } catch (error) {
+      console.warn("[ANDROID ALARMS] Módulo nativo no disponible, usando notificaciones:", error);
+    }
+  }
   if (Platform.OS === "ios" && Number(Platform.Version) >= 26) {
     const oldIds = JSON.parse(await AsyncStorage.getItem(NATIVE_IDS_KEY) || "[]") as string[];
     for (const id of oldIds) await cancelAvailabilityAlarm(id).catch(() => {});
