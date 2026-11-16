@@ -61,11 +61,25 @@ function AuthGate() {
           }),
         });
 
+        if (Platform.OS === "android") {
+          // Android notification-channel settings persist after creation.
+          // A dedicated channel avoids mixing traffic assignments with shifts.
+          await Notifications.setNotificationChannelAsync("traffic-assigned-v1", {
+            name: "Nuevos viajes de Tráfico",
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 180, 90, 180, 90, 180, 90, 270],
+            sound: "tacoplan_viaje.wav",
+          });
+        }
+
         sub = Notifications.addNotificationResponseReceivedListener((response: any) => {
           try {
             const data = response?.notification?.request?.content?.data || {};
             if (data?.target === "jornada") {
               router.push("/(tabs)");
+            } else if (data?.target === "viaje" && typeof data?.tripId === "string") {
+              // Viajes downloads the assigned trip before displaying detail.
+              router.push("/(tabs)/viajes");
             }
           } catch {}
         });
