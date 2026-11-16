@@ -202,7 +202,7 @@ export default function WeeklySurveyModal({ enabled }: { enabled: boolean }) {
       const weekIndex = Math.floor((monday - epochMonday) / (7 * 86400000));
       windowStart = monday - ((weekIndex % 2 + 2) % 2) * 7 * 86400000;
     } else if (frequency === "monthly") windowStart = new Date(now.getFullYear(),now.getMonth(),1).getTime();
-    setVisible(!Number.isFinite(responseAt) || responseAt < windowStart);
+    setVisible(frequency === "once" ? responseAt === 0 || !Number.isFinite(responseAt) : (!Number.isFinite(responseAt) || responseAt < windowStart));
 
   }, [enabled, user?.id]);
 
