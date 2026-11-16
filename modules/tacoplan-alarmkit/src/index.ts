@@ -1,4 +1,4 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule } from "expo";
 const native = requireNativeModule("TacoplanAlarmKit");
 export const alarmKit = {
   requestAuthorization: (): Promise<string> => native.requestAuthorization(),
