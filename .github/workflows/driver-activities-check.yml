@@ -6,6 +6,7 @@ on:
       - 'components/DriverActivityPanel.tsx'
       - 'lib/driver-activities.ts'
       - 'app/_layout.tsx'
+      - 'app/(tabs)/index.tsx'
       - 'tests/driver-activities.test.ts'
       - '.github/workflows/driver-activities-check.yml'
   pull_request:
