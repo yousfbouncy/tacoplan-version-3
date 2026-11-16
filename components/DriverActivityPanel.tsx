@@ -29,7 +29,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   useEffect(()=>{
     let valid=true;
     setLog(null);
-    loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}.catch(()=>{if(valid)setLog({shiftId,segments:[]})});
+    loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
     return ()=>{valid=false};
   },[userId,shiftId]);
   useEffect(()=>{
