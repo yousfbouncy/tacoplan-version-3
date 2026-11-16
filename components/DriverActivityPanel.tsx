@@ -1,8 +1,8 @@
 import React, {useCallback,useEffect,useMemo,useRef,useState} from "react";
-import {ActivityIndicator,Pressable,Text,View} from "react-native";
+import {ActivityIndicator,AppState,Pressable,Text,View} from "react-native";
 import {
   type ActivityLog,type DriverActivity,changeDriverActivity,closeDriverActivities,
-  getDriverActivityTotals,loadDriverActivities,saveDriverActivities
+  getDriverActivityTotals,loadDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
 const activityTypes: Array<{type:DriverActivity,label:string,icon:string}> = [
@@ -32,6 +32,16 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
     return ()=>{valid=false};
   },[userId,shiftId]);
+  useEffect(()=>{
+    if (!log?.segments.length) return;
+    // Retry queued local changes after returning online / reopening the app.
+    void syncDriverActivities(userId,shiftId);
+    const app=AppState.addEventListener("change",state=>{
+      if(state==="active")void syncDriverActivities(userId,shiftId);
+    });
+    const timer=setInterval(()=>{void syncDriverActivities(userId,shiftId);},30000);
+    return ()=>{app.remove();clearInterval(timer);};
+  },[userId,shiftId,Boolean(log?.segments.length)]);
   useEffect(()=>{
     if(!log||!closed||!log.segments.some(s=>s.endedAt===null))return;
     const next=closeDriverActivities(log);
