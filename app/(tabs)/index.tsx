@@ -4,6 +4,7 @@ import type { BaseLocationConfig } from "@/lib/base-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
+import DriverActivityPanel from "@/components/DriverActivityPanel";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -3108,6 +3109,8 @@ export default function DashboardScreen() {
                 <Ionicons name="stop" size={18} color="#FFFFFF" />
                 <Text style={styles.activeShiftCloseText}>Cerrar jornada</Text>
               </Pressable>
+
+            {user?.id && abierta?.id ? <DriverActivityPanel key={String(abierta.id)} userId={user.id} shiftId={String(abierta.id)} /> : null}
 
             {abierta.descansoAnteriorMin != null && (
               <View style={{
