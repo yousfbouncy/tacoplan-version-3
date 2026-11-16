@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabase } from "@/lib/supabase";
 
 export type DriverActivity = "DRIVING" | "REST" | "AVAILABLE" | "WORK";
 export type ActivitySegment = { type: DriverActivity; startedAt: string; endedAt: string | null };
@@ -61,6 +60,7 @@ export async function loadDriverActivities(userId: string, shiftId: string): Pro
   // Hydrate when opening the same shift from a different device or after a reinstall.
   // Do not overwrite locally pending activity changes.
   try {
+    const {supabase}=await import("@/lib/supabase");
     const {data,error} = await supabase.from("tacho_activities")
       .select("tipo,inicio,fin,segment_index")
       .eq("user_id",userId).eq("shift_id",shiftId).eq("source","manual")
@@ -84,7 +84,7 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
   const next=previous.catch(()=>false).then(async()=>{
     const snapshot=await AsyncStorage.getItem(storageKey);
     const log=parseStoredLog(snapshot,shiftId);
-    if (!log.segments.length) return true;
+    if (!log.segments.length) { await updatePending(userId,shiftId,false); return true; }
     const rows=log.segments.map((segment,index)=>{
       const start=Date.parse(segment.startedAt);
       const end=segment.endedAt?Date.parse(segment.endedAt):null;
@@ -98,6 +98,7 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
         updated_at:new Date().toISOString(),
       };
     });
+    const {supabase}=await import("@/lib/supabase");
     const {error}=await supabase.from("tacho_activities").upsert(rows,{onConflict:"id"});
     if (error) throw error;
     // A newer local edit may have happened during this request. Do not mark
