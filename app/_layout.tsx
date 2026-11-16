@@ -22,11 +22,12 @@ import PeriodSetupModal from "@/components/PeriodSetupModal";
 import OnboardingSetup from "@/components/OnboardingSetup";
 import BaseLocationSetup from "@/components/BaseLocationSetup";
 import LoginScreen from "@/app/login";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
 import Colors from "@/constants/colors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
+import { flushPendingDriverActivities } from "@/lib/driver-activities";
 import { userScopedKey } from "@/lib/user-scope";
 import { hydrateCompanyDriver } from "@/lib/enterprise-onboarding";
 import { supabase } from "@/lib/supabase";
@@ -43,7 +44,23 @@ const ONBOARDING_KEY = "tacoplan_onboarding_completed";
 const BASE_LOCATION_SKIP_KEY = "tacoplan_base_location_skip_once";
 
 function AuthGate() {
-  const { isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated, user } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return;
+    let busy = false;
+    const flush = async () => {
+      if (busy) return;
+      busy = true;
+      try { await flushPendingDriverActivities(user.id); }
+      finally { busy = false; }
+    };
+    void flush();
+    const app = AppState.addEventListener("change", state => {
+      if (state === "active") void flush();
+    });
+    const interval = setInterval(() => { void flush(); }, 60 * 1000);
+    return () => { app.remove(); clearInterval(interval); };
+  }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
