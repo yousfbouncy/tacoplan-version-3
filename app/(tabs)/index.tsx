@@ -5,7 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import DriverActivityPanel from "@/components/DriverActivityPanel";
-import {loadDriverActivities,closeDriverActivities,saveDriverActivities,getDriverActivityTotals} from "@/lib/driver-activities";
+import {loadDriverActivities,closeDriverActivities,saveDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose} from "@/lib/driver-activities";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -334,6 +334,8 @@ export default function DashboardScreen() {
   const [dietManual, setDietManual] = useState({ route: false, overnight: false, percentage: false });
   const [tipoRuta, setTipoRuta] = useState<TipoRuta>("NACIONAL");
   const [conduccionHoras, setConduccionHoras] = useState("");
+  const closeDrivingEditedRef = useRef(false);
+  const [closeActivityHintMinutes, setCloseActivityHintMinutes] = useState<number | null>(null);
   const [conduccionDomingoHoras, setConduccionDomingoHoras] = useState("");
   const [conduccionLunesHoras, setConduccionLunesHoras] = useState("");
   const conduccionParsed = useMemo(() => parseDrivingInputToMinutes(conduccionHoras), [conduccionHoras]);
@@ -986,6 +988,39 @@ export default function DashboardScreen() {
     }
     return detectCrossSundayMonday(abierta.fechaInicio, resolvedFechaFin);
   }, [abierta?.fechaInicio, abierta?.horaInicio, finFecha, finHora]);
+
+  useEffect(() => {
+    if (!showFinForm || !user?.id || !abierta?.id) return;
+    let active=true;
+    // The form shows the activity-tracked driving total automatically.
+    // Keep every field editable; typing a value takes precedence thereafter.
+    void (async()=>{
+      try {
+        const log=await loadDriverActivities(user.id,String(abierta.id));
+        const candidate=new Date(finFecha+"T"+finHora+":00");
+        const closeAt=Number.isFinite(candidate.getTime())
+          ? new Date(Math.min(candidate.getTime(),Date.now())) : new Date();
+        const firstBoundary=new Date(abierta.fechaInicio+"T00:00:00");
+        firstBoundary.setDate(firstBoundary.getDate()+1);
+        const recorded=getDrivingTotalsForClose(log,closeAt,
+          isCrossSundayMonday?firstBoundary.getTime():undefined);
+        if(!active)return;
+        setCloseActivityHintMinutes(recorded.totalMin>0?recorded.totalMin:null);
+        if(!closeDrivingEditedRef.current && recorded.totalMin>0){
+          const asHours=(min:number)=>Math.floor(min/60)+":"+String(min%60).padStart(2,"0");
+          if(isCrossSundayMonday){
+            setConduccionDomingoHoras(asHours(recorded.firstPartMin));
+            setConduccionLunesHoras(asHours(recorded.secondPartMin));
+          }else{
+            setConduccionHoras(asHours(recorded.totalMin));
+          }
+        }
+      }catch(error){
+        console.warn("[ACTIVITIES] No se pudo calcular conducción al abrir cierre",error);
+      }
+    })();
+    return ()=>{active=false};
+  },[showFinForm,user?.id,abierta?.id,abierta?.fechaInicio,finFecha,finHora,isCrossSundayMonday]);
 
   useEffect(() => {
     if (!tacho.bindActiveJornada) return;
@@ -1799,38 +1834,28 @@ export default function DashboardScreen() {
           body.conduccionMin = conduccionParsed.minutes;
         }
       }
-      // When the driver used the activity buttons/AutoStart and did not enter
-      // manual driving time, preserve the recorded driving in the closed jornada.
-      // Never replace an explicit manual value or a positive tachograph reading.
-      if (body.conduccionMin == null && !hasManualDriving && user?.id && abierta.id) {
+      // Save the latest activity-tracked driving minutes at the effective
+      // closing time. This refreshes the prefilled number before saving without
+      // overwriting a value the driver actually typed.
+      // Tachograph data is retained as fallback when there are no activity segments.
+      if (!closeDrivingEditedRef.current && user?.id && abierta.id) {
         try {
           const activityLog=await loadDriverActivities(user.id,String(abierta.id));
-          const closedAt=new Date(resolvedFinFecha+"T"+finHora);
-          const end=Number.isFinite(closedAt.getTime()) ? closedAt : new Date();
+          const candidate=new Date(resolvedFinFecha+"T"+finHora+":00");
+          const end=Number.isFinite(candidate.getTime()) ? candidate : new Date();
           const boundedEnd=new Date(Math.min(end.getTime(),Date.now()));
-          const finalizedLog=closeDriverActivities(activityLog,boundedEnd);
-          const recorded=getDriverActivityTotals(finalizedLog,boundedEnd);
-          const drivingMinutes=Math.floor(recorded.totals.DRIVING/60000);
-          if(drivingMinutes>0){
-            body.conduccionMin=drivingMinutes;
-            if (isCrossSundayMonday) {
-              const startDay=new Date(abierta.fechaInicio+"T00:00:00");
-              const nextDay=new Date(startDay.getTime());
-              nextDay.setDate(startDay.getDate()+1);
-              let firstDayMs=0,secondDayMs=0;
-              for(const segment of finalizedLog.segments){
-                if(segment.type!=="DRIVING")continue;
-                const start=Date.parse(segment.startedAt),finish=Date.parse(segment.endedAt||"");
-                if(!Number.isFinite(start)||!Number.isFinite(finish))continue;
-                firstDayMs+=Math.max(0,Math.min(finish,nextDay.getTime())-Math.max(start,startDay.getTime()));
-                secondDayMs+=Math.max(0,Math.min(finish,end.getTime())-Math.max(start,nextDay.getTime()));
-              }
-              const sundayMin=Math.floor(firstDayMs/60000);
-              body.conduccionDomingoMin=sundayMin;
-              body.conduccionLunesMin=Math.max(0,drivingMinutes-sundayMin);
+          const boundary=new Date(abierta.fechaInicio+"T00:00:00");
+          boundary.setDate(boundary.getDate()+1);
+          const recorded=getDrivingTotalsForClose(activityLog,boundedEnd,
+            isCrossSundayMonday?boundary.getTime():undefined);
+          if(recorded.totalMin>0) {
+            body.conduccionMin=recorded.totalMin;
+            if(isCrossSundayMonday) {
+              body.conduccionDomingoMin=recorded.firstPartMin;
+              body.conduccionLunesMin=recorded.secondPartMin;
             }
           }
-        } catch (error) {
+        }catch(error){
           console.warn("[ACTIVITIES] No se pudo recuperar conducción para el cierre",error);
         }
       }
@@ -3225,6 +3250,11 @@ export default function DashboardScreen() {
                   setFinLugarTouched(false);
                   setDietGps(null);
                   setDietManual({ route: false, overnight: false, percentage: false });
+                  closeDrivingEditedRef.current=false;
+                  setCloseActivityHintMinutes(null);
+                  setConduccionHoras("");
+                  setConduccionDomingoHoras("");
+                  setConduccionLunesHoras("");
                   setShowFinForm(true);
                   resolveFinLugarFromGps();
                 }}
@@ -3392,7 +3422,7 @@ export default function DashboardScreen() {
                 <TextInput
                   style={[styles.input, conduccionDomingoParsed.error ? { borderColor: Colors.light.danger, borderWidth: 1 } : undefined]}
                   value={conduccionDomingoHoras}
-                  onChangeText={setConduccionDomingoHoras}
+                  onChangeText={(value) => { closeDrivingEditedRef.current=true; setConduccionDomingoHoras(value); }}
                   placeholder={t("dashboard.drivingSundayExample")}
                   placeholderTextColor="#9CA3AF"
                   keyboardType="default"
@@ -3409,7 +3439,7 @@ export default function DashboardScreen() {
                 <TextInput
                   style={[styles.input, conduccionLunesParsed.error ? { borderColor: Colors.light.danger, borderWidth: 1 } : undefined]}
                   value={conduccionLunesHoras}
-                  onChangeText={setConduccionLunesHoras}
+                  onChangeText={(value) => { closeDrivingEditedRef.current=true; setConduccionLunesHoras(value); }}
                   placeholder={t("dashboard.drivingMondayExample")}
                   placeholderTextColor="#9CA3AF"
                   keyboardType="default"
@@ -3417,6 +3447,11 @@ export default function DashboardScreen() {
                 {conduccionLunesParsed.error && (
                   <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.danger, marginTop: 4 }}>
                     {t(conduccionLunesParsed.error)}
+                  </Text>
+                )}
+                {closeActivityHintMinutes != null && (
+                  <Text style={{color:Colors.light.textSecondary,fontSize:12,marginTop:5}}>
+                    Conducción detectada por actividades: {Math.floor(closeActivityHintMinutes/60)}h {String(closeActivityHintMinutes%60).padStart(2,"0")}min. Puedes editar el valor antes de cerrar.
                   </Text>
                 )}
                 {conduccionDomingoParsed.minutes != null && conduccionLunesParsed.minutes != null && (
@@ -3431,11 +3466,16 @@ export default function DashboardScreen() {
                 <TextInput
                   style={[styles.input, conduccionParsed.error ? { borderColor: Colors.light.danger, borderWidth: 1 } : undefined]}
                   value={conduccionHoras}
-                  onChangeText={setConduccionHoras}
+                  onChangeText={(value) => { closeDrivingEditedRef.current=true; setConduccionHoras(value); }}
                   placeholder={t("dashboard.drivingExample")}
                   placeholderTextColor="#9CA3AF"
                   keyboardType="default"
                 />
+                {closeActivityHintMinutes != null && (
+                  <Text style={{color:Colors.light.textSecondary,fontSize:12,marginTop:5}}>
+                    Conducción detectada por actividades: {Math.floor(closeActivityHintMinutes/60)}h {String(closeActivityHintMinutes%60).padStart(2,"0")}min. Puedes editar el valor antes de cerrar.
+                  </Text>
+                )}
                 {conduccionParsed.error && (
                   <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.light.danger, marginTop: 4 }}>
                     {t(conduccionParsed.error)}
