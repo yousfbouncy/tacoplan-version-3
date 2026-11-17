@@ -96,7 +96,7 @@ function AuthGate() {
   }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    if (Platform.OS === "web" || !isAuthenticated) return;
     let sub: any = null;
     (async () => {
       try {
@@ -122,27 +122,38 @@ function AuthGate() {
           });
         }
 
-        sub = Notifications.addNotificationResponseReceivedListener((response: any) => {
+        const handledPushIds = new Set<string>();
+        const onResponse = (response: any) => {
           try {
+            const id = String(response?.notification?.request?.identifier || "");
+            if (id && handledPushIds.has(id)) return;
+            if (id) handledPushIds.add(id);
             const data = response?.notification?.request?.content?.data || {};
             if (data?.target === "jornada") {
               router.push("/(tabs)");
             } else if (data?.target === "traffic_location") {
-              // Opening the app triggers the safe foreground request poll.
               void pollTrafficLocationRequest();
               router.push("/(tabs)");
             } else if (data?.target === "viaje" && typeof data?.tripId === "string") {
-              // Viajes downloads the assigned trip before displaying detail.
+              // Viajes loads the assigned trip from the cloud on focus.
               router.push("/(tabs)/viajes");
             }
           } catch {}
-        });
+        };
+        sub = Notifications.addNotificationResponseReceivedListener(onResponse);
+        // A cold-start push tap may happen before this listener is ready.
+        // Replay it once after authentication and clear the native response.
+        const previousResponse = await Notifications.getLastNotificationResponseAsync();
+        if (previousResponse) {
+          onResponse(previousResponse);
+          await Notifications.clearLastNotificationResponseAsync();
+        }
       } catch {}
     })();
     return () => {
       try { sub?.remove?.(); } catch {}
     };
-  }, []);
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (
