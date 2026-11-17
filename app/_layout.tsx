@@ -23,7 +23,7 @@ import PeriodSetupModal from "@/components/PeriodSetupModal";
 import OnboardingSetup from "@/components/OnboardingSetup";
 import BaseLocationSetup from "@/components/BaseLocationSetup";
 import LoginScreen from "@/app/login";
-import { ActivityIndicator, AppState, View } from "react-native";
+import { ActivityIndicator, AppState, View, Text } from "react-native";
 import Colors from "@/constants/colors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
@@ -492,24 +492,19 @@ export default function RootLayout() {
           // Conservar la causa real para diagnosticar la URL del asset.
           console.warn("[FONTS] No se pudieron cargar todas las fuentes locales", error);
         });
-        if (Platform.OS === "web") {
-          // Un fallo de red en una fuente no debe bloquear 12 s toda la app.
-          await Promise.race([
-            loadingFonts,
-            new Promise<void>((resolve) => setTimeout(resolve, 2500)),
-          ]);
-        } else {
-          await loadingFonts;
-        }
+        // On Android an unresolved font asset must not leave the root tree null
+        // indefinitely after an OTA reload or a cold start.
+        await Promise.race([
+          loadingFonts,
+          new Promise<void>((resolve) => setTimeout(resolve, Platform.OS === "web" ? 2500 : 6500)),
+        ]);
       } catch (error) {
         console.warn("[FONTS] Error al preparar las fuentes", error);
       }
-      // Mostrar la app en cuanto estén las fuentes; no añadir 4 s artificiales.
+      // Render a visible native fallback before hiding the splash. Otherwise
+      // the OS can expose an empty white activity if hydration is delayed.
       if (cancelled) return;
-      try {
-        await SplashScreen.hideAsync();
-      } catch {}
-      if (__DEV__) console.log("[SPLASH] Fonts ready, continuing app bootstrap");
+      if (__DEV__) console.log("[SPLASH] Fonts resolved or timed out; rendering root");
       setBootReady(true);
     }
     loadFontsAndHoldSplash();
@@ -518,13 +513,31 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!bootReady) return null;
+  useEffect(() => {
+    if (!bootReady) return;
+    void SplashScreen.hideAsync().catch(error =>
+      console.warn("[SPLASH] Unable to hide splash:", error),
+    );
+  }, [bootReady]);
+
+  if (!bootReady) return (
+    <View onLayout={() => {
+      // Keep a native loading surface visible even if the splash cannot hide.
+      void SplashScreen.hideAsync().catch(() => {});
+    }} style={{ flex: 1, backgroundColor: "#08182D", justifyContent: "center", alignItems: "center", padding: 24 }}>
+      <ActivityIndicator size="large" color="#70B9FF" />
+      <Text style={{ color: "#FFFFFF", fontSize: 17, fontWeight: "700", marginTop: 14 }}>Iniciando Tacoplan…</Text>
+      <Text style={{ color: "#B9D0E7", fontSize: 12, marginTop: 8, textAlign: "center" }}>
+        Preparando la aplicación. Tus jornadas guardadas se conservan.
+      </Text>
+    </View>
+  );
 
   return (
     <ErrorBoundary>
       <I18nProvider>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView>
+          <GestureHandlerRootView style={{ flex: 1 }}>
             <AuthProvider>
               <SyncProvider>
                 <FerryProvider>

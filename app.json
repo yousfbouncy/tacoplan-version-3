@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tacoplan",
     "slug": "tacoplan",
-    "version": "3.0.2",
+    "version": "3.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tacoplan",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.yousfbouncy.tacoplanv2",
-      "versionCode": 20210,
+      "versionCode": 20211,
       "googleServicesFile": "./app/google-services.json",
       "permissions": [
         "POST_NOTIFICATIONS",

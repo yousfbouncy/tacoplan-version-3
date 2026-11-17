@@ -9,6 +9,7 @@ type GateStatus =
   | { type: "up_to_date" }
   | { type: "ota_available"; message: string | null }
   | { type: "downloading_ota" }
+  | { type: "downloaded_ota" }
   | { type: "update_required"; apkUrl: string | null; message: string | null; minRequiredVersion: string | null }
   | { type: "update_optional"; apkUrl: string | null; message: string | null; latestVersion: string | null };
 
@@ -20,9 +21,12 @@ export default function UpdateGate() {
   const [status, setStatus] = useState<GateStatus>({ type: "checking" });
   const lastCheckAtRef = useRef<number>(0);
   const checkingRef = useRef(false);
+  const statusRef = useRef<GateStatus["type"]>("checking");
+  useEffect(() => { statusRef.current = status.type; }, [status.type]);
 
   const runCheck = useCallback(async (reason: string) => {
     if (checkingRef.current) return;
+    if (statusRef.current === "downloaded_ota") return;
     const now = Date.now();
     if (now - lastCheckAtRef.current < 30_000) return;
     checkingRef.current = true;
@@ -73,7 +77,7 @@ export default function UpdateGate() {
   }, [runCheck]);
 
   const forceVisible = status.type === "update_required";
-  const otaVisible = status.type === "ota_available" || status.type === "downloading_ota";
+  const otaVisible = status.type === "ota_available" || status.type === "downloading_ota" || status.type === "downloaded_ota";
   const optionalVisible = status.type === "update_optional";
 
   const onOpenUrl = useCallback(async (url: string | null) => {
@@ -103,9 +107,15 @@ export default function UpdateGate() {
     try {
       setStatus({ type: "downloading_ota" });
       devLog("[UPDATES] Downloading OTA update...");
-      await Updates.fetchUpdateAsync();
-      devLog("[UPDATES] Reloading app...");
-      await Updates.reloadAsync();
+      const downloaded = await Updates.fetchUpdateAsync();
+      if (!downloaded.isNew) {
+        setStatus({ type: "up_to_date" });
+        return;
+      }
+      // Do not reload React Native within an active screen on Android/DeX:
+      // the downloaded OTA is applied on a full cold start. A visible prompt
+      // keeps the current (known-good) bundle on screen in the meantime.
+      setStatus({ type: "downloaded_ota" });
     } catch (e) {
       devLog("[UPDATES] OTA download/reload failed:", e);
       setStatus({ type: "up_to_date" });
@@ -114,6 +124,7 @@ export default function UpdateGate() {
 
   const title = useMemo(() => {
     if (status.type === "ota_available") return "Actualización disponible";
+    if (status.type === "downloaded_ota") return "Actualización descargada";
     if (status.type === "update_optional") return "Nueva versión disponible";
     if (status.type === "update_required") return "Actualización obligatoria";
     return "";
@@ -123,6 +134,7 @@ export default function UpdateGate() {
     if (status.type === "ota_available") {
       return status.message || "Hay una actualización disponible. Puedes actualizar ahora.";
     }
+    if (status.type === "downloaded_ota") return "Para instalarla sin dejar la pantalla en blanco, cierra Tacoplan por completo desde aplicaciones recientes y vuelve a abrirla. Las jornadas guardadas no se borran.";
     if (status.type === "update_optional") {
       return status.message || "Hay una versión nueva disponible. Puedes actualizar cuando quieras.";
     }
@@ -164,6 +176,14 @@ export default function UpdateGate() {
 
             {status.type === "downloading_ota" && (
               <Text style={styles.body}>Descargando…</Text>
+            )}
+
+            {status.type === "downloaded_ota" && (
+              <View style={styles.row}>
+                <Pressable style={[styles.btn, styles.primaryBtn]} onPress={() => setStatus({ type: "up_to_date" })}>
+                  <Text style={styles.primaryBtnText}>Entendido</Text>
+                </Pressable>
+              </View>
             )}
 
             {status.type === "ota_available" && (
