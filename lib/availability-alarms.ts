@@ -67,6 +67,7 @@ async function reconcileAvailabilityAlarms(
     const planKey = "tacoplan_availability_android_native_plan_v1";
     try {
       const { androidAlarm } = await import("../modules/tacoplan-android-alarm/src");
+      if (!androidAlarm) throw new Error("TacoplanAndroidAlarm no está integrado en esta APK");
       // AlarmManager owns these alarms even when JS is closed. Cancelling and
       // recreating them on every 15-second dashboard sync can prevent a due
       // alarm from sounding. Keep a stable snapshot until the plan changes.
