@@ -453,7 +453,13 @@ function OnboardingGate() {
 
 function SequencedWeeklySurvey() {
   const { enabled, guideCompleted } = useStartupFlow();
-  return <WeeklySurveyModal enabled={enabled && guideCompleted} />;
+  const { initialSyncSettled, showRecoveryPrompt, isRestoring, restoreComplete } = useSync();
+  // Avoid a second modal while initial cloud data is being merged or when
+  // the user is deciding whether to restore data on a new device.
+  return <WeeklySurveyModal enabled={
+    enabled && guideCompleted && initialSyncSettled &&
+    !showRecoveryPrompt && !isRestoring && !restoreComplete
+  } />;
 }
 
 function PeriodSetupGate() {
