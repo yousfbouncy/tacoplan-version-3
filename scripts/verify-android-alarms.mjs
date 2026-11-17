@@ -26,31 +26,28 @@ if (!readFileSync(join(moduleRoot, "android/build.gradle"), "utf8").includes("ex
   throw new Error("[NATIVE ALARMS] Invalid native module Gradle setup.");
 }
 
-let resolved;
+// Expo SDK 58 prints a Node inspect-style object, not strict JSON.
+let output = "";
 try {
-  const output = execFileSync(
+  output = execFileSync(
     "npx",
     ["--no-install", "expo-modules-autolinking", "resolve", "--platform", "android"],
-    { cwd: root, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024 },
+    { cwd: root, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" } },
   );
-  try {
-    resolved = JSON.parse(output);
-  } catch (parseError) {
-    console.error("[NATIVE ALARMS] Autolinking raw output:", output.slice(0, 6000));
-    throw parseError;
-  }
 } catch (error) {
   console.error("[NATIVE ALARMS] Could not resolve Android Expo modules.", error.message);
   process.exit(1);
 }
-const modules = Array.isArray(resolved?.modules) ? resolved.modules : [];
-const match = modules.find(m =>
-  m.packageName === "tacoplan-android-alarm" ||
-  JSON.stringify(m).includes(klass),
-);
-if (!match) {
-  console.error("[NATIVE ALARMS] Expo did NOT autolink TacoplanAndroidAlarm.");
-  console.error("[NATIVE ALARMS] Found:", modules.map(m => m.packageName).join(", "));
+const plain = output.replace(/\\x1B\\[[0-9;]*m/g, "");
+const linkedPackage = /packageName:\\s*['"]tacoplan-android-alarm['"]/.test(plain) ||
+  /"packageName"\\s*:\\s*"tacoplan-android-alarm"/.test(plain);
+const linkedClass = plain.includes(klass);
+if (!linkedPackage || !linkedClass) {
+  console.error("[NATIVE ALARMS] Expo did NOT autolink TacoplanAndroidAlarm.", {
+    linkedPackage, linkedClass,
+  });
+  console.error("[NATIVE ALARMS] Output tail:", plain.slice(-4500));
   process.exit(1);
 }
-console.log("[NATIVE ALARMS] Module autolinked:", match.packageName, klass);
+console.log("[NATIVE ALARMS] Verified native AlarmManager module autolinking:", klass);
