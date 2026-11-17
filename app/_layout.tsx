@@ -28,6 +28,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
+import { pollTrafficLocationRequest } from "@/lib/traffic-location";
 import { userScopedKey } from "@/lib/user-scope";
 import { hydrateCompanyDriver } from "@/lib/enterprise-onboarding";
 import { supabase } from "@/lib/supabase";
@@ -60,6 +61,18 @@ function AuthGate() {
     });
     const interval = setInterval(() => { void flush(); }, 60 * 1000);
     return () => { app.remove(); clearInterval(interval); };
+  }, [isAuthenticated, user?.id]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id || Platform.OS === "web") return;
+    // A short foreground poll supplements normal app-activation and never forces
+    // location access unless the conductor explicitly enabled sharing.
+    void pollTrafficLocationRequest();
+    const ticker = setInterval(() => { void pollTrafficLocationRequest(); }, 15000);
+    const app = AppState.addEventListener("change", state => {
+      if (state === "active") void pollTrafficLocationRequest();
+    });
+    return () => { clearInterval(ticker); app.remove(); };
   }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
