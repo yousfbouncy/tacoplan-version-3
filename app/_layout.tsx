@@ -13,7 +13,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
-import { SyncProvider } from "@/lib/sync-context";
+import { SyncProvider, useSync } from "@/lib/sync-context";
 import SyncToastOverlay from "@/components/SyncToast";
 import { PeriodProvider, usePeriod } from "@/lib/period-context";
 import { I18nProvider, useI18n } from "@/lib/i18n-context";
@@ -453,7 +453,13 @@ function OnboardingGate() {
 
 function SequencedWeeklySurvey() {
   const { enabled, guideCompleted } = useStartupFlow();
-  return <WeeklySurveyModal enabled={enabled && guideCompleted} />;
+  const { initialSyncSettled, showRecoveryPrompt, isRestoring, restoreComplete } = useSync();
+  // Avoid a second modal while initial cloud data is being merged or when
+  // the user is deciding whether to restore data on a new device.
+  return <WeeklySurveyModal enabled={
+    enabled && guideCompleted && initialSyncSettled &&
+    !showRecoveryPrompt && !isRestoring && !restoreComplete
+  } />;
 }
 
 function PeriodSetupGate() {

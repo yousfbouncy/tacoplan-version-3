@@ -315,7 +315,7 @@ export default function DashboardScreen() {
     showRecoveryPrompt, isRestoring, restoreProgress,
     restoreComplete, restoreResult, startRestore,
     dismissRecovery, dismissRestoreComplete, refreshSyncInfo,
-    syncVersion,
+    syncVersion, notifyDashboardReady,
   } = useSync();
   const tacho = useTachograph();
 
@@ -605,7 +605,16 @@ export default function DashboardScreen() {
 
   const [legalResult, setLegalResult] = useState<LegalSummaryStored | null>(null);
   const [showGuide, setShowGuide] = useState(false);
-  const { enabled: startupFlowEnabled, setGuideCompleted } = useStartupFlow();
+  const { enabled: startupFlowEnabled, guideCompleted, setGuideCompleted } = useStartupFlow();
+
+  useEffect(() => {
+    // The user has completed permissions, configuration and the dashboard
+    // guide. Only now may the first cloud sync start. Prevents the Android
+    // startup UI from competing with bulk local/cloud storage merges.
+    if (startupFlowEnabled && guideCompleted && !showGuide && user?.id) {
+      notifyDashboardReady();
+    }
+  }, [startupFlowEnabled, guideCompleted, showGuide, user?.id, notifyDashboardReady]);
   const { config: ferryConfig, isFerryRestMode, isMoroccoMode } = useFerry();
   const [showLegalModal, setShowLegalModal] = useState(false);
   const [showStartPlan, setShowStartPlan] = useState(false);
