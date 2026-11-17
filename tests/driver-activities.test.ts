@@ -71,3 +71,36 @@ test("automatic driving pause closes only driving, without inventing a break",()
   log=changeDriverActivity(log,"WORK",t(30));
   assert.equal(pauseDriverActivity(log,t(40)),log);
 });
+
+
+test("a 15-minute break followed by 30 minutes resets driving (not a standalone 30-minute break)",()=>{
+ let log={shiftId:"split",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=changeDriverActivity(log,"REST",t(120));
+ log=changeDriverActivity(log,"DRIVING",t(135));
+ assert.equal(getDriverActivityTotals(log,t(170)).firstBreak15Completed,true);
+ assert.equal(getDriverActivityTotals(log,t(170)).continuousDrivingMs,155*60000);
+ log=changeDriverActivity(log,"REST",t(170));
+ assert.equal(getDriverActivityTotals(log,t(199)).qualifiedBreak,false);
+ assert.equal(getDriverActivityTotals(log,t(200)).qualifiedBreak,true);
+ assert.equal(getDriverActivityTotals(log,t(200)).continuousDrivingMs,0);
+ log=changeDriverActivity(log,"DRIVING",t(200));
+ assert.equal(getDriverActivityTotals(log,t(210)).continuousDrivingMs,10*60000);
+});
+test("rest button displays current continuous rest separately from all rests in a shift",()=>{
+ let log={shiftId:"rest",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"REST",t(0));
+ log=changeDriverActivity(log,"WORK",t(12));
+ log=changeDriverActivity(log,"REST",t(30));
+ const result=getDriverActivityTotals(log,t(38));
+ assert.equal(result.totals.REST,20*60000);
+ assert.equal(result.currentRestMs,8*60000);
+ assert.equal(result.qualifiedBreak,false);
+});
+test("availability is not a 45-minute driving break",()=>{
+ let log={shiftId:"availability",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=changeDriverActivity(log,"AVAILABLE",t(240));
+ log=changeDriverActivity(log,"DRIVING",t(300));
+ assert.equal(getDriverActivityTotals(log,t(330)).continuousDrivingMs,270*60000);
+});
