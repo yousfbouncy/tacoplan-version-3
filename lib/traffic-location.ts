@@ -42,11 +42,14 @@ export async function setTrafficLocationConsent(enabled: boolean): Promise<boole
 }
 
 async function getFreshPosition(): Promise<{ latitude: number; longitude: number; accuracy_m: number | null }> {
-  const last = await Location.getLastKnownPositionAsync().catch(() => null);
-  const recent = last && (Date.now() - last.timestamp) <= 60000 && (last.coords.accuracy ?? Infinity) <= 150;
-  const position = recent ? last : await Location.getCurrentPositionAsync({
-    accuracy: Location.Accuracy.High,
+  // Read a NEW fix, not the cached position of a previous jornada.
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("Tiempo de espera del GPS agotado")), 45000);
   });
+  const position = await Promise.race([
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+    timeout,
+  ]);
   if (!position || !Number.isFinite(position.coords.latitude) || !Number.isFinite(position.coords.longitude)) {
     throw new Error("GPS no disponible");
   }
