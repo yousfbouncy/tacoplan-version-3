@@ -244,6 +244,18 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   const qualifiedBreak = current==="REST" && currentRestQualified;
   const requiredCurrentRestMs = firstBreak15Completed ? 30*min : 45*min;
   const breakRemainingMs=qualifiedBreak ? 0 : Math.max(0,requiredCurrentRestMs-(current==="REST"?currentRestMs:0));
+  // Legal credit is separate from the complete historical REST duration:
+  // A 20-minute first pause earns only 15 minutes toward 15+30.
+  // A subsequent second pause needs 30 uninterrupted minutes.
+  const firstBreakProgressMs = firstBreak15Completed ? 15*min :
+    current==="REST" ? Math.min(currentRestMs,15*min) : 0;
+  const firstBreakReady = firstBreak15Completed ||
+    (current==="REST" && currentRestMs>=15*min);
+  const secondBreakProgressMs = firstBreak15Completed && current==="REST"
+    ? Math.min(currentRestMs,30*min) : 0;
+  const uninterruptedBreakProgressMs = current==="REST"
+    ? Math.min(currentRestMs,45*min) : 0;
   return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
-    qualifiedBreak,breakRemainingMs,drivingStarted};
+    qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
+    secondBreakProgressMs,uninterruptedBreakProgressMs};
 }
