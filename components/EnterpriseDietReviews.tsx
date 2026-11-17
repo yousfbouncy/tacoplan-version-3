@@ -33,7 +33,7 @@ async function request(path: string, body?: Record<string, unknown>): Promise<an
       method: body ? "POST" : "GET",
       headers: {
         Authorization: "Bearer " + session.access_token,
-        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(body ? { "Content-Type": "application/json", "X-Tacoplan-Client": "mobile" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
