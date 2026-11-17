@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 type StartupFlowState = {
   enabled: boolean;
@@ -18,7 +18,7 @@ export function StartupFlowProvider({
   children,
   enabled,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   enabled: boolean;
 }) {
   const [guideCompleted, setGuideCompleted] = useState(false);
