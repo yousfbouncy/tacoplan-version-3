@@ -30,7 +30,7 @@ import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
 import {syncDrivingMonitoring,stopDrivingMonitoring} from "@/lib/autostart/driving";
-import {syncAutoStartMonitoring} from "@/lib/autostart/service";
+import {syncAutoStartMonitoring,suspendAutoStartMonitoring} from "@/lib/autostart/service";
 import { pollTrafficLocationRequest } from "@/lib/traffic-location";
 import RequiredAppPermissions from "@/components/RequiredAppPermissions";
 import { userScopedKey } from "@/lib/user-scope";
@@ -53,6 +53,7 @@ function AuthGate() {
   useEffect(() => {
     if (!isAuthenticated || !user?.id || Platform.OS === "web") {
       void stopDrivingMonitoring().catch(()=>{});
+      void suspendAutoStartMonitoring().catch(()=>{});
       return;
     }
     const sync = () => {
