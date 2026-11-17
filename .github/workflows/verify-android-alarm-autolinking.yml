@@ -1,0 +1,19 @@
+name: Verify native Android alarm autolinking
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify-android-alarms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Verify TacoplanAndroidAlarm is in Expo native autolinking
+        run: npm run verify:android-alarms

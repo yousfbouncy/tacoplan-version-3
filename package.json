@@ -18,7 +18,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "test": "node --import tsx --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:android-alarms": "node scripts/verify-android-alarms.mjs",
+    "eas-build-post-install": "node scripts/verify-android-alarms.mjs --eas"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -100,5 +102,10 @@
     "supabase": "^2.109.1",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  }
 }
