@@ -1,0 +1,32 @@
+name: Verify traffic on-demand location integration
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/traffic-location.ts'
+      - 'components/TrafficLocationConsent.tsx'
+      - 'app/_layout.tsx'
+      - 'app/(tabs)/usuario.tsx'
+      - '.github/workflows/traffic-location-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/traffic-location.ts'
+      - 'components/TrafficLocationConsent.tsx'
+      - 'app/_layout.tsx'
+      - 'app/(tabs)/usuario.tsx'
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
