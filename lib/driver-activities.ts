@@ -262,3 +262,29 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
     qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
     secondBreakProgressMs,uninterruptedBreakProgressMs,currentRestQualifiedBySplit};
 }
+
+/** Return the actual driving minutes logged up to the selected closing time.
+ * The optional day boundary is used for Sunday-to-Monday journeys.
+ * Never rounds up incomplete driving minutes, and never invents unlogged time.
+ */
+export function getDrivingTotalsForClose(log: ActivityLog, closingAt: Date, splitBoundaryMs?: number) {
+  const closed=closeDriverActivities(log,closingAt);
+  const closeMs=closingAt.getTime();
+  let drivingMs=0;
+  let firstPartMs=0;
+  for (const segment of closed.segments) {
+    if (segment.type!=="DRIVING") continue;
+    const start=Date.parse(segment.startedAt);
+    const end=Date.parse(segment.endedAt || "");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(closeMs)) continue;
+    const boundedEnd=Math.min(end,closeMs);
+    if (boundedEnd<=start) continue;
+    drivingMs+=boundedEnd-start;
+    if (splitBoundaryMs!=null && Number.isFinite(splitBoundaryMs)) {
+      firstPartMs+=Math.max(0,Math.min(boundedEnd,splitBoundaryMs)-start);
+    }
+  }
+  const totalMin=Math.floor(drivingMs/60000);
+  const firstPartMin=Math.min(totalMin,Math.floor(firstPartMs/60000));
+  return {totalMin,firstPartMin,secondPartMin:Math.max(0,totalMin-firstPartMin),closed};
+}
