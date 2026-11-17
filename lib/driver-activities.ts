@@ -183,27 +183,66 @@ export async function saveDriverActivities(userId: string, log: ActivityLog): Pr
   void syncDriverActivities(userId,log.shiftId);
 }
 
+/**
+ * Advisory driving-break calculation from the driver's activity timeline.
+ * Only REST segments count as a break; availability/work never counts.
+ * EU driving break: 45 continuous minutes, or 15 followed by 30 minutes.
+ * This is NOT a certified tachograph reading or a daily/weekly rest validator.
+ */
 export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   const totals: Record<DriverActivity,number> = {DRIVING:0,REST:0,AVAILABLE:0,WORK:0};
   const current = log.segments.findLast(s => s.endedAt === null)?.type ?? null;
   let continuousDrivingMs = 0;
-  let pauseMs = 0;
-  for (const segment of log.segments) {
-    const start = Date.parse(segment.startedAt);
-    const end = segment.endedAt ? Date.parse(segment.endedAt) : now.getTime();
-    const duration = Math.max(0,end-start);
+  let firstBreak15Completed = false;
+  let restSinceDrivingMs = 0;
+  let currentRestMs = 0;
+  let drivingStarted = false;
+  let lastActivity:DriverActivity|null=null;
+  const min = 60000;
+  // Use chronologically ordered, non-overlapping activity segments. The end
+  // of an ongoing segment is the snapshot time, not unlimited future time.
+  const segments = [...log.segments].sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt));
+  for (const segment of segments) {
+    const start=Date.parse(segment.startedAt);
+    const end=Math.min(segment.endedAt?Date.parse(segment.endedAt):now.getTime(),now.getTime());
+    if (!Number.isFinite(start)||!Number.isFinite(end)||end<start) continue;
+    const duration = end-start;
     totals[segment.type] += duration;
-    if (segment.type === "DRIVING") {
-      // Una pausa de al menos 45 minutos completos reinicia el bloque continuo.
-      if (pauseMs >= 45*60000) continuousDrivingMs=0;
-      pauseMs=0;
-      continuousDrivingMs+=duration;
-    } else if (segment.type === "REST") {
-      pauseMs += duration;
-      if (pauseMs >= 45*60000) continuousDrivingMs=0;
+    if (segment.type === "REST") {
+      restSinceDrivingMs = lastActivity==="REST" ? restSinceDrivingMs+duration : duration;
+      currentRestMs=restSinceDrivingMs;
+      if (restSinceDrivingMs >= 45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+        continuousDrivingMs=0;
+        firstBreak15Completed=false;
+        drivingStarted=false;
+      }
     } else {
-      pauseMs=0;
+      if (lastActivity==="REST") {
+        if (restSinceDrivingMs>=45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+          continuousDrivingMs=0;
+          firstBreak15Completed=false;
+          drivingStarted=false;
+        } else if (restSinceDrivingMs>=15*min && !firstBreak15Completed) {
+          // First stage qualifies; a later 30-minute REST completes the split.
+          firstBreak15Completed=true;
+        }
+      }
+      restSinceDrivingMs=0;
+      currentRestMs=0;
+      if (segment.type==="DRIVING") {
+        continuousDrivingMs+=duration;
+        drivingStarted=true;
+      } else {
+        // Other work / availability interrupts a break; it does not reset driving.
+        if (lastActivity==="REST" && segment.type==="WORK") firstBreak15Completed=false;
+      }
     }
+    lastActivity=segment.type;
   }
-  return {totals,current,continuousDrivingMs};
+  const qualifiedBreak = current==="REST" &&
+    (currentRestMs>=45*min || (firstBreak15Completed && currentRestMs>=30*min));
+  const requiredCurrentRestMs = firstBreak15Completed ? 30*min : 45*min;
+  const breakRemainingMs=qualifiedBreak ? 0 : Math.max(0,requiredCurrentRestMs-(current==="REST"?currentRestMs:0));
+  return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
+    qualifiedBreak,breakRemainingMs,drivingStarted};
 }
