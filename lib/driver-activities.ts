@@ -197,6 +197,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   let restSinceDrivingMs = 0;
   let currentRestMs = 0;
   let currentRestQualified = false;
+  let currentRestQualifiedBySplit = false;
   let drivingStarted = false;
   let lastActivity:DriverActivity|null=null;
   const min = 60000;
@@ -213,6 +214,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       restSinceDrivingMs = lastActivity==="REST" ? restSinceDrivingMs+duration : duration;
       currentRestMs=restSinceDrivingMs;
       if (restSinceDrivingMs >= 45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+        currentRestQualifiedBySplit = firstBreak15Completed && restSinceDrivingMs>=30*min;
         currentRestQualified=true;
         continuousDrivingMs=0;
         firstBreak15Completed=false;
@@ -232,6 +234,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       restSinceDrivingMs=0;
       currentRestMs=0;
       currentRestQualified=false;
+      currentRestQualifiedBySplit=false;
       if (segment.type==="DRIVING") {
         continuousDrivingMs+=duration;
         drivingStarted=true;
@@ -247,15 +250,15 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   // Legal credit is separate from the complete historical REST duration:
   // A 20-minute first pause earns only 15 minutes toward 15+30.
   // A subsequent second pause needs 30 uninterrupted minutes.
-  const firstBreakProgressMs = firstBreak15Completed ? 15*min :
+  const firstBreakProgressMs = firstBreak15Completed || (qualifiedBreak && currentRestQualifiedBySplit) ? 15*min :
     current==="REST" ? Math.min(currentRestMs,15*min) : 0;
-  const firstBreakReady = firstBreak15Completed ||
+  const firstBreakReady = firstBreak15Completed || (qualifiedBreak && currentRestQualifiedBySplit) ||
     (current==="REST" && currentRestMs>=15*min);
-  const secondBreakProgressMs = firstBreak15Completed && current==="REST"
-    ? Math.min(currentRestMs,30*min) : 0;
+  const secondBreakProgressMs = qualifiedBreak && currentRestQualifiedBySplit ? 30*min :
+    firstBreak15Completed && current==="REST" ? Math.min(currentRestMs,30*min) : 0;
   const uninterruptedBreakProgressMs = current==="REST"
     ? Math.min(currentRestMs,45*min) : 0;
   return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
     qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
-    secondBreakProgressMs,uninterruptedBreakProgressMs};
+    secondBreakProgressMs,uninterruptedBreakProgressMs,currentRestQualifiedBySplit};
 }
