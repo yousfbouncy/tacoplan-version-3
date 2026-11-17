@@ -19,8 +19,7 @@
     "ios": "expo run:ios",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "verify:android-alarms": "node scripts/verify-android-alarms.mjs",
-    "eas-build-post-install": "node scripts/verify-android-alarms.mjs --eas"
+    "verify:android-alarms": "node scripts/verify-android-alarms.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
