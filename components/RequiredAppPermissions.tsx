@@ -3,6 +3,7 @@ import { ActivityIndicator, AppState, Linking, Platform, Pressable, ScrollView, 
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { registerPushToken, useAuth } from "@/lib/auth-context";
+import WebBrowserTripAlerts from "@/components/WebBrowserTripAlerts";
 
 type Permission = { granted: boolean; canAskAgain: boolean };
 type State = { location: Permission; notifications: Permission };
@@ -91,7 +92,7 @@ export default function RequiredAppPermissions({ children }: { children: React.R
     }
   };
 
-  if (Platform.OS === "web") return <>{children}</>;
+  if (Platform.OS === "web") return <>{children}<WebBrowserTripAlerts /></>;
   if (!state && !problem) return <View style={{ flex: 1, backgroundColor: background, justifyContent: "center", alignItems: "center" }}><ActivityIndicator color="#5FAFFF" size="large" /></View>;
   if (state?.location.granted && state.notifications.granted) return <>{children}</>;
 
