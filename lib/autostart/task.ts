@@ -26,6 +26,11 @@ export async function setAutoStartState(state: State): Promise<void> {
 }
 // Serialize native deliveries: concurrent callbacks must not overwrite newer movement.
 let pendingTask: Promise<void> = Promise.resolve();
+export function deliverAutoStartLocations(locations: Location.LocationObject[]): Promise<void> {
+  const next = pendingTask.then(() => processLocations({locations}, null));
+  pendingTask = next.catch(failure => console.warn("[AUTOSTART] Location processing error", failure));
+  return next;
+}
 TaskManager.defineTask(AUTOSTART_TASK, ({ data, error }) => {
   const next = pendingTask.then(() => processLocations(data, error));
   pendingTask = next.catch((failure) => console.warn("[AUTOSTART] Error procesando ubicación", failure));
@@ -53,6 +58,11 @@ async function processLocations(data: unknown, error: unknown) {
     state.firstMovementAt = null;
     state.movementSegments = [];
     await setAutoStartState(state);
+    // Do not continue GPS monitoring during an already opened shift.
+    void import("expo-location").then(async Location => {
+      if (await Location.hasStartedLocationUpdatesAsync(AUTOSTART_TASK))
+        await Location.stopLocationUpdatesAsync(AUTOSTART_TASK);
+    }).catch(()=>{});
     return;
   }
   for (const fix of fixes) {
@@ -102,7 +112,7 @@ async function processLocations(data: unknown, error: unknown) {
       void queryClient.invalidateQueries({ queryKey: ["jornada-abierta"] });
       void queryClient.invalidateQueries({ queryKey: ["estado-legal"] });
       await withTimeout(Notifications.scheduleNotificationAsync({
-        content: { title: "Tacoplan · Jornada iniciada", body: `Inicio registrado automáticamente a las ${horaInicio}. La conducción sigue siendo manual.`, data: { target: "jornada" } },
+        content: { title: "Tacoplan · Jornada iniciada", body: `Inicio registrado automáticamente a las ${horaInicio}. La conducción se controla por separado.`, data: { target: "jornada" } },
         trigger: null,
       }), 5000).catch(() => {});
       try {
