@@ -107,6 +107,10 @@ function AuthGate() {
             const data = response?.notification?.request?.content?.data || {};
             if (data?.target === "jornada") {
               router.push("/(tabs)");
+            } else if (data?.target === "traffic_location") {
+              // Opening the app triggers the safe foreground request poll.
+              void pollTrafficLocationRequest();
+              router.push("/(tabs)");
             } else if (data?.target === "viaje" && typeof data?.tripId === "string") {
               // Viajes downloads the assigned trip before displaying detail.
               router.push("/(tabs)/viajes");
