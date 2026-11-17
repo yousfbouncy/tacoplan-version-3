@@ -35,9 +35,14 @@ async function beginWindow(userId: string): Promise<void> {
     currentMode = "off";
     return;
   }
-  foreground = await Location.watchPositionAsync({
+  const subscription = await Location.watchPositionAsync({
     accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 0,
   }, location => { void deliverAutoStartLocations([location]); });
+  if (currentMode !== "foreground" || currentUser !== userId) {
+    subscription.remove();
+    return;
+  }
+  foreground = subscription;
   windowTimeout = setTimeout(() => {
     foreground?.remove();
     foreground = null;
@@ -50,8 +55,8 @@ async function beginWindow(userId: string): Promise<void> {
  * exact 60s/5min scheduling when the JS runtime is suspended.
  */
 export async function syncAutoStartMonitoring(userId: string): Promise<void> {
-  if (activeSync) await activeSync.catch(()=>{});
-  const work = (async () => {
+  const previous = activeSync || Promise.resolve();
+  const work = previous.catch(()=>{}).then(async () => {
     if (Platform.OS === "web") return;
     const state = await readAutoStartState();
     const open = await getJornadaAbierta();
@@ -95,7 +100,7 @@ export async function syncAutoStartMonitoring(userId: string): Promise<void> {
         }
       } else await clearBackground();
     }
-  })();
+  });
   activeSync = work;
   try { await work; } finally { if (activeSync === work) activeSync = null; }
 }
