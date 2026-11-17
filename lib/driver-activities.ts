@@ -196,6 +196,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   let firstBreak15Completed = false;
   let restSinceDrivingMs = 0;
   let currentRestMs = 0;
+  let currentRestQualified = false;
   let drivingStarted = false;
   let lastActivity:DriverActivity|null=null;
   const min = 60000;
@@ -212,6 +213,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       restSinceDrivingMs = lastActivity==="REST" ? restSinceDrivingMs+duration : duration;
       currentRestMs=restSinceDrivingMs;
       if (restSinceDrivingMs >= 45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+        currentRestQualified=true;
         continuousDrivingMs=0;
         firstBreak15Completed=false;
         drivingStarted=false;
@@ -229,6 +231,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       }
       restSinceDrivingMs=0;
       currentRestMs=0;
+      currentRestQualified=false;
       if (segment.type==="DRIVING") {
         continuousDrivingMs+=duration;
         drivingStarted=true;
@@ -238,8 +241,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
     }
     lastActivity=segment.type;
   }
-  const qualifiedBreak = current==="REST" &&
-    (currentRestMs>=45*min || (firstBreak15Completed && currentRestMs>=30*min));
+  const qualifiedBreak = current==="REST" && currentRestQualified;
   const requiredCurrentRestMs = firstBreak15Completed ? 30*min : 45*min;
   const breakRemainingMs=qualifiedBreak ? 0 : Math.max(0,requiredCurrentRestMs-(current==="REST"?currentRestMs:0));
   return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
