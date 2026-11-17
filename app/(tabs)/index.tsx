@@ -5,7 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import DriverActivityPanel from "@/components/DriverActivityPanel";
-import {loadDriverActivities,closeDriverActivities,saveDriverActivities} from "@/lib/driver-activities";
+import {loadDriverActivities,closeDriverActivities,saveDriverActivities,getDriverActivityTotals} from "@/lib/driver-activities";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -1740,6 +1740,41 @@ export default function DashboardScreen() {
           body.conduccionMin = conduccionDomingoParsed.minutes + conduccionLunesParsed.minutes;
         } else if (conduccionParsed.minutes != null) {
           body.conduccionMin = conduccionParsed.minutes;
+        }
+      }
+      // When the driver used the activity buttons/AutoStart and did not enter
+      // manual driving time, preserve the recorded driving in the closed jornada.
+      // Never replace an explicit manual value or a positive tachograph reading.
+      if (body.conduccionMin == null && !hasManualDriving && user?.id && abierta.id) {
+        try {
+          const activityLog=await loadDriverActivities(user.id,String(abierta.id));
+          const closedAt=new Date(resolvedFinFecha+"T"+finHora);
+          const end=Number.isFinite(closedAt.getTime()) ? closedAt : new Date();
+          const boundedEnd=new Date(Math.min(end.getTime(),Date.now()));
+          const finalizedLog=closeDriverActivities(activityLog,boundedEnd);
+          const recorded=getDriverActivityTotals(finalizedLog,boundedEnd);
+          const drivingMinutes=Math.floor(recorded.totals.DRIVING/60000);
+          if(drivingMinutes>0){
+            body.conduccionMin=drivingMinutes;
+            if (isCrossSundayMonday) {
+              const startDay=new Date(abierta.fechaInicio+"T00:00:00");
+              const nextDay=new Date(startDay.getTime());
+              nextDay.setDate(startDay.getDate()+1);
+              let firstDayMs=0,secondDayMs=0;
+              for(const segment of finalizedLog.segments){
+                if(segment.type!=="DRIVING")continue;
+                const start=Date.parse(segment.startedAt),finish=Date.parse(segment.endedAt||"");
+                if(!Number.isFinite(start)||!Number.isFinite(finish))continue;
+                firstDayMs+=Math.max(0,Math.min(finish,nextDay.getTime())-Math.max(start,startDay.getTime()));
+                secondDayMs+=Math.max(0,Math.min(finish,end.getTime())-Math.max(start,nextDay.getTime()));
+              }
+              const sundayMin=Math.floor(firstDayMs/60000);
+              body.conduccionDomingoMin=sundayMin;
+              body.conduccionLunesMin=Math.max(0,drivingMinutes-sundayMin);
+            }
+          }
+        } catch (error) {
+          console.warn("[ACTIVITIES] No se pudo recuperar conducción para el cierre",error);
         }
       }
       if (dietaModo === "MANUAL") {
