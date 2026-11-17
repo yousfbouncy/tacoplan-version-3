@@ -7,6 +7,7 @@ import { changeDriverActivity, loadDriverActivities, pauseDriverActivity, saveDr
 
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
+const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
 const MIN_SPEED = 15 / 3.6;
 const CONFIRM_MS = 3 * 60_000;
 const STOP_MS = 60_000;
@@ -25,14 +26,17 @@ export async function isDrivingAutoStartEnabled(userId: string): Promise<boolean
 }
 export async function setDrivingAutoStartEnabled(userId: string, enabled: boolean): Promise<void> {
   await AsyncStorage.setItem(prefKey(userId), String(enabled));
+  if (enabled) await AsyncStorage.setItem(OWNER_KEY, userId);
+  else if ((await AsyncStorage.getItem(OWNER_KEY)) === userId) await AsyncStorage.removeItem(OWNER_KEY);
   await syncDrivingMonitoring(userId);
 }
 function clearDetection() { detection = null; }
 async function handleFixes(fixes: Fix[]): Promise<void> {
-  if (!activeUser || !await isDrivingAutoStartEnabled(activeUser)) return;
+  const owner = activeUser || await AsyncStorage.getItem(OWNER_KEY);
+  if (!owner || !await isDrivingAutoStartEnabled(owner)) return;
   const shift = await getJornadaAbierta();
   if (!shift?.id) { clearDetection(); return; }
-  const userId = activeUser;
+  const userId = owner;
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
     detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
@@ -102,6 +106,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
     if (!permissions.granted) { await stopDrivingMonitoring(); return; }
     if (activeUser && activeUser !== userId) await stopDrivingMonitoring();
     activeUser = userId;
+    await AsyncStorage.setItem(OWNER_KEY, userId);
     const background = await Location.getBackgroundPermissionsAsync();
     if (background.granted && await TaskManager.isAvailableAsync()) {
       foreground?.remove();
