@@ -54,8 +54,12 @@ function parseStoredLog(raw: string | null, shiftId: string): ActivityLog {
   catch {return {shiftId,segments:[]};}
 }
 
+/** Return the timeline cached on this device, never a network request. */
+export async function loadLocalDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
+  return parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+}
 export async function loadDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
-  const stored = parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+  const stored = await loadLocalDriverActivities(userId,shiftId);
   if (stored.segments.length) return stored;
   // Hydrate when opening the same shift from a different device or after a reinstall.
   // Do not overwrite locally pending activity changes.
