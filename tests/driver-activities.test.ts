@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,sanitizeLog} from "../lib/driver-activities";
+import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,sanitizeLog,pauseDriverActivity} from "../lib/driver-activities";
 
 const t=(min:number)=>new Date(Date.parse("2026-11-16T08:00:00.000Z")+min*60000);
 test("activity changes are exclusive and repeated taps do not duplicate segments",()=>{
@@ -58,4 +58,16 @@ test("cloud sync payload keeps stable segment keys across activity changes and c
   "manual:driver-123:shift-123:0","manual:driver-123:shift-123:1",
   "manual:driver-123:shift-123:2","manual:driver-123:shift-123:3"
  ]);
+});
+
+test("automatic driving pause closes only driving, without inventing a break",()=>{
+  let log={shiftId:"s",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=pauseDriverActivity(log,t(12));
+  assert.equal(log.segments.length,1);
+  assert.equal(log.segments[0].endedAt,t(12).toISOString());
+  assert.equal(getDriverActivityTotals(log,t(20)).totals.DRIVING,12*60000);
+  assert.equal(pauseDriverActivity(log,t(30)),log);
+  log=changeDriverActivity(log,"WORK",t(30));
+  assert.equal(pauseDriverActivity(log,t(40)),log);
 });
