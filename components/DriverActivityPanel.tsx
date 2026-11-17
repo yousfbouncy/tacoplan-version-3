@@ -5,6 +5,8 @@ import {
   getDriverActivityTotals,loadDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
+import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
+
 const activityTypes: Array<{type:DriverActivity,label:string,icon:string}> = [
   {type:"DRIVING",label:"Conducción",icon:"🚛"},
   {type:"REST",label:"Descanso",icon:"☕"},
@@ -25,6 +27,17 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   const [log,setLog]=useState<ActivityLog|null>(null);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
+  const [autoDriving,setAutoDriving]=useState(false);
+  const [autoBusy,setAutoBusy]=useState(false);
+  useEffect(()=>{
+    let live=true;
+    void isDrivingAutoStartEnabled(userId).then(v=>{if(live)setAutoDriving(v)}).catch(()=>{});
+    return ()=>{live=false};
+  },[userId]);
+  useEffect(()=>{
+    if(closed)return;
+    void syncDrivingMonitoring(userId).catch(e=>console.warn("[DRIVING-AUTO] sync failed",e));
+  },[userId,shiftId,closed]);
   const lock=useRef(false);
   useEffect(()=>{
     let valid=true;
@@ -59,19 +72,47 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     lock.current=true;
     setSaving(true);
     try{
-      const next=changeDriverActivity(log,type);
-      if(next===log)return;
+      // Use the latest persisted log: the GPS task can write while this screen is open.
+      const latest=await loadDriverActivities(userId,shiftId);
+      const next=changeDriverActivity(latest,type);
+      if(next===latest)return;
       await saveDriverActivities(userId,next);
       setNow(Date.now());
       setLog(next);
     }catch(e){console.warn("[ACTIVITIES] Failed to save",e)}
     finally{lock.current=false;setSaving(false)}
-  },[userId,log,closed]);
+  },[userId,shiftId,log,closed]);
+  const toggleAuto=useCallback(async()=>{
+    if(autoBusy||closed)return;
+    setAutoBusy(true);
+    try{
+      await setDrivingAutoStartEnabled(userId,!autoDriving);
+      setAutoDriving(!autoDriving);
+    }catch(e){console.warn("[DRIVING-AUTO] toggle failed",e)}
+    finally{setAutoBusy(false)}
+  },[userId,autoDriving,autoBusy,closed]);
+  useEffect(()=>{
+    if(closed)return;
+    const timer=setInterval(async()=>{
+      if(lock.current)return;
+      try{
+        const latest=await loadDriverActivities(userId,shiftId);
+        setLog(previous=>JSON.stringify(previous?.segments)!==JSON.stringify(latest.segments)?latest:previous);
+      }catch{}
+    },10000);
+    return ()=>clearInterval(timer);
+  },[userId,shiftId,closed]);
   return <View style={{backgroundColor:colors.panel,borderRadius:18,padding:16,marginBottom:15,gap:12}}>
     <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}}>
       <Text style={{color:colors.text,fontWeight:"700",fontSize:17}}>Actividades de la jornada</Text>
       {saving?<ActivityIndicator size="small" color={colors.sub}/>:null}
     </View>
+    <Pressable onPress={toggleAuto} disabled={autoBusy||closed} accessibilityRole="switch"
+      accessibilityState={{checked:autoDriving,disabled:autoBusy||closed}}
+      style={{padding:12,borderRadius:10,backgroundColor:autoDriving?"#145B46":"#22435E"}}>
+      <Text style={{color:"#FFFFFF",fontWeight:"700"}}>AutoStart de conducción: {autoDriving?"Activado":"Desactivado"}</Text>
+      <Text style={{color:colors.sub,fontSize:12,marginTop:4}}>Independiente del inicio automático de jornada. Solo usa GPS con una jornada abierta.</Text>
+    </Pressable>
     <Text style={{color:colors.sub,fontSize:12}}>Selecciona una actividad. Al cambiar, se detiene la anterior y se conserva su tiempo.</Text>
     <View style={{flexDirection:"row",flexWrap:"wrap",gap:9}}>
       {activityTypes.map(item=>{
@@ -90,6 +131,6 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     <Text style={{color:colors.sub,fontSize:12}}>
       Conducción desde la última pausa de 45 min: {format(totals.continuousDrivingMs)}
     </Text>
-    <Text style={{color:colors.sub,fontSize:11}}>Registro manual orientativo · No sustituye al tacógrafo. AutoStart de actividades pendiente de integrar.</Text>
+    <Text style={{color:colors.sub,fontSize:11}}>Registro orientativo manual o automático · No sustituye al tacógrafo. El segundo plano requiere permiso adicional.</Text>
   </View>;
 }
