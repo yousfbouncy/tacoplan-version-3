@@ -537,7 +537,7 @@ export default function RootLayout() {
     <ErrorBoundary>
       <I18nProvider>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView>
+          <GestureHandlerRootView style={{ flex: 1 }}>
             <AuthProvider>
               <SyncProvider>
                 <FerryProvider>
