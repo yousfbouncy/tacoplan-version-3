@@ -13,7 +13,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
-import { SyncProvider } from "@/lib/sync-context";
+import { SyncProvider, useSync } from "@/lib/sync-context";
 import SyncToastOverlay from "@/components/SyncToast";
 import { PeriodProvider, usePeriod } from "@/lib/period-context";
 import { I18nProvider, useI18n } from "@/lib/i18n-context";
