@@ -18,7 +18,7 @@ test("un tramo de movimiento termina y conserva su hora inicial", () => {
   assert.equal(result.candidate, null);
 });
 
-test("confirma con tres tramos en veinte minutos y uno de al menos sesenta segundos", () => {
+test("confirma con tres tramos en veinte minutos y uno de al menos treinta segundos", () => {
   const segments: MovementSegment[] = [
     { startedAt: 1_000, durationMs: 60_000 },
     { startedAt: 5 * 60_000, durationMs: 10_000 },
@@ -33,7 +33,7 @@ test("no confirma con menos de tres tramos, sin tramo largo o fuera de ventana",
     { startedAt: 5 * 60_000, durationMs: 10_000 },
   ];
   const noLong: MovementSegment[] = [
-    { startedAt: 1_000, durationMs: 30_000 },
+    { startedAt: 1_000, durationMs: 29_000 },
     { startedAt: 5 * 60_000, durationMs: 10_000 },
     { startedAt: 10 * 60_000, durationMs: 10_000 },
   ];
