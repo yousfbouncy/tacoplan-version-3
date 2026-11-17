@@ -1006,13 +1006,16 @@ export default function DashboardScreen() {
           isCrossSundayMonday?firstBoundary.getTime():undefined);
         if(!active)return;
         setCloseActivityHintMinutes(recorded.totalMin>0?recorded.totalMin:null);
-        if(!closeDrivingEditedRef.current && recorded.totalMin>0){
+        if(!closeDrivingEditedRef.current){
           const asHours=(min:number)=>Math.floor(min/60)+":"+String(min%60).padStart(2,"0");
           if(isCrossSundayMonday){
-            setConduccionDomingoHoras(asHours(recorded.firstPartMin));
-            setConduccionLunesHoras(asHours(recorded.secondPartMin));
+            setConduccionDomingoHoras(recorded.totalMin>0?asHours(recorded.firstPartMin):"");
+            setConduccionLunesHoras(recorded.totalMin>0?asHours(recorded.secondPartMin):"");
+            setConduccionHoras("");
           }else{
-            setConduccionHoras(asHours(recorded.totalMin));
+            setConduccionHoras(recorded.totalMin>0?asHours(recorded.totalMin):"");
+            setConduccionDomingoHoras("");
+            setConduccionLunesHoras("");
           }
         }
       }catch(error){
