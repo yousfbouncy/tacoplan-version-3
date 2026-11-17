@@ -30,6 +30,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
 import { supabase } from "@/lib/supabase";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
+import EnterpriseDietReviews from "@/components/EnterpriseDietReviews";
 
 type ResumenDietas = {
   total: number;
@@ -674,6 +675,8 @@ export default function DietasScreen() {
 
           </View>
         </View>
+
+        <EnterpriseDietReviews />
 
         {pendingDietsBannerVisible && pendingDiets.length > 0 && (
           <View
