@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, Switch, Text, View } from "react-native";
+const openDeviceSettings = async () => {
+  if (Platform.OS === "web") return;
+  if (typeof Linking?.openSettings === "function") await Linking.openSettings();
+};
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { getTrafficLocationConsent, setTrafficLocationConsent } from "@/lib/traffic-location";
@@ -69,7 +73,7 @@ export default function TrafficLocationConsent() {
       const current = await Notifications.getPermissionsAsync();
       if (!current.granted) {
         if (current.canAskAgain) await Notifications.requestPermissionsAsync();
-        else await Linking.openSettings();
+        else await openDeviceSettings();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo solicitar permiso de notificaciones.");
@@ -92,7 +96,7 @@ export default function TrafficLocationConsent() {
           if (!granted.canAskAgain) {
             Alert.alert("GPS no autorizado", "Activa «Permitir mientras se usa» en los ajustes del teléfono.", [
               { text: "Cancelar", style: "cancel" },
-              { text: "Ajustes", onPress: () => { void Linking.openSettings(); } },
+              { text: "Ajustes", onPress: () => { void openDeviceSettings(); } },
             ]);
           }
           throw new Error("Debes permitir la ubicación mientras se usa la aplicación.");
@@ -126,7 +130,7 @@ export default function TrafficLocationConsent() {
       <Text style={captionStyle}>Ubicación en segundo plano: {permissions ? label(permissions.background) : "Comprobando…"}</Text>
       <Text style={captionStyle}>La ubicación «solo mientras se usa» permite consultar el GPS con Tacoplan abierta. Activar ejecución en segundo plano por sí solo no permite recibir esta solicitud ni obtener GPS con la app en segundo plano. Para ello haría falta un servicio autorizado adicional.</Text>
       {permissions?.notifications !== "granted" ? <Pressable accessibilityRole="button" disabled={saving || checking} onPress={() => { void askNotifications(); }} style={{ paddingVertical: 8 }}><Text style={{ color: "#67B9FF", fontWeight: "600" }}>Autorizar notificaciones</Text></Pressable> : null}
-      {permissions?.location !== "granted" || permissions?.gpsEnabled === false ? <Pressable accessibilityRole="button" onPress={() => { void Linking.openSettings(); }} style={{ paddingVertical: 8 }}><Text style={{ color: "#67B9FF", fontWeight: "600" }}>Abrir ajustes de ubicación</Text></Pressable> : null}
+      {permissions?.location !== "granted" || permissions?.gpsEnabled === false ? <Pressable accessibilityRole="button" onPress={() => { void openDeviceSettings(); }} style={{ paddingVertical: 8 }}><Text style={{ color: "#67B9FF", fontWeight: "600" }}>Abrir ajustes de ubicación</Text></Pressable> : null}
       <Pressable accessibilityRole="button" disabled={checking} onPress={() => { void checkPermissions(); }} style={{ paddingVertical: 6 }}><Text style={{ color: "#67B9FF" }}>{checking ? "Comprobando permisos…" : "Volver a comprobar permisos"}</Text></Pressable>
     </View>
     {error ? <Text style={{ marginTop: 7, fontSize: 12, color: "#F6A99F" }}>{error}</Text> : null}
