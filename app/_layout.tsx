@@ -1,4 +1,5 @@
 import "@/lib/autostart/task";
+import "@/lib/autostart/driving";
 import "react-native-url-polyfill/auto";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router } from "expo-router";
@@ -28,6 +29,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
+import {syncDrivingMonitoring,stopDrivingMonitoring} from "@/lib/autostart/driving";
 import { pollTrafficLocationRequest } from "@/lib/traffic-location";
 import RequiredAppPermissions from "@/components/RequiredAppPermissions";
 import { userScopedKey } from "@/lib/user-scope";
@@ -47,6 +49,18 @@ const BASE_LOCATION_SKIP_KEY = "tacoplan_base_location_skip_once";
 
 function AuthGate() {
   const { isLoading, isAuthenticated, user } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id || Platform.OS === "web") {
+      void stopDrivingMonitoring().catch(()=>{});
+      return;
+    }
+    const sync = () => {void syncDrivingMonitoring(user.id).catch(e=>console.warn("[DRIVING-AUTO] sync",e));};
+    sync();
+    const ticker = setInterval(sync,15000);
+    const app = AppState.addEventListener("change",sync);
+    return () => {clearInterval(ticker);app.remove();};
+  },[isAuthenticated,user?.id]);
+
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;
     let busy = false;
