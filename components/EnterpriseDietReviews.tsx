@@ -16,7 +16,13 @@ type Review = {
   traffic_observation?: string | null;
   created_at?: string | null;
 };
-type Dashboard = { member?: { role: string } | null; reviews?: Review[] };
+type Adjustment = {
+  id:string;diet_date:string;operation:"add"|"edit"|"delete";
+  original_diet_type?:string|null;original_percentage?:number|null;
+  proposed_diet_type?:string|null;proposed_percentage?:number|null;
+  reason:string;status:string;driver_observation?:string|null;created_at?:string|null;
+};
+type Dashboard = { member?: { role: string } | null; reviews?: Review[]; dietAdjustments?: Adjustment[] };
 const API = "https://tacoplan.es/api/empresas/";
 const amount = (value: number | null | undefined) =>
   typeof value === "number" && Number.isFinite(value)
@@ -46,6 +52,7 @@ async function request(path: string, body?: Record<string, unknown>): Promise<an
 
 export default function EnterpriseDietReviews() {
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,6 +67,7 @@ export default function EnterpriseDietReviews() {
       const driver = data.member?.role === "driver";
       setAvailable(driver);
       setReviews(driver && Array.isArray(data.reviews) ? data.reviews : []);
+      setAdjustments(driver && Array.isArray(data.dietAdjustments) ? data.dietAdjustments : []);
       setError("");
     } catch (e) {
       // A user outside Tacoplan Empresas should not receive an enterprise banner.
@@ -88,16 +96,52 @@ export default function EnterpriseDietReviews() {
     } finally { setBusy(false); }
   }, [busy, comment, refresh]);
 
-  if (!available && !reviews.length) return null;
+  const respondAdjustment = async (id:string,response:"accept"|"dispute") => {
+    if (busy) return;
+    if(response==="dispute" && comment.trim().length<5){Alert.alert("Comentario necesario","Explica por qué no estás de acuerdo.");return;}
+    setBusy(true);
+    try {
+      await request("diet-adjustments",{action:"respond",id,response,comment:comment.trim()});
+      setSelected(null);setComment("");await refresh();
+    } catch(e) {Alert.alert("Revisión de dieta",e instanceof Error?e.message:"No se pudo guardar la respuesta.");}
+    finally {setBusy(false);}
+  };
+  if (!available && !reviews.length && !adjustments.length) return null;
   const pending = reviews.filter(r => r.status === "awaiting_driver");
   const recent = reviews.filter(r => ["confirmed", "accepted", "disputed"].includes(r.status)).slice(0, 4);
-  if (!pending.length && !recent.length) return null;
+  const pendingAdjustments=adjustments.filter(a=>a.status==="awaiting_driver");
+  const recentAdjustments=adjustments.filter(a=>a.status==="accepted" || a.status==="disputed").slice(0,4);
+  if (!pending.length && !recent.length && !pendingAdjustments.length && !recentAdjustments.length) return null;
 
   return <View style={styles.container} accessibilityLabel="Revisiones de dietas por Tráfico">
     <Text style={styles.title}>Revisión de dietas · Tráfico</Text>
     <Text style={styles.help}>Tus registros originales se conservan. Las modificaciones requieren tu respuesta.</Text>
     {loading ? <ActivityIndicator color="#72B9FF" /> : null}
     {error ? <Text style={styles.help}>No se pudo actualizar: {error}</Text> : null}
+    {pendingAdjustments.map(a => {
+      const active=selected===a.id;
+      const operation=a.operation==="add"?"Añadir dieta":a.operation==="edit"?"Modificar dieta":"Eliminar dieta";
+      return <View key={a.id} style={styles.card}>
+        <Text style={styles.heading}>Tráfico propone: {operation} · {a.diet_date}</Text>
+        {a.original_diet_type ? <Text style={styles.body}>Registrado: {a.original_diet_type} {a.original_percentage||""}%</Text> : null}
+        {a.operation!=="delete" ? <Text style={styles.body}>Propuesto: {a.proposed_diet_type} {a.proposed_percentage||""}%</Text> : null}
+        <Text style={styles.body}>Motivo: {a.reason}</Text>
+        {active ? <>
+          <TextInput style={styles.input} multiline maxLength={2000} placeholder="Comentario opcional al aceptar; obligatorio al discrepar"
+            placeholderTextColor="#9AAAC1" value={comment} onChangeText={setComment} editable={!busy}/>
+          <View style={styles.actions}>
+            <Pressable accessibilityRole="button" style={styles.accept} disabled={busy}
+              onPress={()=>void respondAdjustment(a.id,"accept")}><Text style={styles.actionText}>Aceptar cambios</Text></Pressable>
+            <Pressable accessibilityRole="button" style={styles.dispute} disabled={busy}
+              onPress={()=>void respondAdjustment(a.id,"dispute")}><Text style={styles.actionText}>No estoy de acuerdo</Text></Pressable>
+          </View>
+          <Pressable onPress={()=>{setSelected(null);setComment("");}} disabled={busy}><Text style={styles.help}>Cancelar</Text></Pressable>
+        </> : <Pressable accessibilityRole="button" style={styles.open}
+          onPress={()=>{setSelected(a.id);setComment("");}}>
+          <Text style={styles.actionText}>Revisar propuesta</Text>
+        </Pressable>}
+      </View>;
+    })}
     {pending.map(r => {
       const active = selected === r.id;
       return <View key={r.id} style={styles.card}>
@@ -136,6 +180,11 @@ export default function EnterpriseDietReviews() {
         </Pressable>}
       </View>;
     })}
+    {recentAdjustments.map(a=><View key={a.id} style={styles.confirmed}>
+      <Text style={styles.heading}>{a.status==="accepted"?"Propuesta de Tráfico aceptada":"Discrepancia registrada"} · {a.diet_date}</Text>
+      <Text style={styles.help}>{a.operation==="add"?"Alta":a.operation==="edit"?"Modificación":"Eliminación"} de dieta</Text>
+      {a.driver_observation ? <Text style={styles.help}>Tu comentario: {a.driver_observation}</Text> : null}
+    </View>)}
     {recent.map(r => <View key={r.id} style={styles.confirmed}>
       <Text style={styles.heading}>{r.status === "confirmed" ? "Dieta confirmada por Tráfico" :
         r.status === "accepted" ? "Modificación aceptada" : "Discrepancia registrada"}
