@@ -2,7 +2,7 @@ import React, {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {ActivityIndicator,AppState,Pressable,Text,View} from "react-native";
 import {
   type ActivityLog,type DriverActivity,changeDriverActivity,closeDriverActivities,
-  getDriverActivityTotals,loadDriverActivities,saveDriverActivities,syncDriverActivities
+  getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
 import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
@@ -52,8 +52,9 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     const app=AppState.addEventListener("change",state=>{
       if(state==="active")void syncDriverActivities(userId,shiftId);
     });
-    const timer=setInterval(()=>{void syncDriverActivities(userId,shiftId);},30000);
-    return ()=>{app.remove();clearInterval(timer);};
+    // Changes sync when saved; queued offline updates retry globally.
+    // Never repeatedly upload unchanged rows every 30 seconds.
+    return ()=>{app.remove();};
   },[userId,shiftId,Boolean(log?.segments.length)]);
   useEffect(()=>{
     if(!log||!closed||!log.segments.some(s=>s.endedAt===null))return;
@@ -98,7 +99,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     const timer=setInterval(async()=>{
       if(lock.current)return;
       try{
-        const latest=await loadDriverActivities(userId,shiftId);
+        const latest=await loadLocalDriverActivities(userId,shiftId);
         setLog(previous=>JSON.stringify(previous?.segments)!==JSON.stringify(latest.segments)?latest:previous);
       }catch{}
     },10000);
