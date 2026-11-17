@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTrafficTripNotice, tripNoticeEventId } from "../lib/browser-trip-notifications";
+import { isTrafficTripNotice, tripNoticeEventId, type TrafficTripNotice } from "../lib/browser-trip-notifications";
 
-const ownNotice = {
+const ownNotice: TrafficTripNotice = {
   id: "notification-1",
   user_id: "driver-1",
   title: "Nuevo viaje asignado por Tráfico",
