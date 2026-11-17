@@ -30,6 +30,7 @@ import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
 import {syncDrivingMonitoring,stopDrivingMonitoring} from "@/lib/autostart/driving";
+import {syncAutoStartMonitoring} from "@/lib/autostart/service";
 import { pollTrafficLocationRequest } from "@/lib/traffic-location";
 import RequiredAppPermissions from "@/components/RequiredAppPermissions";
 import { userScopedKey } from "@/lib/user-scope";
@@ -54,7 +55,10 @@ function AuthGate() {
       void stopDrivingMonitoring().catch(()=>{});
       return;
     }
-    const sync = () => {void syncDrivingMonitoring(user.id).catch(e=>console.warn("[DRIVING-AUTO] sync",e));};
+    const sync = () => {
+      void syncDrivingMonitoring(user.id).catch(e=>console.warn("[DRIVING-AUTO] sync",e));
+      void syncAutoStartMonitoring(user.id).catch(e=>console.warn("[JOURNEY-AUTO] sync",e));
+    };
     sync();
     const ticker = setInterval(sync,15000);
     const app = AppState.addEventListener("change",sync);
