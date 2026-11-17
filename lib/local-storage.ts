@@ -5886,6 +5886,7 @@ export interface Parada {
   salidaConfirmada: boolean;
   observaciones?: string | null;
   remolque?: string | null;
+  ubicacionMapa?: string | null;
 }
 
 export interface Viaje {
