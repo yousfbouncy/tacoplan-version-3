@@ -34,6 +34,7 @@ import * as Location from "expo-location";
 import Colors from "@/constants/driver-theme";
 import NotificationDetailModal from "@/components/notifications/NotificationDetailModal";
 import { isTrafficTripNotice } from "@/lib/browser-trip-notifications";
+import { notifyLocalTripWithoutPushToken } from "@/lib/native-trip-alert";
 import { useI18n } from "@/lib/i18n-context";
 import { getNotificationAction } from "@/lib/notification-links";
 import OnboardingGuide from "@/components/OnboardingGuide";
@@ -508,6 +509,7 @@ export default function DashboardScreen() {
       }, payload => {
         if (!isTrafficTripNotice(payload.new, recipientId)) return;
         void refreshNotifications();
+        void notifyLocalTripWithoutPushToken(recipientId, payload.new);
       })
       .subscribe(status => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
