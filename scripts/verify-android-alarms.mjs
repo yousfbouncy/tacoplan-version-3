@@ -40,13 +40,11 @@ try {
   process.exit(1);
 }
 const plain = output.replace(/\\x1B\\[[0-9;]*m/g, "");
-const linkedPackage = /packageName:\\s*['"]tacoplan-android-alarm['"]/.test(plain) ||
-  /"packageName"\\s*:\\s*"tacoplan-android-alarm"/.test(plain);
+// Expo local modules do not necessarily report an npm packageName.
+// The native provider must include the fully-qualified Kotlin class.
 const linkedClass = plain.includes(klass);
-if (!linkedPackage || !linkedClass) {
-  console.error("[NATIVE ALARMS] Expo did NOT autolink TacoplanAndroidAlarm.", {
-    linkedPackage, linkedClass,
-  });
+if (!linkedClass) {
+  console.error("[NATIVE ALARMS] Expo did NOT autolink TacoplanAndroidAlarm.");
   console.error("[NATIVE ALARMS] Output tail:", plain.slice(-4500));
   process.exit(1);
 }
