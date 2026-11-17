@@ -123,13 +123,25 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
-            {format(totals.totals[item.type])}
+            {format(item.type==="REST" ? totals.currentRestMs : totals.totals[item.type])}
           </Text>
         </Pressable>;
       })}
     </View>
     <Text style={{color:colors.sub,fontSize:12}}>
-      Conducción desde la última pausa de 45 min: {format(totals.continuousDrivingMs)}
+      Conducción desde la última pausa reglamentaria: {format(totals.continuousDrivingMs)}
+    </Text>
+    <Text style={{color:colors.sub,fontSize:12}}>
+      {totals.current==="REST"
+        ? totals.qualifiedBreak
+          ? "Pausa de conducción completada (45 min o 15 + 30). El descanso diario se comprueba por separado."
+          : "Descanso actual: "+format(totals.currentRestMs)+" · Para completar pausa de conducción faltan "+format(totals.breakRemainingMs)
+        : totals.firstBreak15Completed
+          ? "Primera pausa de 15 min registrada. Falta una segunda pausa de 30 min."
+          : "Para reiniciar la conducción acumulada se necesitan 45 min de pausa, o 15 + 30 min."}
+    </Text>
+    <Text style={{color:colors.sub,fontSize:11}}>
+      Descanso acumulado en la jornada: {format(totals.totals.REST)} · El botón Descanso muestra la pausa actual, no la suma de todas las pausas
     </Text>
     <Text style={{color:colors.sub,fontSize:11}}>Registro orientativo manual o automático · No sustituye al tacógrafo. El segundo plano requiere permiso adicional.</Text>
   </View>;
