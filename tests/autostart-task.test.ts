@@ -5,7 +5,7 @@ import { withTimeout } from "../lib/autostart/runtime";
 
 const mocked = ["expo-task-manager", "expo-notifications", "@react-native-async-storage/async-storage",
   "@/lib/local-storage", "@/lib/user-scope", "@/lib/availability-alarms", "@/lib/jornada-widget-sync",
-  "@/lib/query-client", "@/lib/supabase"];
+  "@/lib/query-client", "@/lib/supabase", "expo-location"];
 const bundled = build({
   entryPoints: ["lib/autostart/task.ts"], bundle: true, write: false, platform: "node", format: "cjs",
   plugins: [{ name: "native-adapters", setup(b) {
@@ -32,6 +32,7 @@ async function harness(options: { cloudFails?: boolean; createFails?: boolean; o
       : Promise.resolve({ data: null, error: null }).then(resolve, reject);
   }, from() { return this; }, select() { return this; }, eq() { return this; }, update() { return this; }, maybeSingle() { return this; } };
   const mocks: Record<string, any> = {
+    "expo-location": { async hasStartedLocationUpdatesAsync() { return false; }, async stopLocationUpdatesAsync() {} },
     "expo-task-manager": { defineTask(_name: string, handler: any) { callback = handler; } },
     "expo-notifications": { async scheduleNotificationAsync(n: any) { notifications.push(n); return "n"; } },
     "@react-native-async-storage/async-storage": { async getItem(key: string) { return key === "@tacoplan/autostart/v1" ? stored : null; }, async setItem(_key: string, value: string) { stored = value; } },
