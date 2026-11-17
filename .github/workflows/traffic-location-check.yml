@@ -5,6 +5,7 @@ on:
     paths:
       - 'lib/traffic-location.ts'
       - 'components/TrafficLocationConsent.tsx'
+      - 'components/RequiredAppPermissions.tsx'
       - 'app/_layout.tsx'
       - 'app/(tabs)/usuario.tsx'
       - '.github/workflows/traffic-location-check.yml'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'lib/traffic-location.ts'
       - 'components/TrafficLocationConsent.tsx'
+      - 'components/RequiredAppPermissions.tsx'
       - 'app/_layout.tsx'
       - 'app/(tabs)/usuario.tsx'
   workflow_dispatch:
