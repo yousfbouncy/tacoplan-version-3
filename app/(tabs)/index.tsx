@@ -370,6 +370,7 @@ export default function DashboardScreen() {
   const [selectedNotification, setSelectedNotification] = useState<UserNotificationRow | null>(null);
   const autoPopupShownThisSession = useRef(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const notificationsFetchInFlightRef = useRef(false);
   const [closePlanEndAt, setClosePlanEndAt] = useState<string | null>(null);
 
   const resolveFinLugarFromGps = useCallback(async () => {
@@ -465,8 +466,10 @@ export default function DashboardScreen() {
   }, [notificationsCacheKey]);
 
   const refreshNotifications = useCallback(async () => {
-    if (!user?.id) return;
-    if (loadingNotifications) return;
+    // Keep a stable callback while the screen is focused. If the loading state
+    // is a dependency, useFocusEffect runs again after every fetch and loops.
+    if (!user?.id || notificationsFetchInFlightRef.current) return;
+    notificationsFetchInFlightRef.current = true;
     setLoadingNotifications(true);
     try {
       const list = await fetchUserNotifications(user.id, 50);
@@ -474,9 +477,10 @@ export default function DashboardScreen() {
       saveNotificationsToCache(list);
     } catch {}
     finally {
+      notificationsFetchInFlightRef.current = false;
       setLoadingNotifications(false);
     }
-  }, [loadingNotifications, saveNotificationsToCache, user?.id]);
+  }, [saveNotificationsToCache, user?.id]);
 
   useEffect(() => {
     loadNotificationsFromCache();
