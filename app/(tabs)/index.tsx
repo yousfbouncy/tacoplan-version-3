@@ -492,6 +492,15 @@ export default function DashboardScreen() {
     }, [refreshNotifications]),
   );
 
+  // A Realtime INSERT is the only additional web refresh trigger. Do not
+  // reintroduce polling or depend on the notifications-loading state.
+  useEffect(() => {
+    if (Platform.OS !== "web" || !user?.id) return;
+    const onTripAssigned = () => { void refreshNotifications(); };
+    window.addEventListener("tacoplan:trip-notification", onTripAssigned);
+    return () => window.removeEventListener("tacoplan:trip-notification", onTripAssigned);
+  }, [refreshNotifications, user?.id]);
+
 
   // Manual Admin notifications can request a one-time in-app popup. The
   // message remains available in the notifications inbox after dismissal.
