@@ -5,6 +5,7 @@ on:
     paths:
       - 'components/EnterpriseDietReviews.tsx'
       - 'app/(tabs)/dietas.tsx'
+      - 'app/(tabs)/dietas.tsx'
       - '.github/workflows/mobile-diet-review-check.yml'
   pull_request:
     branches: [main]
