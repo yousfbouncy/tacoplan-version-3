@@ -233,8 +233,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
         continuousDrivingMs+=duration;
         drivingStarted=true;
       } else {
-        // Other work / availability interrupts a break; it does not reset driving.
-        if (lastActivity==="REST" && segment.type==="WORK") firstBreak15Completed=false;
+        // Work and availability are not breaks, but preserve a completed 15-minute first stage.
       }
     }
     lastActivity=segment.type;
