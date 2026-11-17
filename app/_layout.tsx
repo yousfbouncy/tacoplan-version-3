@@ -5,7 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -30,8 +30,7 @@ import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { StartupFlowProvider, useStartupFlow } from "@/lib/startup-flow";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
-import {syncDrivingMonitoring,stopDrivingMonitoring} from "@/lib/autostart/driving";
-import {syncAutoStartMonitoring,suspendAutoStartMonitoring} from "@/lib/autostart/service";
+
 import { pollTrafficLocationRequest } from "@/lib/traffic-location";
 import RequiredAppPermissions from "@/components/RequiredAppPermissions";
 import { userScopedKey } from "@/lib/user-scope";
@@ -51,50 +50,25 @@ const BASE_LOCATION_SKIP_KEY = "tacoplan_base_location_skip_once";
 
 function AuthGate() {
   const { isLoading, isAuthenticated, user } = useAuth();
+  const signedInPreviously = useRef(false);
   useEffect(() => {
-    if (!isAuthenticated || !user?.id || Platform.OS === "web") {
-      void stopDrivingMonitoring().catch(e => console.warn("[DRIVING-AUTO] stop", e));
-      void suspendAutoStartMonitoring().catch(e => console.warn("[JOURNEY-AUTO] stop", e));
-      return;
-    }
-    // Android tablets were launching GPS monitors, session recovery, cloud
-    // synchronization and notification setup on the same first render.
-    // Keep local journeys visible first. Do not queue overlapping native GPS
-    // operations every 15 seconds; native monitors continue on their own.
-    const userId = user.id;
-    let disposed = false;
-    let running = false;
-    let pending = false;
-    const sync = async () => {
-      if (disposed) return;
-      if (running) { pending = true; return; }
-      running = true;
-      try {
-        do {
-          pending = false;
-          if (disposed) break;
-          await Promise.all([
-            syncDrivingMonitoring(userId).catch(e => console.warn("[DRIVING-AUTO] sync", e)),
-            syncAutoStartMonitoring(userId).catch(e => console.warn("[JOURNEY-AUTO] sync", e)),
-          ]);
-        } while (pending && !disposed);
-      } finally {
-        running = false;
-      }
-    };
-    // Give the dashboard and local storage a chance to mount before GPS setup.
-    const startup = setTimeout(() => { void sync(); }, 8000);
-    // Resume/background transitions still update monitors immediately.
-    const app = AppState.addEventListener("change", () => { void sync(); });
-    // Maintenance runs infrequently; location events are handled by native APIs.
-    const ticker = setInterval(() => { void sync(); }, 60000);
-    return () => {
-      disposed = true;
-      clearTimeout(startup);
-      clearInterval(ticker);
-      app.remove();
-    };
-  }, [isAuthenticated, user?.id]);
+    if (Platform.OS === "web") return;
+    if (isAuthenticated) { signedInPreviously.current = true; return; }
+    if (!signedInPreviously.current) return;
+    signedInPreviously.current = false;
+    // Stop an existing monitor on an actual logout, never on a cold login
+    // screen where no native GPS service was started by this session.
+    void Promise.all([
+      import("@/lib/autostart/driving").then(m => m.stopDrivingMonitoring()),
+      import("@/lib/autostart/service").then(m => m.suspendAutoStartMonitoring()),
+    ]).catch(e => console.warn("[LOCATION] stop on logout", e));
+  }, [isAuthenticated]);
+
+  // Location monitoring is intentionally NOT started in AuthGate: this
+  // component mounts before the required permissions and setup screens.
+  // Android permission grants must never trigger GPS services while the
+  // navigation tree is still being created. Dashboard starts opted-in
+  // monitoring only when onboarding and first sync have settled.
 
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;

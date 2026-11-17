@@ -606,6 +606,60 @@ export default function DashboardScreen() {
   const [legalResult, setLegalResult] = useState<LegalSummaryStored | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const { enabled: startupFlowEnabled, guideCompleted, setGuideCompleted } = useStartupFlow();
+  const { initialSyncSettled } = useSync();
+  useEffect(() => {
+    // Strictly opt-in: the required "while using" permission does NOT
+    // automatically turn on AutoStart or continuous driving GPS. In
+    // particular, do not initialize native GPS during the permissions
+    // transition or the first cloud restore on Samsung/Android.
+    if (!startupFlowEnabled || !guideCompleted || !initialSyncSettled || !user?.id || Platform.OS === "web") return;
+    const userId = user.id;
+    let disposed = false;
+    let running = false;
+    let startupArmed = false;
+    const refreshOptedInMonitors = async () => {
+      if (disposed || !startupArmed || running || AppState.currentState !== "active") return;
+      running = true;
+      try {
+        const [driving, journey, task] = await Promise.all([
+          import("@/lib/autostart/driving"),
+          import("@/lib/autostart/service"),
+          import("@/lib/autostart/task"),
+        ]);
+        const [drivingEnabled, journeyState] = await Promise.all([
+          driving.isDrivingAutoStartEnabled(userId),
+          task.readAutoStartState(),
+        ]);
+        if (disposed) return;
+        const journeyEnabled = journeyState.enabled && journeyState.userId === userId;
+        // No OS location API calls if neither optional automation was enabled.
+        if (!drivingEnabled && !journeyEnabled) return;
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted || disposed) return;
+        // Native location tasks must not race one another on Android.
+        if (drivingEnabled) await driving.syncDrivingMonitoring(userId);
+        if (!disposed && journeyEnabled) await journey.syncAutoStartMonitoring(userId);
+      } catch (error) {
+        console.warn("[LOCATION] Deferred optional monitoring failed", error);
+      } finally {
+        running = false;
+      }
+    };
+    // Leave enough time for dashboard paint, restored local data and
+    // native permission prompt dismissal before starting any GPS watcher.
+    const startup = setTimeout(() => { startupArmed = true; void refreshOptedInMonitors(); }, 15000);
+    const onResume = AppState.addEventListener("change", state => {
+      if (state === "active") void refreshOptedInMonitors();
+    });
+    const periodic = setInterval(() => { void refreshOptedInMonitors(); }, 60000);
+    return () => {
+      disposed = true;
+      clearTimeout(startup);
+      clearInterval(periodic);
+      onResume.remove();
+    };
+  }, [startupFlowEnabled, guideCompleted, initialSyncSettled, user?.id]);
+
 
   useEffect(() => {
     // The user has completed permissions, configuration and the dashboard
