@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { scheduleAvailabilityAlarm, cancelAvailabilityAlarm } from "./alarmkit-bridge";
 import { planAvailabilityAlarms, type AlarmShift, type AvailabilityContext } from "./availability-context";
+import { nativeAlarmPlanSignature } from "./native-alarm-plan-signature";
 import { Platform } from "react-native";
 
 export const AVAILABILITY_ALARMS_KEY = "tacoplan_availability_alarms_enabled";
@@ -63,8 +64,16 @@ async function reconcileAvailabilityAlarms(
   if (Platform.OS === "web") return;
   if (Platform.OS === "android") {
     const key = "tacoplan_availability_android_native_ids";
+    const planKey = "tacoplan_availability_android_native_plan_v1";
     try {
       const { androidAlarm } = await import("../modules/tacoplan-android-alarm/src");
+      // AlarmManager owns these alarms even when JS is closed. Cancelling and
+      // recreating them on every 15-second dashboard sync can prevent a due
+      // alarm from sounding. Keep a stable snapshot until the plan changes.
+      const scheduledAlerts = planAvailabilityAlarms(shift, context, enabled);
+      const signature = nativeAlarmPlanSignature(scheduledAlerts);
+      const lastSignature = await AsyncStorage.getItem(planKey);
+      if (lastSignature === signature) return;
       let previous: string[] = [];
       try {
         const saved = JSON.parse(await AsyncStorage.getItem(key) || "[]");
@@ -77,12 +86,12 @@ async function reconcileAvailabilityAlarms(
         const legacy = await Notifications.getAllScheduledNotificationsAsync();
         await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
           .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        await AsyncStorage.setItem(planKey, signature);
         return;
       }
-      const alerts = planAvailabilityAlarms(shift, context, enabled);
       const ids: string[] = [];
       try {
-        for (const alert of alerts) {
+        for (const alert of scheduledAlerts) {
           await androidAlarm.schedule(alert.id, Date.parse(alert.fecha),
             `Tacoplan · límite de ${alert.limite} h`, alert.mensaje);
           ids.push(alert.id);
@@ -94,10 +103,12 @@ async function reconcileAvailabilityAlarms(
         const legacy = await Notifications.getAllScheduledNotificationsAsync();
         await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
           .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        await AsyncStorage.setItem(planKey, signature);
         return;
       } catch (error) {
         for (const id of ids) await androidAlarm.cancel(id).catch(() => {});
         await AsyncStorage.setItem(key, "[]");
+        await AsyncStorage.removeItem(planKey);
         throw error;
       }
     } catch (error) {
