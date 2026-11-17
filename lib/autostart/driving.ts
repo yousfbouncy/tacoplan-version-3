@@ -60,7 +60,9 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       if (ts - detection.movingSince >= CONFIRM_MS) {
         const log = await loadDriverActivities(userId, shiftId);
         if (log.segments.findLast(s => s.endedAt === null)?.type !== "DRIVING") {
-          await saveDriverActivities(userId, changeDriverActivity(log, "DRIVING", new Date(ts)));
+          const latestStart = log.segments.findLast(s => s.endedAt === null)?.startedAt;
+          const effectiveStart = Math.max(detection!.movingSince!, latestStart ? Date.parse(latestStart) : 0);
+          await saveDriverActivities(userId, changeDriverActivity(log, "DRIVING", new Date(effectiveStart)));
         }
       }
     } else {
@@ -68,7 +70,8 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       if (detection.stoppedSince === null) detection.stoppedSince = ts;
       if (ts - detection.stoppedSince >= STOP_MS) {
         const log = await loadDriverActivities(userId, shiftId);
-        const next = pauseDriverActivity(log, new Date(ts));
+        const next = pauseDriverActivity(log, new Date(Math.max(detection!.stoppedSince!,
+          Date.parse(log.segments.findLast(s => s.endedAt === null)?.startedAt || "1970-01-01"))));
         if (next !== log) await saveDriverActivities(userId, next);
       }
     }
