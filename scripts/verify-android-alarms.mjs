@@ -33,7 +33,12 @@ try {
     ["--no-install", "expo-modules-autolinking", "resolve", "--platform", "android"],
     { cwd: root, encoding: "utf8", timeout: 90000, maxBuffer: 8 * 1024 * 1024 },
   );
-  resolved = JSON.parse(output);
+  try {
+    resolved = JSON.parse(output);
+  } catch (parseError) {
+    console.error("[NATIVE ALARMS] Autolinking raw output:", output.slice(0, 6000));
+    throw parseError;
+  }
 } catch (error) {
   console.error("[NATIVE ALARMS] Could not resolve Android Expo modules.", error.message);
   process.exit(1);
