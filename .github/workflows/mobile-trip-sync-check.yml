@@ -7,6 +7,10 @@ on:
       - 'lib/local-storage.ts'
       - 'lib/trip-navigation.ts'
       - 'app/viaje-detalle.tsx'
+      - 'app/_layout.tsx'
+      - 'components/RequiredAppPermissions.tsx'
+      - 'plugins/withTrafficAlertSound.js'
+      - 'app.json'
       - 'tests/trip-navigation.test.ts'
       - '.github/workflows/mobile-trip-sync-check.yml'
   pull_request:
@@ -16,6 +20,10 @@ on:
       - 'lib/local-storage.ts'
       - 'app/(tabs)/viajes.tsx'
       - 'app/viaje-detalle.tsx'
+      - 'app/_layout.tsx'
+      - 'components/RequiredAppPermissions.tsx'
+      - 'plugins/withTrafficAlertSound.js'
+      - 'app.json'
       - '.github/workflows/mobile-trip-sync-check.yml'
   workflow_dispatch:
 jobs:
@@ -30,5 +38,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: node -e "require('./plugins/withTrafficAlertSound'); const fs=require('fs'); const sound=fs.readFileSync('assets/sounds/tacoplan_viaje.wav'); if (sound.toString('ascii',0,4)!=='RIFF') process.exit(1)"
       - run: npm run typecheck
       - run: node --import tsx --test tests/trip-navigation.test.ts

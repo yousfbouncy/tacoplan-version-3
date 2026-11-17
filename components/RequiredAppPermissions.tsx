@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
+import { registerPushToken, useAuth } from "@/lib/auth-context";
 
 type Permission = { granted: boolean; canAskAgain: boolean };
 type State = { location: Permission; notifications: Permission };
@@ -26,6 +27,25 @@ export default function RequiredAppPermissions({ children }: { children: React.R
   const [state, setState] = useState<State | null>(null);
   const [working, setWorking] = useState<"location" | "notifications" | null>(null);
   const [problem, setProblem] = useState("");
+  const { user } = useAuth();
+  const lastTokenRegistrationUser = useRef<string | null>(null);
+
+  // OS permissions alone do not register a device with Supabase. Previously a
+  // driver who granted permissions after login could remain without a token.
+  // Register once after permissions are granted, never via a polling loop.
+  useEffect(() => {
+    if (Platform.OS === "web" || !state?.notifications.granted || !user?.id) return;
+    if (lastTokenRegistrationUser.current === user.id) return;
+    lastTokenRegistrationUser.current = user.id;
+    void registerPushToken().then(result => {
+      if (!result.ok) {
+        console.warn("[PUSH] Device registration needs retry:", result.message);
+      }
+    }).catch(error => {
+      console.warn("[PUSH] Device registration unavailable:", error instanceof Error ? error.message : "unknown");
+    });
+  }, [state?.notifications.granted, user?.id]);
+
 
   const refresh = useCallback(async () => {
     if (Platform.OS === "web") return;
