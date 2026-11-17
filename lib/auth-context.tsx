@@ -26,6 +26,7 @@ interface AuthState {
   session: AuthSession | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isDeviceBootstrapPending: boolean;
 }
 
 interface AuthContextValue extends AuthState {
@@ -370,6 +371,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAdminLoading, setIsAdminLoading] = useState(false);
   const prevUserIdRef = React.useRef<string | null>(null);
   const bootstrapInProgressRef = React.useRef<Set<string>>(new Set());
+  const [bootstrapPendingUserId, setBootstrapPendingUserId] = useState<string | null>(null);
 
   const getAccessTokenFactory = useCallback((): Promise<string | null> => {
     return (async () => {
@@ -410,6 +412,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userId) return;
     if (bootstrapInProgressRef.current.has(userId)) return;
     bootstrapInProgressRef.current.add(userId);
+    setBootstrapPendingUserId(userId);
 
     try {
       // 1. ¿Tenemos datos locales de este usuario?
@@ -448,6 +451,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log("[AUTH] bootstrapUserDataOnDevice failed", e);
     } finally {
       bootstrapInProgressRef.current.delete(userId);
+      setBootstrapPendingUserId(current => current === userId ? null : current);
     }
   }, [getAccessTokenFactory]);
 
@@ -851,6 +855,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       isLoading,
       isAuthenticated: !!user,
+      isDeviceBootstrapPending: !!user?.id && bootstrapPendingUserId === user.id,
       signIn,
       signUp,
       verifyEmail,
@@ -866,7 +871,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdminLoading,
       refreshAdminStatus,
     }),
-    [user, session, isLoading, signIn, signUp, verifyEmail, resendVerification, resetPassword, updatePassword, handleOAuthTokens, deleteAccount, logout, getAccessToken, recoveryTokens, isAdmin, isAdminLoading, refreshAdminStatus],
+    [user, session, isLoading, bootstrapPendingUserId, signIn, signUp, verifyEmail, resendVerification, resetPassword, updatePassword, handleOAuthTokens, deleteAccount, logout, getAccessToken, recoveryTokens, isAdmin, isAdminLoading, refreshAdminStatus],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
