@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { scheduleAvailabilityAlarm, cancelAvailabilityAlarm } from "./alarmkit-bridge";
 import { planAvailabilityAlarms, type AlarmShift, type AvailabilityContext } from "./availability-context";
+import { nativeAlarmPlanSignature } from "./native-alarm-plan-signature";
 import { Platform } from "react-native";
 
 export const AVAILABILITY_ALARMS_KEY = "tacoplan_availability_alarms_enabled";
@@ -70,9 +71,7 @@ async function reconcileAvailabilityAlarms(
       // recreating them on every 15-second dashboard sync can prevent a due
       // alarm from sounding. Keep a stable snapshot until the plan changes.
       const scheduledAlerts = planAvailabilityAlarms(shift, context, enabled);
-      const signature = JSON.stringify(scheduledAlerts.map(alert => ({
-        id:alert.id, fecha:alert.fecha, limite:alert.limite, mensaje:alert.mensaje,
-      })));
+      const signature = nativeAlarmPlanSignature(scheduledAlerts);
       const lastSignature = await AsyncStorage.getItem(planKey);
       if (lastSignature === signature) return;
       let previous: string[] = [];
