@@ -7,6 +7,7 @@ import {
   Pressable,
   TextInput,
   Alert,
+  Linking,
   Platform,
   Modal,
   ActivityIndicator,
@@ -31,6 +32,7 @@ import {
   type Parada,
 } from "@/lib/local-storage";
 import { useI18n } from "@/lib/i18n-context";
+import {googleMapsDestination} from "@/lib/trip-navigation";
 
 
 function formatDateTimeShort(iso: string | null): string {
@@ -372,6 +374,7 @@ export default function ViajeDetalleScreen() {
     const color = isCarga ? Colors.light.success : Colors.light.accent;
     const label = p.tipo === "ENTREGA_REMOLQUE" ? "SOLTAR REMOLQUE" : isCarga ? t("viajes.load").toUpperCase() : t("viajes.unload").toUpperCase();
     const llegadaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Llegada para entregar remolque" : isCarga ? t("viajes.arrivalToLoad") : t("viajes.arrivalToUnload");
+    const mapsTarget = googleMapsDestination(p.ubicacionMapa);
     const salidaBtnLabel = p.tipo === "ENTREGA_REMOLQUE" ? "Salida tras soltar remolque" : isCarga ? t("viajes.departureFromLoad") : t("viajes.departureFromUnload");
 
     return (
@@ -393,6 +396,16 @@ export default function ViajeDetalleScreen() {
           </View>
         </View>
 
+        {mapsTarget ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={"Abrir ubicación en Google Maps de " + p.lugar}
+            onPress={() => { void Linking.openURL(mapsTarget).catch(() =>
+              Alert.alert("Google Maps", "No se ha podido abrir la ubicación")); }}
+            style={{marginTop:12,alignSelf:"flex-start",flexDirection:"row",alignItems:"center",gap:7,
+              backgroundColor:Colors.light.tint,paddingHorizontal:14,paddingVertical:10,borderRadius:10}}>
+            <Ionicons name="navigate-outline" size={18} color="#FFFFFF" />
+            <Text style={{fontSize:14,fontWeight:"700",color:"#FFFFFF"}}>Abrir ubicación · Google Maps</Text>
+          </Pressable>
+        ) : null}
         {p.remolque ? <Text style={styles.citaText}>Remolque: {p.remolque}</Text> : null}
         {p.observaciones ? <Text style={styles.citaText}>Indicaciones de Tráfico: {p.observaciones}</Text> : null}
         <Text style={styles.citaText}>
