@@ -5,6 +5,8 @@ on:
     paths:
       - 'lib/alertasDisponibilidad.ts'
       - 'lib/availability-alarms.ts'
+      - 'lib/native-alarm-plan-signature.ts'
+      - 'tests/native-alarm-plan-signature.test.ts'
       - 'lib/alarmkit-bridge.ts'
       - 'app/(tabs)/index.tsx'
       - 'tests/alertasDisponibilidad.test.ts'
