@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
     paths:
+      - 'app/(tabs)/index.tsx'
+      - 'components/WebBrowserTripAlerts.tsx'
+      - 'components/RequiredAppPermissions.tsx'
+      - 'lib/browser-trip-notifications.ts'
+      - 'tests/browser-trip-notifications.test.ts'
       - 'lib/sync-service.ts'
       - 'lib/local-storage.ts'
       - 'lib/trip-navigation.ts'
@@ -16,6 +21,11 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'app/(tabs)/index.tsx'
+      - 'components/WebBrowserTripAlerts.tsx'
+      - 'components/RequiredAppPermissions.tsx'
+      - 'lib/browser-trip-notifications.ts'
+      - 'tests/browser-trip-notifications.test.ts'
       - 'lib/sync-service.ts'
       - 'lib/local-storage.ts'
       - 'app/(tabs)/viajes.tsx'
@@ -40,4 +50,4 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node -e "require('./plugins/withTrafficAlertSound'); const fs=require('fs'); const sound=fs.readFileSync('assets/sounds/tacoplan_viaje.wav'); if (sound.toString('ascii',0,4)!=='RIFF') process.exit(1)"
       - run: npm run typecheck
-      - run: node --import tsx --test tests/trip-navigation.test.ts
+      - run: node --import tsx --test tests/trip-navigation.test.ts tests/browser-trip-notifications.test.ts
