@@ -4,7 +4,8 @@ export const MAX_SAMPLE_GAP_MS = 90 * 1000;
 export const MAX_ACCURACY_METERS = 75;
 export const AUTO_CONFIRM_WINDOW_MS = 20 * 60 * 1000;
 export const AUTO_CONFIRM_MIN_SEGMENTS = 3;
-export const AUTO_CONFIRM_LONG_SEGMENT_MS = 60 * 1000;
+// GPS windows last 60s; allow fixes near either edge to be delivered late.
+export const AUTO_CONFIRM_LONG_SEGMENT_MS = 45 * 1000;
 export type Fix = { timestamp: number; coords: { speed: number | null; accuracy: number | null } };
 export type Candidate = { startedAt: number; lastAt: number } | null;
 export type MovementSegment = { startedAt: number; durationMs: number };
