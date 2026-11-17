@@ -36,6 +36,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } from "@/lib/user-cloud";
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
+import TrafficLocationConsent from "@/components/TrafficLocationConsent";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
 
@@ -2021,6 +2022,7 @@ export default function UsuarioScreen() {
         {(activeSection === "cuenta") && (
           <View style={styles.card}>
             <SectionHeader title="Cuenta" icon="person-outline" />
+            <TrafficLocationConsent />
             <Pressable
               style={({ pressed }) => [styles.ferryToggleRow, { opacity: pressed ? 0.85 : 1 }]}
               onPress={() => openSection("perfil")}
