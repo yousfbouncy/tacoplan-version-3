@@ -616,8 +616,9 @@ export default function DashboardScreen() {
     const userId = user.id;
     let disposed = false;
     let running = false;
+    let startupArmed = false;
     const refreshOptedInMonitors = async () => {
-      if (disposed || running || AppState.currentState !== "active") return;
+      if (disposed || !startupArmed || running || AppState.currentState !== "active") return;
       running = true;
       try {
         const [driving, journey, task] = await Promise.all([
@@ -646,7 +647,7 @@ export default function DashboardScreen() {
     };
     // Leave enough time for dashboard paint, restored local data and
     // native permission prompt dismissal before starting any GPS watcher.
-    const startup = setTimeout(() => { void refreshOptedInMonitors(); }, 15000);
+    const startup = setTimeout(() => { startupArmed = true; void refreshOptedInMonitors(); }, 15000);
     const onResume = AppState.addEventListener("change", state => {
       if (state === "active") void refreshOptedInMonitors();
     });
