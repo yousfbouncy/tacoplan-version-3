@@ -149,3 +149,16 @@ test("walking and movement below 15 km/h never create a proposal or shift", asyn
     assert.equal(h.state().firstMovementAt, null);
   }
 });
+
+test("five-minute GPS sampling windows can still confirm the first detected movement", async () => {
+  const h = await harness();
+  await h.deliver(fix(0), fix(30), fix(55));
+  assert.equal(h.creates(), 0);
+  await h.deliver(fix(300), fix(330), fix(355));
+  assert.equal(h.creates(), 0);
+  await h.deliver(fix(600), fix(630), fix(655));
+  assert.equal(h.creates(), 0);
+  await h.deliver(fix(900));
+  assert.equal(h.creates(), 1);
+  assert.equal(h.shift().horaInicio, new Date(epoch).toTimeString().slice(0, 5));
+});
