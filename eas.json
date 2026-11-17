@@ -8,7 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "credentialsSource": "remote",
-      "node": "20.19.0",
+      "node": "22.14.0",
       "ios": {
         "simulator": false
       },
@@ -27,7 +27,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "credentialsSource": "remote",
-      "node": "20.19.0",
+      "node": "22.14.0",
       "ios": {
         "simulator": true
       },
@@ -44,7 +44,7 @@
     },
     "preview": {
       "credentialsSource": "remote",
-      "node": "20.19.0",
+      "node": "22.14.0",
       "android": {
         "buildType": "apk"
       },
@@ -59,7 +59,7 @@
     "production": {
       "credentialsSource": "remote",
       "distribution": "store",
-      "node": "20.19.0",
+      "node": "22.14.0",
       "ios": {
         "buildConfiguration": "Release"
       },
