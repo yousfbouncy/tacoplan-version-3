@@ -111,6 +111,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useSync } from "@/lib/sync-context";
 import { useTachograph } from "@/lib/tachograph/tachograph-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useStartupFlow } from "@/lib/startup-flow";
 import { userScopedKey } from "@/lib/user-scope";
 import { AVAILABILITY_ALARMS_KEY, cancelAvailabilityAlarmsForClosedShift, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
@@ -604,6 +605,7 @@ export default function DashboardScreen() {
 
   const [legalResult, setLegalResult] = useState<LegalSummaryStored | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const { enabled: startupFlowEnabled, setGuideCompleted } = useStartupFlow();
   const { config: ferryConfig, isFerryRestMode, isMoroccoMode } = useFerry();
   const [showLegalModal, setShowLegalModal] = useState(false);
   const [showStartPlan, setShowStartPlan] = useState(false);
@@ -690,13 +692,17 @@ export default function DashboardScreen() {
   const closeTutorial = useCallback(async () => {
     try {
       await AsyncStorage.setItem(await userScopedKey(TUTORIAL_COMPLETED_KEY, user?.id), "true");
-    } catch {}
+    } catch (error) {
+      console.warn("[STARTUP] Could not persist guide completion", error);
+    }
     setShowGuide(false);
-  }, [user?.id]);
+    setGuideCompleted(true);
+  }, [user?.id, setGuideCompleted]);
 
   const openTutorial = useCallback(() => {
+    setGuideCompleted(false);
     setShowGuide(true);
-  }, []);
+  }, [setGuideCompleted]);
 
   const openSupportWhatsApp = useCallback(async () => {
     try {
@@ -778,20 +784,30 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!startupFlowEnabled) {
+      // Do not open a second native modal behind period setup.
+      setShowGuide(false);
+      setGuideCompleted(false);
+      return () => { cancelled = true; };
+    }
+    // Avoid a stale completion flag when changing accounts.
+    setGuideCompleted(false);
     (async () => {
       try {
         const value = await AsyncStorage.getItem(await userScopedKey(TUTORIAL_COMPLETED_KEY, user?.id));
-        if (!cancelled && value !== "true") {
+        if (cancelled) return;
+        if (value === "true") {
+          setShowGuide(false);
+          setGuideCompleted(true);
+        } else {
           setShowGuide(true);
         }
       } catch {
         if (!cancelled) setShowGuide(true);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
+    return () => { cancelled = true; };
+  }, [user?.id, startupFlowEnabled, setGuideCompleted]);
 
   const tripCategory = useCallback((tr: TipoRuta): "NACIONAL" | "INTERNACIONAL" | "REGIONAL" => {
     if (tr === "REGIONAL") return "REGIONAL";

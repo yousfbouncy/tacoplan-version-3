@@ -28,6 +28,7 @@ import Colors from "@/constants/colors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
+import { StartupFlowProvider, useStartupFlow } from "@/lib/startup-flow";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
 import {syncDrivingMonitoring,stopDrivingMonitoring} from "@/lib/autostart/driving";
 import {syncAutoStartMonitoring,suspendAutoStartMonitoring} from "@/lib/autostart/service";
@@ -450,6 +451,11 @@ function OnboardingGate() {
   );
 }
 
+function SequencedWeeklySurvey() {
+  const { enabled, guideCompleted } = useStartupFlow();
+  return <WeeklySurveyModal enabled={enabled && guideCompleted} />;
+}
+
 function PeriodSetupGate() {
   const { isLoaded, needsSetup } = usePeriod();
   const { t } = useI18n();
@@ -463,7 +469,7 @@ function PeriodSetupGate() {
   }
 
   return (
-    <>
+    <StartupFlowProvider enabled={!needsSetup}>
       <PeriodSetupModal visible={needsSetup} />
       <Stack screenOptions={{ headerBackTitle: t("common.back") }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -493,8 +499,8 @@ function PeriodSetupGate() {
           }}
         />
       </Stack>
-      <WeeklySurveyModal enabled={!needsSetup} />
-    </>
+      <SequencedWeeklySurvey />
+    </StartupFlowProvider>
   );
 }
 
