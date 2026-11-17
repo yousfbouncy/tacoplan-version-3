@@ -167,6 +167,15 @@ export function closeDriverActivities(log: ActivityLog, now = new Date()): Activ
     : s)};
 }
 
+/** End an automatically detected drive without assigning rest/work to the driver. */
+export function pauseDriverActivity(log: ActivityLog, now = new Date()): ActivityLog {
+  const open = log.segments.findLastIndex(s => s.endedAt === null);
+  if (open < 0 || log.segments[open].type !== "DRIVING") return log;
+  const started = Date.parse(log.segments[open].startedAt);
+  if (now.getTime() < started) return log;
+  return {...log,segments:log.segments.map((s,index)=>index===open?{...s,endedAt:now.toISOString()}:s)};
+}
+
 export async function saveDriverActivities(userId: string, log: ActivityLog): Promise<void> {
   await AsyncStorage.setItem(key(userId,log.shiftId), JSON.stringify(log));
   await updatePending(userId,log.shiftId,true);
