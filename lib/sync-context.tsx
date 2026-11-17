@@ -65,7 +65,7 @@ interface SyncContextValue {
 const SyncContext = createContext<SyncContextValue | null>(null);
 
 export function SyncProvider({ children }: { children: ReactNode }) {
-  const { getAccessToken, isAuthenticated, user } = useAuth();
+  const { getAccessToken, isAuthenticated, user, isDeviceBootstrapPending } = useAuth();
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [hasPending, setHasPending] = useState(false);
@@ -269,7 +269,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, refreshSyncInfo]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id || checkedDevice.current) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id || isDeviceBootstrapPending || checkedDevice.current) return;
     checkedDevice.current = true;
 
     // Preflight is fallible on offline devices / Android storage failures.
@@ -304,7 +304,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         setInitialSyncSettledUserId(user.id);
       }
     })();
-  }, [isAuthenticated, dashboardReadyUserId, user?.id, getAccessToken, updateStatus, refreshSyncInfo]);
+  }, [isAuthenticated, dashboardReadyUserId, user?.id, isDeviceBootstrapPending, getAccessToken, updateStatus, refreshSyncInfo]);
 
   // The initial syncAll already drains the offline queue. Do not launch a
   // second startup sync (and second UI refresh) from a separate effect.
@@ -324,7 +324,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, [getAccessToken, isAuthenticated, updateStatus]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id || isDeviceBootstrapPending) return;
     if (Platform.OS === "web") return;
     const lastOnlineRef = { current: true };
     const sub = NetInfo.addEventListener((state: NetInfoState) => {
@@ -345,10 +345,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => sub();
-  }, [getAccessToken, isAuthenticated, updateStatus, dashboardReadyUserId, user?.id]);
+  }, [getAccessToken, isAuthenticated, updateStatus, dashboardReadyUserId, user?.id, isDeviceBootstrapPending]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id || isDeviceBootstrapPending) return;
 
     const sub = AppState.addEventListener("change", (nextState: string) => {
       if (nextState === "active") {
@@ -386,7 +386,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => sub.remove();
-  }, [getAccessToken, isAuthenticated, updateStatus, refreshSyncInfo, dashboardReadyUserId, user?.id]);
+  }, [getAccessToken, isAuthenticated, updateStatus, refreshSyncInfo, dashboardReadyUserId, user?.id, isDeviceBootstrapPending]);
 
   const value = useMemo(() => ({
     syncStatus,
