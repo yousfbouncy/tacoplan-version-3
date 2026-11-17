@@ -54,8 +54,12 @@ function parseStoredLog(raw: string | null, shiftId: string): ActivityLog {
   catch {return {shiftId,segments:[]};}
 }
 
+/** Return the timeline cached on this device, never a network request. */
+export async function loadLocalDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
+  return parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+}
 export async function loadDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
-  const stored = parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+  const stored = await loadLocalDriverActivities(userId,shiftId);
   if (stored.segments.length) return stored;
   // Hydrate when opening the same shift from a different device or after a reinstall.
   // Do not overwrite locally pending activity changes.
@@ -197,6 +201,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   let restSinceDrivingMs = 0;
   let currentRestMs = 0;
   let currentRestQualified = false;
+  let currentRestQualifiedBySplit = false;
   let drivingStarted = false;
   let lastActivity:DriverActivity|null=null;
   const min = 60000;
@@ -213,6 +218,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       restSinceDrivingMs = lastActivity==="REST" ? restSinceDrivingMs+duration : duration;
       currentRestMs=restSinceDrivingMs;
       if (restSinceDrivingMs >= 45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+        currentRestQualifiedBySplit = firstBreak15Completed && restSinceDrivingMs>=30*min;
         currentRestQualified=true;
         continuousDrivingMs=0;
         firstBreak15Completed=false;
@@ -232,6 +238,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       restSinceDrivingMs=0;
       currentRestMs=0;
       currentRestQualified=false;
+      currentRestQualifiedBySplit=false;
       if (segment.type==="DRIVING") {
         continuousDrivingMs+=duration;
         drivingStarted=true;
@@ -244,6 +251,44 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   const qualifiedBreak = current==="REST" && currentRestQualified;
   const requiredCurrentRestMs = firstBreak15Completed ? 30*min : 45*min;
   const breakRemainingMs=qualifiedBreak ? 0 : Math.max(0,requiredCurrentRestMs-(current==="REST"?currentRestMs:0));
+  // Legal credit is separate from the complete historical REST duration:
+  // A 20-minute first pause earns only 15 minutes toward 15+30.
+  // A subsequent second pause needs 30 uninterrupted minutes.
+  const firstBreakProgressMs = firstBreak15Completed || (qualifiedBreak && currentRestQualifiedBySplit) ? 15*min :
+    current==="REST" ? Math.min(currentRestMs,15*min) : 0;
+  const firstBreakReady = firstBreak15Completed || (qualifiedBreak && currentRestQualifiedBySplit) ||
+    (current==="REST" && currentRestMs>=15*min);
+  const secondBreakProgressMs = qualifiedBreak && currentRestQualifiedBySplit ? 30*min :
+    firstBreak15Completed && current==="REST" ? Math.min(currentRestMs,30*min) : 0;
+  const uninterruptedBreakProgressMs = current==="REST"
+    ? Math.min(currentRestMs,45*min) : 0;
   return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
-    qualifiedBreak,breakRemainingMs,drivingStarted};
+    qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
+    secondBreakProgressMs,uninterruptedBreakProgressMs,currentRestQualifiedBySplit};
+}
+
+/** Return the actual driving minutes logged up to the selected closing time.
+ * The optional day boundary is used for Sunday-to-Monday journeys.
+ * Never rounds up incomplete driving minutes, and never invents unlogged time.
+ */
+export function getDrivingTotalsForClose(log: ActivityLog, closingAt: Date, splitBoundaryMs?: number) {
+  const closed=closeDriverActivities(log,closingAt);
+  const closeMs=closingAt.getTime();
+  let drivingMs=0;
+  let firstPartMs=0;
+  for (const segment of closed.segments) {
+    if (segment.type!=="DRIVING") continue;
+    const start=Date.parse(segment.startedAt);
+    const end=Date.parse(segment.endedAt || "");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(closeMs)) continue;
+    const boundedEnd=Math.min(end,closeMs);
+    if (boundedEnd<=start) continue;
+    drivingMs+=boundedEnd-start;
+    if (splitBoundaryMs!=null && Number.isFinite(splitBoundaryMs)) {
+      firstPartMs+=Math.max(0,Math.min(boundedEnd,splitBoundaryMs)-start);
+    }
+  }
+  const totalMin=Math.floor(drivingMs/60000);
+  const firstPartMin=Math.min(totalMin,Math.floor(firstPartMs/60000));
+  return {totalMin,firstPartMin,secondPartMin:Math.max(0,totalMin-firstPartMin),closed};
 }

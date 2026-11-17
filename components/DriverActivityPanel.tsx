@@ -2,7 +2,7 @@ import React, {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {ActivityIndicator,AppState,Pressable,Text,View} from "react-native";
 import {
   type ActivityLog,type DriverActivity,changeDriverActivity,closeDriverActivities,
-  getDriverActivityTotals,loadDriverActivities,saveDriverActivities,syncDriverActivities
+  getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
 import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
@@ -52,8 +52,9 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     const app=AppState.addEventListener("change",state=>{
       if(state==="active")void syncDriverActivities(userId,shiftId);
     });
-    const timer=setInterval(()=>{void syncDriverActivities(userId,shiftId);},30000);
-    return ()=>{app.remove();clearInterval(timer);};
+    // Changes sync when saved; queued offline updates retry globally.
+    // Never repeatedly upload unchanged rows every 30 seconds.
+    return ()=>{app.remove();};
   },[userId,shiftId,Boolean(log?.segments.length)]);
   useEffect(()=>{
     if(!log||!closed||!log.segments.some(s=>s.endedAt===null))return;
@@ -67,6 +68,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     return ()=>clearInterval(timer);
   },[log?.shiftId,closed]);
   const totals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
+  const currentSegment=log?.segments.findLast(s=>s.endedAt===null);
+  const currentSegmentMs=currentSegment?Math.max(0,now-Date.parse(currentSegment.startedAt)):0;
   const choose=useCallback(async(type:DriverActivity)=>{
     if(!log||closed||lock.current)return;
     lock.current=true;
@@ -96,7 +99,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     const timer=setInterval(async()=>{
       if(lock.current)return;
       try{
-        const latest=await loadDriverActivities(userId,shiftId);
+        const latest=await loadLocalDriverActivities(userId,shiftId);
         setLog(previous=>JSON.stringify(previous?.segments)!==JSON.stringify(latest.segments)?latest:previous);
       }catch{}
     },10000);
@@ -123,14 +126,41 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
-            {format(item.type==="REST" ? totals.currentRestMs : totals.totals[item.type])}
+            {format(totals.totals[item.type])}
           </Text>
         </Pressable>;
       })}
     </View>
+    <View style={{borderRadius:12,padding:12,backgroundColor:"#0B2139",gap:5}}>
+      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Resumen de actividades de esta jornada</Text>
+      <Text style={{color:colors.sub,fontSize:12}}>
+        Conducción {format(totals.totals.DRIVING)} · Disponibilidad {format(totals.totals.AVAILABLE)}
+      </Text>
+      <Text style={{color:colors.sub,fontSize:12}}>
+        Otros trabajos {format(totals.totals.WORK)} · Pausas totales {format(totals.totals.REST)}
+      </Text>
+      {currentSegment ? <Text style={{color:"#75C9FF",fontSize:12}}>
+        En curso: {activityTypes.find(a=>a.type===currentSegment.type)?.label} · {format(currentSegmentMs)}
+      </Text> : null}
+    </View>
     <Text style={{color:colors.sub,fontSize:12}}>
       Conducción desde la última pausa reglamentaria: {format(totals.continuousDrivingMs)}
     </Text>
+    <View style={{borderRadius:12,padding:12,borderWidth:1,borderColor:"#31587B",gap:5}}>
+      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Pausa reglamentaria · 15 + 30 o 45 seguidos</Text>
+      <Text style={{color:colors.sub,fontSize:12}}>
+        Primer tramo: {format(totals.firstBreakProgressMs)} / 00:15:00 {totals.firstBreakReady ? "✓" : ""}
+      </Text>
+      <Text style={{color:colors.sub,fontSize:12}}>
+        Segundo tramo: {format(totals.secondBreakProgressMs)} / 00:30:00
+      </Text>
+      <Text style={{color:colors.sub,fontSize:12}}>
+        Alternativa sin interrupción: {format(totals.uninterruptedBreakProgressMs)} / 00:45:00
+      </Text>
+      <Text style={{color:"#8DC7FF",fontSize:11}}>
+        El primer tramo se reconoce con 15 min como mínimo. El segundo necesita 30 min seguidos; si se interrumpe antes, vuelve a 0. En Historial nunca se pierden los minutos de pausa.
+      </Text>
+    </View>
     <Text style={{color:colors.sub,fontSize:12}}>
       {totals.current==="REST"
         ? totals.qualifiedBreak
@@ -141,7 +171,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
           : "Para reiniciar la conducción acumulada se necesitan 45 min de pausa, o 15 + 30 min."}
     </Text>
     <Text style={{color:colors.sub,fontSize:11}}>
-      Descanso acumulado en la jornada: {format(totals.totals.REST)} · El botón Descanso muestra la pausa actual, no la suma de todas las pausas
+      Pausas realmente registradas: {format(totals.totals.REST)} · Pausa actual sin interrupción: {format(totals.currentRestMs)}
     </Text>
     <Text style={{color:colors.sub,fontSize:11}}>Registro orientativo manual o automático · No sustituye al tacógrafo. El segundo plano requiere permiso adicional.</Text>
   </View>;

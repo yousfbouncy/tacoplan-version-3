@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,sanitizeLog,pauseDriverActivity} from "../lib/driver-activities";
+import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,pauseDriverActivity} from "../lib/driver-activities";
 
 const t=(min:number)=>new Date(Date.parse("2026-11-16T08:00:00.000Z")+min*60000);
 test("activity changes are exclusive and repeated taps do not duplicate segments",()=>{
@@ -103,4 +103,64 @@ test("availability is not a 45-minute driving break",()=>{
  log=changeDriverActivity(log,"AVAILABLE",t(240));
  log=changeDriverActivity(log,"DRIVING",t(300));
  assert.equal(getDriverActivityTotals(log,t(330)).continuousDrivingMs,270*60000);
+});
+
+test("20 minutes uninterrupted gives only 15 minutes split credit, while history retains all 20",()=>{
+  let log={shiftId:"credit",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=changeDriverActivity(log,"REST",t(120));
+  const state=getDriverActivityTotals(log,t(140));
+  assert.equal(state.totals.REST,20*60000);
+  assert.equal(state.firstBreakProgressMs,15*60000);
+  assert.equal(state.firstBreakReady,true);
+  assert.equal(state.secondBreakProgressMs,0);
+  assert.equal(state.uninterruptedBreakProgressMs,20*60000);
+  assert.equal(state.qualifiedBreak,false);
+});
+
+test("interrupted second break starts again at zero but earlier resting minutes remain in history",()=>{
+  let log={shiftId:"split-stages",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=changeDriverActivity(log,"REST",t(120));
+  log=changeDriverActivity(log,"DRIVING",t(136)); // 16-min first break: 15 credited
+  log=changeDriverActivity(log,"REST",t(140));
+  let state=getDriverActivityTotals(log,t(150));
+  assert.equal(state.firstBreakProgressMs,15*60000);
+  assert.equal(state.secondBreakProgressMs,10*60000);
+  log=changeDriverActivity(log,"WORK",t(160)); // 20 minutes: not a valid second part
+  state=getDriverActivityTotals(log,t(160));
+  assert.equal(state.secondBreakProgressMs,0);
+  assert.equal(state.firstBreak15Completed,true);
+  log=changeDriverActivity(log,"REST",t(161));
+  state=getDriverActivityTotals(log,t(190));
+  assert.equal(state.secondBreakProgressMs,29*60000);
+  assert.equal(state.qualifiedBreak,false);
+  assert.equal(state.totals.REST,65*60000); // 16+20+29
+  state=getDriverActivityTotals(log,t(191));
+  assert.equal(state.qualifiedBreak,true);
+  assert.equal(state.continuousDrivingMs,0);
+  assert.equal(state.totals.REST,66*60000);
+});
+
+test("a 50-minute continuous rest is qualifying but all 50 minutes remain counted",()=>{
+  let log={shiftId:"long-rest",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=changeDriverActivity(log,"REST",t(90));
+  const state=getDriverActivityTotals(log,t(140));
+  assert.equal(state.qualifiedBreak,true);
+  assert.equal(state.uninterruptedBreakProgressMs,45*60000);
+  assert.equal(state.totals.REST,50*60000);
+});
+
+test("closing uses recorded driving time and can split Sunday/Monday without inventing minutes",()=>{
+  let log={shiftId:"closing",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=changeDriverActivity(log,"REST",t(70));
+  log=changeDriverActivity(log,"DRIVING",t(120));
+  const summary=getDrivingTotalsForClose(log,t(142),t(125).getTime());
+  assert.equal(summary.totalMin,92);
+  assert.equal(summary.firstPartMin,75);
+  assert.equal(summary.secondPartMin,17);
+  assert.equal(summary.closed.segments[2].endedAt,t(142).toISOString());
+  assert.equal(getDriverActivityTotals(summary.closed,t(200)).totals.DRIVING,92*60000);
 });

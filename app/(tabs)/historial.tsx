@@ -1,5 +1,6 @@
 import { useWindowDimensions } from "react-native";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
+import JornadaActivityHistory from "@/components/JornadaActivityHistory";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   StyleSheet,
@@ -819,6 +820,8 @@ function JornadaItem({
           {item.lugarFin ? ` \u2192 ${item.lugarFin}` : ""}
         </Text>
       </View>
+
+      {expanded && <JornadaActivityHistory shiftId={String(item.id)} endAt={item.endAt} />}
 
       {expanded && matchedViajes.length > 0 && (
         <View style={styles.viajesSection}>
