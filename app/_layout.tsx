@@ -29,6 +29,7 @@ import UpdateGate from "@/components/UpdateGate";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
 import { pollTrafficLocationRequest } from "@/lib/traffic-location";
+import RequiredAppPermissions from "@/components/RequiredAppPermissions";
 import { userScopedKey } from "@/lib/user-scope";
 import { hydrateCompanyDriver } from "@/lib/enterprise-onboarding";
 import { supabase } from "@/lib/supabase";
@@ -136,7 +137,7 @@ function AuthGate() {
     return <LoginScreen />;
   }
 
-  return <OnboardingGate />;
+  return <RequiredAppPermissions><OnboardingGate /></RequiredAppPermissions>;
 }
 
 function OnboardingGate() {
