@@ -118,16 +118,19 @@ export async function enableAutoStart(userId: string): Promise<void> {
   await setAutoStartState({ ...previous, userId, enabled: true });
   await syncAutoStartMonitoring(userId);
 }
+export async function suspendAutoStartMonitoring(): Promise<void> {
+  await clearForeground();
+  await clearBackground();
+  currentMode = "off";
+  currentUser = null;
+}
 export async function disableAutoStart(): Promise<void> {
   const state = await readAutoStartState();
   await setAutoStartState({
     ...state, enabled: false, candidate: null, userId: null,
     movementSegments: [], firstMovementAt: null,
   });
-  await clearForeground();
-  await clearBackground();
-  currentMode = "off";
-  currentUser = null;
+  await suspendAutoStartMonitoring();
 }
 export async function syncAutoStartProposals(userId: string): Promise<void> {
   const state = await readAutoStartState();
