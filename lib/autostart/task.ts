@@ -109,6 +109,11 @@ async function processLocations(data: unknown, error: unknown) {
       state.movementSegments = [];
       // Persist completion BEFORE any optional notification, widget or cloud operation.
       await setAutoStartState(state);
+      // A detected shift must no longer run the journey GPS task in the background.
+      void import("expo-location").then(async Location => {
+        if (await Location.hasStartedLocationUpdatesAsync(AUTOSTART_TASK))
+          await Location.stopLocationUpdatesAsync(AUTOSTART_TASK);
+      }).catch(()=>{});
       void queryClient.invalidateQueries({ queryKey: ["jornada-abierta"] });
       void queryClient.invalidateQueries({ queryKey: ["estado-legal"] });
       await withTimeout(Notifications.scheduleNotificationAsync({
