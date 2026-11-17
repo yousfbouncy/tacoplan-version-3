@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'components/DriverActivityPanel.tsx'
+      - 'components/JornadaActivityHistory.tsx'
+      - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
       - 'lib/autostart/**'
       - 'app/autostart.tsx'
@@ -17,6 +19,8 @@ on:
     branches: [main]
     paths:
       - 'components/DriverActivityPanel.tsx'
+      - 'components/JornadaActivityHistory.tsx'
+      - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
       - 'tests/driver-activities.test.ts'
       - 'app/(tabs)/index.tsx'
