@@ -52,19 +52,48 @@ function AuthGate() {
   const { isLoading, isAuthenticated, user } = useAuth();
   useEffect(() => {
     if (!isAuthenticated || !user?.id || Platform.OS === "web") {
-      void stopDrivingMonitoring().catch(()=>{});
-      void suspendAutoStartMonitoring().catch(()=>{});
+      void stopDrivingMonitoring().catch(e => console.warn("[DRIVING-AUTO] stop", e));
+      void suspendAutoStartMonitoring().catch(e => console.warn("[JOURNEY-AUTO] stop", e));
       return;
     }
-    const sync = () => {
-      void syncDrivingMonitoring(user.id).catch(e=>console.warn("[DRIVING-AUTO] sync",e));
-      void syncAutoStartMonitoring(user.id).catch(e=>console.warn("[JOURNEY-AUTO] sync",e));
+    // Android tablets were launching GPS monitors, session recovery, cloud
+    // synchronization and notification setup on the same first render.
+    // Keep local journeys visible first. Do not queue overlapping native GPS
+    // operations every 15 seconds; native monitors continue on their own.
+    const userId = user.id;
+    let disposed = false;
+    let running = false;
+    let pending = false;
+    const sync = async () => {
+      if (disposed) return;
+      if (running) { pending = true; return; }
+      running = true;
+      try {
+        do {
+          pending = false;
+          if (disposed) break;
+          await Promise.all([
+            syncDrivingMonitoring(userId).catch(e => console.warn("[DRIVING-AUTO] sync", e)),
+            syncAutoStartMonitoring(userId).catch(e => console.warn("[JOURNEY-AUTO] sync", e)),
+          ]);
+        } while (pending && !disposed);
+      } finally {
+        running = false;
+      }
     };
-    sync();
-    const ticker = setInterval(sync,15000);
-    const app = AppState.addEventListener("change",sync);
-    return () => {clearInterval(ticker);app.remove();};
-  },[isAuthenticated,user?.id]);
+    // Give the dashboard and local storage a chance to mount before GPS setup.
+    const startup = setTimeout(() => { void sync(); }, 8000);
+    // Resume/background transitions still update monitors immediately.
+    const app = AppState.addEventListener("change", () => { void sync(); });
+    // Maintenance runs infrequently; location events are handled by native APIs.
+    const ticker = setInterval(() => { void sync(); }, 60000);
+    return () => {
+      disposed = true;
+      clearTimeout(startup);
+      clearInterval(ticker);
+      app.remove();
+    };
+  }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;
