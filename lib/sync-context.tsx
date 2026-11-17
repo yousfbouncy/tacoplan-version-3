@@ -48,6 +48,8 @@ interface SyncContextValue {
   restoreComplete: boolean;
   restoreResult: { jornadasCount: number; compensacionesCount: number } | null;
   syncVersion: number;
+  initialSyncSettled: boolean;
+  notifyDashboardReady: () => void;
   syncToast: SyncToast | null;
   triggerSync: () => void;
   triggerDeleteSync: (jornadaId: string) => void;
@@ -73,6 +75,14 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [restoreComplete, setRestoreComplete] = useState(false);
   const [restoreResult, setRestoreResult] = useState<{ jornadasCount: number; compensacionesCount: number } | null>(null);
   const [syncVersion, setSyncVersion] = useState(0);
+  // Do not start the expensive native first sync while permissions, setup or
+  // the dashboard guide are still mounting on Android.
+  const [dashboardReadyUserId, setDashboardReadyUserId] = useState<string | null>(null);
+  const [initialSyncSettledUserId, setInitialSyncSettledUserId] = useState<string | null>(null);
+  const initialSyncSettled = !!user?.id && initialSyncSettledUserId === user.id;
+  const notifyDashboardReady = useCallback(() => {
+    if (isAuthenticated && user?.id) setDashboardReadyUserId(user.id);
+  }, [isAuthenticated, user?.id]);
   const [syncToast, setSyncToast] = useState<SyncToast | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,7 +92,16 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     checkedDevice.current = false;
+    setDashboardReadyUserId(null);
+    setInitialSyncSettledUserId(null);
   }, [user?.id]);
+  useEffect(() => {
+    if (!isAuthenticated) {
+      checkedDevice.current = false;
+      setDashboardReadyUserId(null);
+      setInitialSyncSettledUserId(null);
+    }
+  }, [isAuthenticated]);
 
   const showToast = useCallback((message: string, type: "success" | "error" | "info" = "success") => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -250,7 +269,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, refreshSyncInfo]);
 
   useEffect(() => {
-    if (!isAuthenticated || checkedDevice.current) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id || checkedDevice.current) return;
     checkedDevice.current = true;
 
     // Preflight is fallible on offline devices / Android storage failures.
@@ -279,9 +298,13 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       } catch (e: any) {
         console.warn("[SYNC] Startup preflight/sync failed; keeping local data", e);
         updateStatus("error", { success: false, message: e?.message || String(e) });
+      } finally {
+        // The first sync attempt has settled. Survey is permitted only after
+        // any recovery prompt is also dismissed.
+        setInitialSyncSettledUserId(user.id);
       }
     })();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, dashboardReadyUserId, user?.id, getAccessToken, updateStatus, refreshSyncInfo]);
 
   // The initial syncAll already drains the offline queue. Do not launch a
   // second startup sync (and second UI refresh) from a separate effect.
@@ -301,7 +324,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   }, [getAccessToken, isAuthenticated, updateStatus]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id) return;
     if (Platform.OS === "web") return;
     const lastOnlineRef = { current: true };
     const sub = NetInfo.addEventListener((state: NetInfoState) => {
@@ -322,10 +345,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => sub();
-  }, [getAccessToken, isAuthenticated, updateStatus]);
+  }, [getAccessToken, isAuthenticated, updateStatus, dashboardReadyUserId, user?.id]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !user?.id || dashboardReadyUserId !== user.id) return;
 
     const sub = AppState.addEventListener("change", (nextState: string) => {
       if (nextState === "active") {
@@ -363,7 +386,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => sub.remove();
-  }, [getAccessToken, isAuthenticated, updateStatus, refreshSyncInfo]);
+  }, [getAccessToken, isAuthenticated, updateStatus, refreshSyncInfo, dashboardReadyUserId, user?.id]);
 
   const value = useMemo(() => ({
     syncStatus,
@@ -375,6 +398,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     restoreComplete,
     restoreResult,
     syncVersion,
+    initialSyncSettled,
+    notifyDashboardReady,
     syncToast,
     triggerSync,
     triggerDeleteSync,
@@ -385,7 +410,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     dismissRestoreComplete,
     dismissToast,
     refreshSyncInfo,
-  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, syncToast, triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, triggerDeleteNaturalDayDietSync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
+  }), [syncStatus, lastSyncTime, hasPending, showRecoveryPrompt, isRestoring, restoreProgress, restoreComplete, restoreResult, syncVersion, initialSyncSettled, notifyDashboardReady, syncToast, triggerSync, triggerDeleteSync, triggerDeleteDayExtraEntrySync, triggerDeleteNaturalDayDietSync, startRestore, dismissRecovery, dismissRestoreComplete, dismissToast, refreshSyncInfo]);
 
   return React.createElement(SyncContext.Provider, { value }, children);
 }
