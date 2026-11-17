@@ -253,27 +253,31 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated || checkedDevice.current) return;
     checkedDevice.current = true;
 
-    (async () => {
-      const newDev = await isNewDevice();
-      const hasData = await hasLocalData();
-
-      if (newDev && !hasData) {
-        const decision = await shouldOfferCloudRestorePrompt(getAccessToken);
-        if (decision.shouldShow) {
-          setShowRecoveryPrompt(true);
-          setSyncStatus("idle");
-          await refreshSyncInfo();
-          return;
-        }
-      }
-
-      // Evita que el evento AppState active lance otra sincronización al abrir.
-      lastAutoSyncAtRef.current = Date.now();
-      setSyncStatus("syncing");
+    // Preflight is fallible on offline devices / Android storage failures.
+    // Never leave a rejected startup Promise unhandled or make the dashboard
+    // depend on the network responding.
+    void (async () => {
       try {
+        const newDev = await isNewDevice();
+        const hasData = await hasLocalData();
+
+        if (newDev && !hasData) {
+          const decision = await shouldOfferCloudRestorePrompt(getAccessToken);
+          if (decision.shouldShow) {
+            setShowRecoveryPrompt(true);
+            setSyncStatus("idle");
+            await refreshSyncInfo();
+            return;
+          }
+        }
+
+        // Evita que el evento AppState active lance otra sincronización al abrir.
+        lastAutoSyncAtRef.current = Date.now();
+        setSyncStatus("syncing");
         const result = await syncAll(getAccessToken);
         updateStatus(result.success ? "synced" : "error", result);
       } catch (e: any) {
+        console.warn("[SYNC] Startup preflight/sync failed; keeping local data", e);
         updateStatus("error", { success: false, message: e?.message || String(e) });
       }
     })();
