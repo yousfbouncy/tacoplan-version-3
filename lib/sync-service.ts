@@ -1187,14 +1187,15 @@ export async function pullTripsFromCloud(userId: string): Promise<number> {
       id: typeof p.id === "string" && p.id ? p.id : row.id + "-stop-" + i,
       tipo: p.tipo === "DESCARGA" || p.tipo === "ENTREGA_REMOLQUE" ? p.tipo : "CARGA",
       lugar: typeof p.lugar === "string" ? p.lugar : "",
-      citaFecha: p.citaFecha || null,
-      citaHora: p.citaHora || null,
+      citaFecha: p.citaFecha || p.fecha_cita || null,
+      citaHora: p.citaHora || p.hora_cita || null,
       llegadaReal: p.llegadaReal || null,
       salidaReal: p.salidaReal || null,
       llegadaConfirmada: !!p.llegadaConfirmada,
       salidaConfirmada: !!p.salidaConfirmada,
       observaciones: typeof p.observaciones === "string" ? p.observaciones : null,
       remolque: typeof p.remolque === "string" ? p.remolque : null,
+      ubicacionMapa: typeof p.ubicacion_mapa === "string" ? p.ubicacion_mapa : typeof p.ubicacionMapa === "string" ? p.ubicacionMapa : null,
     })) : [];
     return {
       id: String(row.id), cliente: row.cliente || null, modoViaje: mode,
