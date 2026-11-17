@@ -5,6 +5,9 @@ on:
     paths:
       - 'components/DriverActivityPanel.tsx'
       - 'lib/driver-activities.ts'
+      - 'lib/autostart/**'
+      - 'app/autostart.tsx'
+      - 'tests/autostart-task.test.ts'
       - 'app/_layout.tsx'
       - 'app/(tabs)/index.tsx'
       - 'tests/driver-activities.test.ts'
