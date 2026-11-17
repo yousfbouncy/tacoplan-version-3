@@ -29,23 +29,38 @@ export default function RequiredAppPermissions({ children }: { children: React.R
   const [working, setWorking] = useState<"location" | "notifications" | null>(null);
   const [problem, setProblem] = useState("");
   const { user } = useAuth();
-  const lastTokenRegistrationUser = useRef<string | null>(null);
+  const tokenRegistration = useRef<{ userId:string | null; lastAttempt:number; inFlight:boolean; succeeded:boolean }>({
+    userId:null,lastAttempt:0,inFlight:false,succeeded:false,
+  });
 
-  // OS permissions alone do not register a device with Supabase. Previously a
-  // driver who granted permissions after login could remain without a token.
-  // Register once after permissions are granted, never via a polling loop.
+  // A granted OS permission is not sufficient: the server needs this specific
+  // device's Expo token. If registration failed at boot (e.g. offline) retry
+  // on foreground, not on a background timer or on each render.
   useEffect(() => {
     if (Platform.OS === "web" || !state?.notifications.granted || !user?.id) return;
-    if (lastTokenRegistrationUser.current === user.id) return;
-    lastTokenRegistrationUser.current = user.id;
-    void registerPushToken().then(result => {
-      if (!result.ok) {
-        console.warn("[PUSH] Device registration needs retry:", result.message);
+    const userId=user.id;
+    const register = () => {
+      const status=tokenRegistration.current;
+      if(status.userId!==userId) {
+        Object.assign(status,{userId,lastAttempt:0,inFlight:false,succeeded:false});
       }
-    }).catch(error => {
-      console.warn("[PUSH] Device registration unavailable:", error instanceof Error ? error.message : "unknown");
+      if(status.inFlight || status.succeeded || Date.now()-status.lastAttempt<60_000) return;
+      status.inFlight=true;
+      status.lastAttempt=Date.now();
+      void registerPushToken().then(result => {
+        if (result.ok) status.succeeded=true;
+        else console.warn("[PUSH] Device registration needs retry:",result.message);
+      }).catch(error => {
+        console.warn("[PUSH] Device registration unavailable:",
+          error instanceof Error ? error.message : "unknown");
+      }).finally(()=>{status.inFlight=false});
+    };
+    register();
+    const subscription=AppState.addEventListener("change",state=>{
+      if(state==="active")register();
     });
-  }, [state?.notifications.granted, user?.id]);
+    return ()=>subscription.remove();
+  }, [state?.notifications.granted,user?.id]);
 
 
   const refresh = useCallback(async () => {
