@@ -98,8 +98,8 @@ export async function stopDrivingMonitoring(): Promise<void> {
 }
 export async function syncDrivingMonitoring(userId: string): Promise<void> {
   // Serialize foreground navigation, toggles and session changes.
-  if (syncPending) await syncPending.catch(() => {});
-  const run = (async () => {
+  const previous = syncPending || Promise.resolve();
+  const run = previous.catch(() => {}).then(async () => {
     if (Platform.OS === "web" || !userId || !await isDrivingAutoStartEnabled(userId) ||
         !(await getJornadaAbierta())?.id) {
       await stopDrivingMonitoring();
@@ -128,16 +128,18 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
         await Location.stopLocationUpdatesAsync(DRIVING_TASK);
       }
       if (AppState.currentState === "active" && !foreground) {
-        foreground = await Location.watchPositionAsync(
+        const subscription = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.Balanced, timeInterval: 10000, distanceInterval: 10 },
           fix => { void enqueue([fix]); },
         );
+        if (activeUser !== userId || AppState.currentState !== "active") subscription.remove();
+        else foreground = subscription;
       } else if (AppState.currentState !== "active") {
         foreground?.remove();
         foreground = null;
       }
     }
-  })();
+  });
   syncPending = run;
   try { await run; } finally { if (syncPending === run) syncPending = null; }
 }
