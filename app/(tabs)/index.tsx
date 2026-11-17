@@ -33,6 +33,8 @@ import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import Colors from "@/constants/driver-theme";
 import NotificationDetailModal from "@/components/notifications/NotificationDetailModal";
+import { isTrafficTripNotice } from "@/lib/browser-trip-notifications";
+import { notifyLocalTripWithoutPushToken } from "@/lib/native-trip-alert";
 import { useI18n } from "@/lib/i18n-context";
 import { getNotificationAction } from "@/lib/notification-links";
 import OnboardingGuide from "@/components/OnboardingGuide";
@@ -369,6 +371,7 @@ export default function DashboardScreen() {
   const [notifications, setNotifications] = useState<UserNotificationRow[]>([]);
   const [selectedNotification, setSelectedNotification] = useState<UserNotificationRow | null>(null);
   const autoPopupShownThisSession = useRef(false);
+  const shownTrafficTripIdsThisSession = useRef<Set<string>>(new Set());
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const notificationsFetchInFlightRef = useRef(false);
   const [closePlanEndAt, setClosePlanEndAt] = useState<string | null>(null);
@@ -492,6 +495,33 @@ export default function DashboardScreen() {
     }, [refreshNotifications]),
   );
 
+  // Native devices also receive a driver inbox update while the app is open.
+  // Push is independent: a missing/blocked push must not hide this in-app alert.
+  // Refresh when the app returns to foreground to catch Realtime events missed
+  // while sleeping, without starting a timer or creating notification loops.
+  useEffect(() => {
+    if (Platform.OS === "web" || !user?.id) return;
+    const recipientId = user.id;
+    const channel = supabase.channel("native-trip-inbox-" + recipientId)
+      .on("postgres_changes", {
+        event: "INSERT", schema: "public", table: "user_notifications",
+        filter: "user_id=eq." + recipientId,
+      }, payload => {
+        if (!isTrafficTripNotice(payload.new, recipientId)) return;
+        void refreshNotifications();
+        void notifyLocalTripWithoutPushToken(recipientId, payload.new);
+      })
+      .subscribe(status => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[TRIP-INBOX] Native Realtime unavailable:", status);
+        }
+      });
+    const app = AppState.addEventListener("change", state => {
+      if (state === "active") void refreshNotifications();
+    });
+    return () => { app.remove(); void supabase.removeChannel(channel); };
+  }, [user?.id, refreshNotifications]);
+
   // A Realtime INSERT is the only additional web refresh trigger. Do not
   // reintroduce polling or depend on the notifications-loading state.
   useEffect(() => {
@@ -502,20 +532,34 @@ export default function DashboardScreen() {
   }, [refreshNotifications, user?.id]);
 
 
-  // Manual Admin notifications can request a one-time in-app popup. The
-  // message remains available in the notifications inbox after dismissal.
+  // Existing admin notices show once per session, but *every distinct*
+  // assigned-trip event may open its own modal. Checking all unread notices
+  // prevents an older, already-shown alert from blocking a newer assignment.
   useEffect(() => {
-    if (!user?.id || autoPopupShownThisSession.current || selectedNotification || showNotifications) return;
-    const pending = notifications.find(n => !n.is_read && n.data?.presentation === "modal");
-    if (!pending?.id) return;
+    if (!user?.id || selectedNotification || showNotifications) return;
+    const userId = user.id;
+    const candidates = notifications.filter(n => !n.is_read && n.data?.presentation === "modal");
+    if (!candidates.length) return;
     let cancelled = false;
     (async () => {
-      const key = await userScopedKey("tacoplan_notification_popup_" + pending.id, user.id);
-      const alreadyShown = await AsyncStorage.getItem(key).catch(() => null);
-      if (cancelled || alreadyShown) return;
-      autoPopupShownThisSession.current = true;
-      await AsyncStorage.setItem(key, "1").catch(() => {});
-      if (!cancelled) setSelectedNotification(pending);
+      for (const pending of candidates) {
+        if (cancelled || !pending?.id) return;
+        const trafficTrip = pending.data?.target === "viaje" && pending.data?.source === "traffic";
+        if (!trafficTrip && autoPopupShownThisSession.current) continue;
+        if (trafficTrip && shownTrafficTripIdsThisSession.current.has(pending.id)) continue;
+        const key = await userScopedKey("tacoplan_notification_popup_" + pending.id, userId);
+        const alreadyShown = await AsyncStorage.getItem(key).catch(() => null);
+        if (cancelled) return;
+        if (alreadyShown) {
+          if (trafficTrip) shownTrafficTripIdsThisSession.current.add(pending.id);
+          continue;
+        }
+        if (trafficTrip) shownTrafficTripIdsThisSession.current.add(pending.id);
+        else autoPopupShownThisSession.current = true;
+        await AsyncStorage.setItem(key, "1").catch(() => {});
+        if (!cancelled) setSelectedNotification(pending);
+        return;
+      }
     })().catch(() => {});
     return () => { cancelled = true; };
   }, [notifications, selectedNotification, showNotifications, user?.id]);
