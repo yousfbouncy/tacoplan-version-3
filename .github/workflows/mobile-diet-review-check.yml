@@ -1,0 +1,26 @@
+name: Verify driver diet reviews mobile
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'components/EnterpriseDietReviews.tsx'
+      - 'app/(tabs)/dietas.tsx'
+      - '.github/workflows/mobile-diet-review-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'components/EnterpriseDietReviews.tsx'
+      - 'app/(tabs)/dietas.tsx'
+      - '.github/workflows/mobile-diet-review-check.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
