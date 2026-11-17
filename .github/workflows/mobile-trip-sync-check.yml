@@ -1,5 +1,14 @@
 name: Mobile trip sync typecheck
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/sync-service.ts'
+      - 'lib/local-storage.ts'
+      - 'lib/trip-navigation.ts'
+      - 'app/viaje-detalle.tsx'
+      - 'tests/trip-navigation.test.ts'
+      - '.github/workflows/mobile-trip-sync-check.yml'
   pull_request:
     branches: [main]
     paths:
@@ -22,3 +31,4 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
+      - run: node --import tsx --test tests/trip-navigation.test.ts
