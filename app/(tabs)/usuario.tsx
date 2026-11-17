@@ -3110,6 +3110,7 @@ export default function UsuarioScreen() {
                 <Pressable style={styles.ferryToggleRow} onPress={async () => {
                   try {
                     const { androidAlarm } = await import("../../modules/tacoplan-android-alarm/src");
+                    if (!androidAlarm) throw new Error("Alarmas nativas no incluidas en esta APK");
                     if (await androidAlarm.canScheduleExact()) {
                       Alert.alert("Alarmas exactas", "Este dispositivo permite programar alarmas exactas.");
                     } else {
@@ -3136,6 +3137,7 @@ export default function UsuarioScreen() {
                     await testAvailabilityAlarm();
                   } else if (Platform.OS === "android") {
                     const { androidAlarm } = await import("../../modules/tacoplan-android-alarm/src");
+                    if (!androidAlarm) throw new Error("Alarmas nativas no incluidas en esta APK");
                     await androidAlarm.schedule("tacoplan-jornada-test", Date.now() + 10000,
                       "Tacoplan · prueba de alarma", "Esta es una prueba; no cambia tu jornada.");
                   } else {
