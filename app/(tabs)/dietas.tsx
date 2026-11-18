@@ -1,3 +1,4 @@
+import SubscriptionGate from "@/components/SubscriptionGate";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
@@ -48,7 +49,7 @@ type MoroccoSummary = {
 
 const euro = (value: number) => value.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 
-export default function DietasScreen() {
+function DietasFeatureContent() {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -1631,3 +1632,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
   },
 });
+
+export default function DietasScreen(){
+ return <SubscriptionGate tier="plus"><DietasFeatureContent/></SubscriptionGate>;
+}
