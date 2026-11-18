@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tacoplan",
     "slug": "tacoplan",
-    "version": "3.0.5",
+    "version": "3.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tacoplan",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.yousfbouncy.tacoplanv2",
-      "versionCode": 20213,
+      "versionCode": 20214,
       "googleServicesFile": "./app/google-services.json",
       "permissions": [
         "POST_NOTIFICATIONS",
@@ -48,6 +48,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withAndroidAlarmDebugBuild",
       [
         "expo-router",
         {
