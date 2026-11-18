@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth-context";
 const MENU_ITEMS = [
   { label: "Resumen", icon: LayoutDashboard, href: "/admin/summary" },
   { label: "Usuarios", icon: Users, href: "/admin/users" },
+  { label: "Suscriptores", icon: Users, href: "https://www.tacoplan.es/admin/suscriptores" },
   { label: "Encuestas", icon: ClipboardList, href: "/admin/surveys" },
   { label: "Notificaciones", icon: Bell, href: "/admin/notifications" },
   { label: "Programadas", icon: CalendarClock, href: "/admin/scheduled" },
@@ -76,7 +77,7 @@ export default function AdminHomeScreen() {
             return (
               <Pressable
                 key={item.href}
-                onPress={() => router.push(item.href as any)}
+                onPress={() => item.href.startsWith('https://') ? void Linking.openURL(item.href) : router.push(item.href as any)}
                 style={({ pressed }) => [
                   styles.row,
                   index === items.length - 1 && styles.rowLast,
