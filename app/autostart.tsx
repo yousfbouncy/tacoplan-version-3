@@ -1,3 +1,4 @@
+import SubscriptionGate from "@/components/SubscriptionGate";
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAuth } from "@/lib/auth-context";
@@ -5,7 +6,7 @@ import { enableAutoStart, disableAutoStart, syncAutoStartProposals } from "@/lib
 import { readAutoStartState, setAutoStartState, type Proposal } from "@/lib/autostart/task";
 import { supabase } from "@/lib/supabase";
 
-export default function AutoStartScreen() {
+function AutoStartFeatureContent() {
   const { user } = useAuth();
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -75,3 +76,7 @@ const styles = StyleSheet.create({
   secondary: { backgroundColor: "#e7eef3", borderRadius: 10, padding: 12, alignItems: "center" },
   card: { borderWidth: 1, borderColor: "#e4e4e4", borderRadius: 12, padding: 16, gap: 12 },
 });
+
+export default function AutoStartScreen(){
+ return <SubscriptionGate tier="plus"><AutoStartFeatureContent/></SubscriptionGate>;
+}

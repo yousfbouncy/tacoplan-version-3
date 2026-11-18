@@ -1,0 +1,24 @@
+name: Validate mobile subscription screens
+on:
+  pull_request:
+    paths:
+      - 'app/planes.tsx'
+      - 'app/exportar.tsx'
+      - 'app/autostart.tsx'
+      - 'app/(tabs)/dietas.tsx'
+      - 'app/(tabs)/usuario.tsx'
+      - 'lib/subscription-access.ts'
+      - 'components/SubscriptionGate.tsx'
+      - 'components/admin/AdminHomeScreen.tsx'
+      - '.github/workflows/mobile-subscriptions-check.yml'
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit
+      - run: npm run typecheck

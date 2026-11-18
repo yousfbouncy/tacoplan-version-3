@@ -1,3 +1,4 @@
+import SubscriptionGate from "@/components/SubscriptionGate";
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -342,7 +343,7 @@ const dpStyles = StyleSheet.create({
   },
 });
 
-export default function ExportarScreen() {
+function ExportarReportContent() {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -2201,3 +2202,7 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
 });
+
+export default function ExportarScreen(){
+ return <SubscriptionGate tier="pro"><ExportarReportContent/></SubscriptionGate>;
+}
