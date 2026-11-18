@@ -2023,6 +2023,10 @@ export default function UsuarioScreen() {
           <View style={styles.card}>
             <SectionHeader title="Cuenta" icon="person-outline" />
             <TrafficLocationConsent />
+            <Pressable accessibilityRole="button" onPress={() => router.push("/planes" as any)} style={({pressed})=>[styles.ferryToggleRow,{opacity:pressed?0.8:1}]}>
+              <View style={styles.ferryToggleLabel}><Ionicons name="diamond-outline" size={20} color={Colors.light.tint}/><Text style={styles.ferryToggleText}>Planes y suscripción</Text></View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary}/>
+            </Pressable>
             <Pressable
               style={({ pressed }) => [styles.ferryToggleRow, { opacity: pressed ? 0.85 : 1 }]}
               onPress={() => openSection("perfil")}
