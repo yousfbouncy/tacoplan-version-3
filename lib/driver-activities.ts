@@ -262,7 +262,12 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
     firstBreak15Completed && current==="REST" ? Math.min(currentRestMs,30*min) : 0;
   const uninterruptedBreakProgressMs = current==="REST"
     ? Math.min(currentRestMs,45*min) : 0;
-  return {totals,current,continuousDrivingMs,currentRestMs,firstBreak15Completed,
+  // The REST activity button displays the *current* break, not the sum of
+  // every rest in the shift. After leaving rest, only a completed first
+  // 15-minute stage is retained; an invalid (<15 min) stage returns to zero.
+  // The full REST total remains untouched for the journey history.
+  const restButtonMs = current==="REST" ? currentRestMs : firstBreak15Completed ? 15*min : 0;
+  return {totals,current,continuousDrivingMs,currentRestMs,restButtonMs,firstBreak15Completed,
     qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
     secondBreakProgressMs,uninterruptedBreakProgressMs,currentRestQualifiedBySplit};
 }
