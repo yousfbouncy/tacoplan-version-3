@@ -131,7 +131,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
       }
       if (AppState.currentState === "active" && !foreground) {
         const subscription = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, timeInterval: 10000, distanceInterval: 10 },
+          { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0 },
           fix => { void enqueue([fix]); },
         );
         if (activeUser !== userId || AppState.currentState !== "active") subscription.remove();
