@@ -5,6 +5,8 @@ on:
     paths:
       - 'components/DriverActivityPanel.tsx'
       - 'components/OnboardingSetup.tsx'
+      - 'lib/account-email.ts'
+      - 'tests/account-email.test.ts'
       - 'components/JornadaActivityHistory.tsx'
       - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
@@ -25,6 +27,8 @@ on:
     paths:
       - 'components/DriverActivityPanel.tsx'
       - 'components/OnboardingSetup.tsx'
+      - 'lib/account-email.ts'
+      - 'tests/account-email.test.ts'
       - 'components/JornadaActivityHistory.tsx'
       - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
@@ -46,6 +50,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node --import tsx --test tests/weekly-compensation.test.ts
+      - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts
       - run: npm run typecheck
       - run: npm test
