@@ -3,7 +3,7 @@ import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, type LegalSummary } from "./legalEngine";
+import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
 import { assessWeeklyRest, type WeeklyRestAssessment } from "@/lib/weekly-rest";
 import { userScopedKey } from "@/lib/user-scope";
@@ -1745,16 +1745,30 @@ async function processCompensaciones(
   const now = new Date().toISOString();
   const restStart = restMeta?.previousRestStartAt ?? null;
   const restEnd = restMeta?.previousRestEndAt ?? null;
+  const restHistory = restStart ? await getAllJornadas() : [];
+  const precedingJornada = restHistory.find(j => !!j.endAt && new Date(j.endAt).getTime() === new Date(restStart!).getTime());
+  // Un bloque largo sólo es descanso diario cuando se planificó como tal;
+  // sin esa información conservamos su clasificación semanal para no
+  // descontar deuda indebidamente.
+  const explicitlyDaily = precedingJornada?.plannedRestType === "daily";
+  const mayUseReducedDaily = explicitlyDaily &&
+    precedingJornada?.plannedRestMin === 9 * 60 &&
+    computeReducidosSinceLastWeeklyRest(restHistory.filter(j => j.startAt < (precedingJornada?.startAt ?? restStart!))) < 3;
+
 
   // Sólo asignar tiempo adicional al descanso mínimo legal.
   // No compensar con un semanal reducido ni doblecontar las mismas horas.
   if (restStart && restEnd) {
-    const restKind = tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
-      ? "weekly_reduced" as const
-      : tipoDescansoAnterior === "DESCANSO_SEMANAL_COMPLETO" || descansoAnteriorMin >= 45 * 60
-        ? "weekly_normal" as const
+    const restKind = descansoAnteriorMin >= 45 * 60
+      ? "weekly_normal" as const
+      : explicitlyDaily ? "daily" as const
+      : tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
+        ? "weekly_reduced" as const
         : "daily" as const;
-    const capacity = automaticCompensationCapacityMin(descansoAnteriorMin, { kind: restKind, dailyBaseMin: 660 });
+    const capacity = automaticCompensationCapacityMin(descansoAnteriorMin, {
+      kind: restKind,
+      dailyBaseMin: mayUseReducedDaily ? 540 : 660,
+    });
     if (capacity > 0) {
       const prior = comps
         .filter(c => !c.compensada &&
@@ -1782,7 +1796,7 @@ async function processCompensaciones(
 
   // Cada semanal reducido genera su propia deuda (45 h - descanso real).
   // No se fusiona con otros ni desaparece por haber otro en la misma semana.
-  const debtMin = tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
+  const debtMin = !explicitlyDaily && tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
     ? weeklyReductionDebtMin(descansoAnteriorMin)
     : 0;
   if (debtMin > 0 && restStart && !comps.some(c =>
