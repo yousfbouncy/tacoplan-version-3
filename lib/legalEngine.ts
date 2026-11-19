@@ -624,7 +624,10 @@ export function buildLegalPreview(
   const restanteSemanalMin = Math.max(0, 56 * 60 - conduccionSemanalMin);
   const restanteBisemanalMin = Math.max(0, 90 * 60 - conduccionBisemanalMin);
 
-  const pendientes = compensaciones.filter((c) => !c.compensada);
+  const hoy = formatDateStr(new Date());
+  // Actionable pending total: do not add deadlines already expired.
+  // Historical violations and stored debts are preserved separately.
+  const pendientes = compensaciones.filter((c) => !c.compensada && c.fechaLimite >= hoy);
   const compensacionDeudaTotalMin = pendientes.reduce(
     (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda, 0,
   );
