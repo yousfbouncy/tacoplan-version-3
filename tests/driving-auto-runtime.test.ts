@@ -74,11 +74,20 @@ test("actual GPS runtime starts driving, switches immediately to rest, and resum
   assert.equal(h.log.segments[1].endedAt,new Date(epoch+70000).toISOString());
   assert.equal(h.log.segments[2].startedAt,new Date(epoch+70000).toISOString());
 });
-test("GPS task respects manually selected rest and work rather than overriding them",async()=>{
+test("confirmed movement ends an existing REST and starts driving",async()=>{
   const h=await harness();
   h.log.segments.push({type:"REST",startedAt:new Date(epoch).toISOString(),endedAt:null});
   await h.deliver(location(0,20));
+  assert.equal(h.log.segments.at(-1).type,"REST");
   await h.deliver(location(60,20));
+  assert.equal(h.log.segments.length,2);
+  assert.equal(h.log.segments[0].endedAt,new Date(epoch).toISOString());
+  assert.equal(h.log.segments[1].type,"DRIVING");
+});
+test("stopping does not override a manually selected WORK or AVAILABLE",async()=>{
+  const h=await harness();
+  h.log.segments.push({type:"WORK",startedAt:new Date(epoch).toISOString(),endedAt:null});
+  await h.deliver(location(0,0));
   assert.equal(h.log.segments.length,1);
-  assert.equal(h.log.segments[0].type,"REST");
+  assert.equal(h.log.segments[0].type,"WORK");
 });
