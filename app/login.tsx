@@ -714,6 +714,15 @@ export default function LoginScreen() {
               </Pressable>
             </View>
 
+            {screen === "login" && (
+              <Pressable
+                style={({ pressed }: { pressed: boolean }) => [styles.linkBtn, { opacity: pressed ? 0.6 : 1, marginTop: 0, marginBottom: 12 }]}
+                onPress={() => setScreen("forgot")}
+              >
+                <Text style={styles.linkText}>{t("login.forgotPassword")}</Text>
+              </Pressable>
+            )}
+
             {!!errorMsg && (
               <View style={styles.errorBanner}>
                 <Ionicons name="alert-circle" size={16} color={Colors.light.danger} />
@@ -734,15 +743,6 @@ export default function LoginScreen() {
                 </Text>
               )}
             </Pressable>
-
-            {screen === "login" && (
-              <Pressable
-                style={({ pressed }: { pressed: boolean }) => [styles.linkBtn, { opacity: pressed ? 0.6 : 1, marginTop: 12, marginBottom: 0 }]}
-                onPress={() => setScreen("forgot")}
-              >
-                <Text style={styles.linkText}>{t("login.forgotPassword")}</Text>
-              </Pressable>
-            )}
 
             <View style={styles.divider}>
               <View style={styles.dividerLine} />
