@@ -164,3 +164,27 @@ test("closing uses recorded driving time and can split Sunday/Monday without inv
   assert.equal(summary.closed.segments[2].endedAt,t(142).toISOString());
   assert.equal(getDriverActivityTotals(summary.closed,t(200)).totals.DRIVING,92*60000);
 });
+
+test("rest button resets invalid pauses and credits only a valid 15-minute first stage",()=>{
+ let log={shiftId:"display",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=changeDriverActivity(log,"REST",t(90));
+ assert.equal(getDriverActivityTotals(log,t(104)).restButtonMs,14*60000);
+ log=changeDriverActivity(log,"DRIVING",t(104));
+ assert.equal(getDriverActivityTotals(log,t(105)).restButtonMs,0);
+ log=changeDriverActivity(log,"REST",t(110));
+ assert.equal(getDriverActivityTotals(log,t(130)).restButtonMs,20*60000);
+ log=changeDriverActivity(log,"DRIVING",t(130));
+ let state=getDriverActivityTotals(log,t(140));
+ assert.equal(state.restButtonMs,15*60000);
+ assert.equal(state.totals.REST,34*60000);
+ log=changeDriverActivity(log,"REST",t(140));
+ state=getDriverActivityTotals(log,t(141));
+ assert.equal(state.restButtonMs,1*60000);
+ assert.equal(state.firstBreakProgressMs,15*60000);
+ log=changeDriverActivity(log,"DRIVING",t(170));
+ state=getDriverActivityTotals(log,t(171));
+ assert.equal(state.restButtonMs,0);
+ assert.equal(state.continuousDrivingMs,1*60000);
+ assert.equal(state.totals.REST,64*60000);
+});
