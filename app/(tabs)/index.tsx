@@ -1324,6 +1324,7 @@ export default function DashboardScreen() {
     qc.invalidateQueries({ queryKey: ["estado-legal"] });
     qc.invalidateQueries({ queryKey: ["legal-preview"] });
     qc.invalidateQueries({ queryKey: ["last-closed"] });
+    qc.invalidateQueries({ queryKey: ["recent-legal-infractions"] });
   }, [qc]);
 
   const inicioMutation = useMutation({
@@ -2694,6 +2695,7 @@ export default function DashboardScreen() {
               onPress={() => {
                 setShowNotifications(true);
                 refreshNotifications();
+                void recentInfractionsQuery.refetch();
               }}
               hitSlop={8}
               style={[styles.headerActionButton, { marginLeft: 10 }]}
