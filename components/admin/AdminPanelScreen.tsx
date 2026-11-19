@@ -271,7 +271,6 @@ const USER_SORT_OPTIONS = [
 ] as const;
 
 const NAV_ITEMS = [
-  { key: "summary", label: "Resumen", icon: LayoutDashboard },
   { key: "users", label: "Usuarios", icon: Users },
   { key: "surveys", label: "Encuestas", icon: ClipboardList },
   { key: "notifications", label: "Notificaciones", icon: Bell },
@@ -283,7 +282,7 @@ const NAV_ITEMS = [
 
 function adminPath(tab: AdminTab) {
   switch (tab) {
-    case "summary": return "/admin/summary";
+    case "summary": return "/admin/users";
     case "users": return "/admin/users";
     case "surveys": return "/admin/surveys";
     case "notifications": return "/admin/notifications";
