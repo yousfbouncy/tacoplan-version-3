@@ -71,7 +71,8 @@
         "expo-notifications",
         {
           "sounds": [
-            "./assets/sounds/tacoplan_viaje.wav"
+            "./assets/sounds/tacoplan_viaje_3.wav",
+            "./assets/sounds/tacoplan_disponibilidad_5.wav"
           ],
           "enableRemoteNotifications": true
         }
