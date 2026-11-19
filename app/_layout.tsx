@@ -21,6 +21,7 @@ import { FerryProvider } from "@/lib/ferry-context";
 import { TachographProvider } from "@/lib/tachograph/tachograph-context";
 import PeriodSetupModal from "@/components/PeriodSetupModal";
 import OnboardingSetup from "@/components/OnboardingSetup";
+import ExistingAccountSetup from "@/components/ExistingAccountSetup";
 import BaseLocationSetup from "@/components/BaseLocationSetup";
 import LoginScreen from "@/app/login";
 import { ActivityIndicator, AppState, View, Text } from "react-native";
@@ -419,9 +420,11 @@ function OnboardingGate() {
   }
 
   return (
-    <PeriodProvider>
-      <PeriodSetupGate />
-    </PeriodProvider>
+    <ExistingAccountSetup>
+      <PeriodProvider>
+        <PeriodSetupGate />
+      </PeriodProvider>
+    </ExistingAccountSetup>
   );
 }
 
