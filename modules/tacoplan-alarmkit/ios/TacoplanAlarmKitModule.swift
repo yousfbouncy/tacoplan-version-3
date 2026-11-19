@@ -34,7 +34,7 @@ public final class TacoplanAlarmKitModule: Module {
       let stopButton = AlarmButton(text: "Detener", textColor: .white, systemImageName: "stop.circle")
       let alert = AlarmPresentation.Alert(title: "Tacoplan · disponibilidad", stopButton: stopButton)
       let attrs = AlarmAttributes<EmptyAlarmMetadata>(presentation: AlarmPresentation(alert: alert), tintColor: .orange)
-      let config = AlarmManager.AlarmConfiguration<EmptyAlarmMetadata>(schedule: .fixed(date), attributes: attrs)
+      let config = AlarmManager.AlarmConfiguration<EmptyAlarmMetadata>(schedule: .fixed(date), attributes: attrs, sound: .named("tacoplan_disponibilidad_5.wav"))
       _ = try await AlarmManager.shared.schedule(id: id, configuration: config)
     }
 
