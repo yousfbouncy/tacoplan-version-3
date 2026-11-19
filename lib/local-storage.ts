@@ -482,7 +482,8 @@ function calcMinutesBetween(isoStart: string, isoEnd: string): number {
   return Math.round((end.getTime() - start.getTime()) / 60000);
 }
 
-function clasificarDescanso(minutos: number): string {
+function clasificarDescanso(minutos: number, plannedType?: "daily" | "weekly" | null): string {
+  if (minutos >= 11 * 60 && minutos < 45 * 60 && plannedType === "daily") return "DESCANSO_DIARIO_COMPLETO";
   if (minutos < 9 * 60) return "INFRACCION_DESCANSO";
   if (minutos < 11 * 60) return "DESCANSO_DIARIO_REDUCIDO";
   if (minutos < 24 * 60) return "DESCANSO_DIARIO_COMPLETO";
@@ -891,7 +892,7 @@ export async function prepareImportedJornadasForStorage(imported: Jornada[], exi
       if (isSplitDailyRestGapComplete(jornada.descansoAnteriorMin, previous)) {
         jornada.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
-        jornada.tipoDescansoAnterior = clasificarDescanso(jornada.descansoAnteriorMin);
+        jornada.tipoDescansoAnterior = clasificarDescanso(jornada.descansoAnteriorMin, previous.plannedRestType);
       }
       jornada.previousRestSource = "normal_gap";
       jornada.previousRestId = null;
@@ -1588,7 +1589,7 @@ function computeDerivedFields(
       if (isSplitDailyRestGapComplete(descansoAnteriorMin, anterior)) {
         tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
-        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin, anterior.plannedRestType);
       }
     }
   }
@@ -1903,7 +1904,7 @@ async function crearJornadaInicioUnlocked(data: {
       if (isSplitDailyRestGapComplete(descansoAnteriorMin, anterior)) {
         tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
-        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin);
+        tipoDescansoAnterior = clasificarDescanso(descansoAnteriorMin, anterior.plannedRestType);
       }
       previousRestFields = buildPreviousRestFields({
         restStartAt: anterior.endAt,
@@ -2624,7 +2625,7 @@ export async function listarJornadas(from?: string, to?: string): Promise<Jornad
       if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
         j.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
-        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin, anterior.plannedRestType);
       }
     } else {
       j.descansoAnteriorMin = null;
@@ -3702,7 +3703,7 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
       if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
         j.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
-        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin, anterior.plannedRestType);
       }
     }
   }
