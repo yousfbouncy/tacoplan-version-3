@@ -226,7 +226,11 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       }
     } else {
       if (lastActivity==="REST") {
-        if (restSinceDrivingMs>=45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
+        // This rest may already have completed a 45-minute or 15+30-minute
+        // break while it was active. Never reinterpret its final 30-minute
+        // segment as a new first 15-minute stage when driving resumes.
+        if (currentRestQualified || restSinceDrivingMs>=45*min ||
+            (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
           continuousDrivingMs=0;
           firstBreak15Completed=false;
           drivingStarted=false;
