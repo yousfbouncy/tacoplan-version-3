@@ -128,6 +128,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [driverName, setDriverName] = useState("");
   const [accountEmail, setAccountEmail] = useState(user?.email ?? "");
   const [needsAccountPassword, setNeedsAccountPassword] = useState(false);
+  const [oauthProvider, setOauthProvider] = useState<"apple"|"google"|"other">("other");
+  const [verifiedEmail, setVerifiedEmail] = useState(user?.email ?? "");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [zone, setZone] = useState<OperationZone | null>(null);
@@ -170,12 +172,17 @@ export default function OnboardingSetup({ onComplete }: Props) {
     let active = true;
     void supabase.auth.getUser().then(({data,error})=>{
       if(!active || error || !data.user || data.user.id !== userId) return;
-      setAccountEmail(data.user.email || user?.email || "");
+      const authenticatedEmail = data.user.email || user?.email || "";
+      setVerifiedEmail(authenticatedEmail);
       const providers: string[] = Array.isArray(data.user.app_metadata?.providers) ? data.user.app_metadata.providers : [];
       const oauth = providers.includes("google") || providers.includes("apple") ||
         data.user.app_metadata?.provider === "google" || data.user.app_metadata?.provider === "apple";
       const emailIdentity = providers.includes("email") ||
         data.user.identities?.some(identity=>identity.provider === "email") === true;
+      const appleAccount = providers.includes("apple") || data.user.app_metadata?.provider === "apple";
+      const googleAccount = providers.includes("google") || data.user.app_metadata?.provider === "google";
+      setOauthProvider(appleAccount ? "apple" : googleAccount ? "google" : "other");
+      setAccountEmail(appleAccount && (!authenticatedEmail || authenticatedEmail.endsWith("@privaterelay.appleid.com")) ? "" : authenticatedEmail);
       setNeedsAccountPassword(oauth && !emailIdentity);
       const cloudName = String(data.user.user_metadata?.full_name || data.user.user_metadata?.name || "").trim();
       if(cloudName) setDriverName(previous=>previous.trim() ? previous : cloudName);
@@ -270,7 +277,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   function validate(): string[] {
     const errs: string[] = [];
     if (!driverName.trim()) errs.push("Es obligatorio indicar tu nombre y apellidos");
-    if (!accountEmail.trim()) errs.push("No se ha podido obtener el correo de tu cuenta");
+    if (!accountEmail.trim()) errs.push("Indica tu correo electrónico");
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim())) errs.push("Introduce un correo electrónico válido");
     if (needsAccountPassword) {
       if (newPassword.length < 8) errs.push("Crea una contraseña de al menos 8 caracteres");
       if (newPassword !== confirmPassword) errs.push("Las contraseñas no coinciden");
@@ -340,6 +348,15 @@ export default function OnboardingSetup({ onComplete }: Props) {
     try {
       if (!userId) {
         Alert.alert(t("common.error"), t("common.notAuthenticated"));
+        return;
+      }
+      if (oauthProvider === "apple" && accountEmail.trim().toLowerCase() !== verifiedEmail.trim().toLowerCase()) {
+        // The email is part of Supabase Auth: verification must complete before
+        // password login can use it. Never simply store an unverified address.
+        const {error:emailError} = await supabase.auth.updateUser({email:accountEmail.trim()});
+        if (emailError) throw new Error("No se ha podido solicitar el cambio de correo: "+emailError.message);
+        const notice = "Te hemos enviado un correo de confirmación. Verifica la nueva dirección y vuelve a la configuración para terminar de establecer la contraseña.";
+        if (Platform.OS === "web") alert(notice); else Alert.alert("Verifica tu correo",notice);
         return;
       }
       if (needsAccountPassword) {
@@ -513,12 +530,13 @@ export default function OnboardingSetup({ onComplete }: Props) {
           <TextInput
             accessibilityLabel="Correo de la cuenta"
             value={accountEmail}
-            editable={false}
+            onChangeText={setAccountEmail}
+            editable={oauthProvider === "apple"}
             keyboardType="email-address"
             autoCapitalize="none"
             style={[s.input, { minHeight: 48, opacity: 0.85 }]}
           />
-          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Correo asociado a tu inicio de sesión. Si usas «Ocultar mi correo» de Apple, aparecerá la dirección privada proporcionada por Apple.</Text>
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? "Escribe tu correo personal para poder entrar también en Android. Tendrás que confirmarlo por correo antes de usarlo." : "Correo de la cuenta con la que has iniciado sesión."}</Text>
           {needsAccountPassword ? <>
             <Text style={[s.inputLabel, { marginTop: 14 }]}>Crear contraseña *</Text>
             <TextInput
