@@ -1047,35 +1047,11 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
     }
   }
 
-  // 2) Mergear compensaciones PENDIENTES duplicadas: misma fechaLimite →
-  //    conservar la más antigua, acumular horasDeuda y minutosDeuda, borrar resto.
-  //    NO TOCAMOS LAS COMPENSADAS (ni manuales ni automáticas).
-  const byFechaLimite = new Map<string, Compensacion[]>();
-  for (const c of list) {
-    if (c.compensada) continue;
-    const key = c.fechaLimite;
-    const arr = byFechaLimite.get(key) ?? [];
-    arr.push(c);
-    byFechaLimite.set(key, arr);
-  }
-  const mergedIdsToRemove = new Set<string>();
-  for (const [, group] of byFechaLimite) {
-    if (group.length <= 1) continue;
-    // Ordenamos por updatedAt ASC (primero = más viejo)
-    group.sort((a, b) => (a.updatedAt ?? "").localeCompare(b.updatedAt ?? ""));
-    const keeper = group[0];
-    let totalMin = keeper.horasDeuda * 60 + keeper.minutosDeuda;
-    for (let i = 1; i < group.length; i++) {
-      totalMin += group[i].horasDeuda * 60 + group[i].minutosDeuda;
-      mergedIdsToRemove.add(group[i].id);
-    }
-    keeper.horasDeuda = Math.floor(totalMin / 60);
-    keeper.minutosDeuda = totalMin % 60;
-    keeper.updatedAt = now;
-    keeper.syncStatus = "pending";
-    changed = true;
-  }
-  const mergedCleaned: Compensacion[] = list.filter(c => !mergedIdsToRemove.has(c.id));
+  // Una misma fecha límite no identifica una deuda duplicada: dos descansos
+  // reducidos diferentes pueden vencer el mismo día. Se conserva cada deuda
+  // por jornada (ya deduplicada por id y jornada), con su propio origen.
+  // No fusionar ni borrar horas de otros descansos.
+  const mergedCleaned: Compensacion[] = list;
 
   // 3) Recalcular TODAS las compensaciones pendientes según el final de la
   //    tercera semana siguiente. Esto corrige plazos históricos de 14/21 días.
@@ -2119,23 +2095,14 @@ async function processCompensaciones(
 
       if (deudaMin > 0) {
         comps = await getAllCompensaciones();
-        const existingPending = comps
-          .filter((c) => !c.compensada)
-          .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
-
-        if (existingPending.length > 0) {
-          // REGLA 3-A: SI HAY PENDIENTES EXISTENTES → NO creamos fila nueva.
-          // Acumulamos la nueva deuda EN EL PRIMER pendiente (fecha límite más antigua).
-          const primero = existingPending[0];
-          const actualMin = primero.horasDeuda * 60 + primero.minutosDeuda;
-          const nuevoMin = actualMin + deudaMin;
-          primero.horasDeuda = Math.floor(nuevoMin / 60);
-          primero.minutosDeuda = nuevoMin % 60;
-          primero.updatedAt = now;
-          primero.syncStatus = "pending";
-          // fechaLimite NO cambia: conservamos la FECHA MÁS ANTIGUA.
-        } else {
-          // REGLA 3-A sin pendientes → creamos la COMPENSACIÓN NUEVA.
+        // Idempotencia: cada descanso genera su propia deuda una única vez.
+        // No acumularla en una deuda anterior: se perderían origen, plazo
+        // y posibilidad de compensarla por separado.
+        const alreadyRegistered = comps.some((c) =>
+          c.jornadaId === jornadaId ||
+          (!!restMeta?.previousRestStartAt && c.sourceRestStartAt === restMeta.previousRestStartAt)
+        );
+        if (!alreadyRegistered) {
           // Plazo legal: final de la tercera semana siguiente a la semana
           // del descanso que generó la reducción.
           const fechaLimite = calculateCompensationDeadline({
