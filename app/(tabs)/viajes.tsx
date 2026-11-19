@@ -1,3 +1,4 @@
+import HeaderMenuButton from "@/components/HeaderMenuButton";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useCallback, useMemo } from "react";
 import {
@@ -343,25 +344,7 @@ export default function ViajesScreen() {
       <ScreenBackdrop />
       <View style={styles.header}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}><Ionicons name="cube-outline" size={28} color="#FFFFFF" /><Text style={styles.headerTitle}>{t("viajes.title")}</Text></View>
-        <Pressable
-          onPress={() => router.push("/usuario")}
-          hitSlop={8}
-          style={({ pressed }) => [
-            {
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              borderWidth: 1,
-              borderColor: Colors.light.border,
-              backgroundColor: Colors.light.surface,
-              alignItems: "center",
-              justifyContent: "center",
-              opacity: pressed ? 0.9 : 1,
-            },
-          ]}
-        >
-          <Ionicons name="settings-outline" size={20} color={Colors.light.tint} />
-        </Pressable>
+        <HeaderMenuButton />
       </View>
 
       <ScrollView
