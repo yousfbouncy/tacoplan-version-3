@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 
-const mocked = ["@react-native-async-storage/async-storage", "@/lib/supabase", "@/lib/user-scope"];
+const mocked = ["@react-native-async-storage/async-storage", "@/lib/supabase", "@/lib/user-scope", "react-native"];
 const bundle = build({entryPoints:["lib/local-storage.ts"],bundle:true,write:false,platform:"node",format:"cjs",
   plugins:[{name:"storage-adapters",setup(b){
     b.onResolve({filter:/.*/},args=>mocked.includes(args.path)?{path:args.path,namespace:"mock"}:undefined);
@@ -16,7 +16,11 @@ async function harness() {
       async getItem(key:string) { const value=storage.get(key)??null; await onRead?.(key); return value; },
       async setItem(key:string,value:string) {storage.set(key,value);},
       async removeItem(key:string) {storage.delete(key);},
+      async multiGet(keys:string[]) {return keys.map(key=>[key,storage.get(key)??null]);},
+      async multiSet(entries:[string,string][]) {for(const [key,value] of entries)storage.set(key,value);},
+      async multiRemove(keys:string[]) {for(const key of keys)storage.delete(key);},
     },
+    "react-native": { Platform: { OS: "ios" } },
     "@/lib/supabase": {supabase:{}},
     "@/lib/user-scope": {async userScopedKey(key:string){return key;}},
   };
