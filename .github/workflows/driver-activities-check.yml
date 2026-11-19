@@ -11,6 +11,11 @@ on:
       - 'app/(tabs)/historial.tsx'
       - 'app/(tabs)/_layout.tsx'
       - 'components/HeaderMenuButton.tsx'
+      - 'plugins/withTrafficAlertSound.js'
+      - 'app.json'
+      - 'lib/native-trip-alert.ts'
+      - 'lib/availability-alarms.ts'
+      - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
       - 'lib/legalEngine.ts'
@@ -37,6 +42,11 @@ on:
       - 'app/(tabs)/historial.tsx'
       - 'app/(tabs)/_layout.tsx'
       - 'components/HeaderMenuButton.tsx'
+      - 'plugins/withTrafficAlertSound.js'
+      - 'app.json'
+      - 'lib/native-trip-alert.ts'
+      - 'lib/availability-alarms.ts'
+      - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
       - 'lib/legalEngine.ts'
@@ -59,5 +69,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts tests/period-audit-actions.test.ts
+      - run: node --import tsx --test tests/notification-sounds.test.ts
       - run: npm run typecheck
       - run: npm test
