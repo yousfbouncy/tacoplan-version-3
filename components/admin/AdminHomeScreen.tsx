@@ -19,7 +19,6 @@ import Colors from "@/constants/colors";
 import { useAuth } from "@/lib/auth-context";
 
 const MENU_ITEMS = [
-  { label: "Resumen", icon: LayoutDashboard, href: "/admin/summary" },
   { label: "Usuarios", icon: Users, href: "/admin/users" },
   { label: "Suscriptores", icon: Users, href: "https://www.tacoplan.es/admin/suscriptores" },
   { label: "Encuestas", icon: ClipboardList, href: "/admin/surveys" },
