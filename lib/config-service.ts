@@ -185,6 +185,7 @@ function extractProfileConfigFromSettings(settings: Record<string, any>) {
     price_per_trip_internacional: getNum("price_per_trip_internacional"),
     price_per_trip_regional: getNum("price_per_trip_regional"),
   };
+  if (settings.driver_name && String(settings.driver_name).trim()) payload.display_name = String(settings.driver_name).trim();
   if (settings.driver_profile) payload.driver_profile = settings.driver_profile;
   if (settings.operation_zone) payload.operation_zone = settings.operation_zone;
   if (settings.trip_types != null) payload.trip_types = settings.trip_types;
