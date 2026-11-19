@@ -126,7 +126,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
-            {format(totals.totals[item.type])}
+            {format(item.type==="REST"?totals.restButtonMs:totals.totals[item.type])}
           </Text>
         </Pressable>;
       })}
