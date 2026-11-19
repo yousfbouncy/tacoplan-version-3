@@ -34,6 +34,7 @@ on:
       - 'tests/autostart-task.test.ts'
       - 'tests/autostart-engine.test.ts'
       - 'tests/driving-activity-autostart.test.ts'
+      - 'tests/driving-auto-runtime.test.ts'
       - 'app/_layout.tsx'
       - 'app/(tabs)/index.tsx'
       - 'tests/driver-activities.test.ts'
@@ -84,6 +85,6 @@ jobs:
       - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts tests/period-audit-actions.test.ts
       - run: node --import tsx --test tests/notification-sounds.test.ts
       - run: node --import tsx --test tests/large-safe-storage.test.ts
-      - run: node --import tsx --test tests/driving-activity-autostart.test.ts
+      - run: node --import tsx --test tests/driving-activity-autostart.test.ts tests/driving-auto-runtime.test.ts
       - run: npm run typecheck
       - run: npm test
