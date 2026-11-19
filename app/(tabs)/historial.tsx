@@ -1,3 +1,4 @@
+import HeaderMenuButton from "@/components/HeaderMenuButton";
 import { useWindowDimensions } from "react-native";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import JornadaActivityHistory from "@/components/JornadaActivityHistory";
@@ -2063,6 +2064,7 @@ export default function HistorialScreen() {
           >
             <Ionicons name="search-outline" size={20} color={Colors.light.tint} />
           </Pressable>
+          <HeaderMenuButton />
         </View>
       </View>
       <View style={{ width: "100%", maxWidth: 760, alignSelf: "center", paddingHorizontal: 16, marginBottom: 12, flexDirection: "row", gap: 10 }}>
