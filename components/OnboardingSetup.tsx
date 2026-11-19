@@ -301,7 +301,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
     const errs:string[]=[];
     if(activeStep==="account"){
       if(!driverName.trim())errs.push(t("wizard.nameRequired"));
-      if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim()))errs.push(t("wizard.emailInvalid"));
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail.trim()))errs.push(t("wizard.emailInvalid"));
       if(needsAccountPassword){
         if(newPassword.length<8)errs.push(t("wizard.passwordShort"));
         if(newPassword!==confirmPassword)errs.push(t("wizard.passwordMismatch"));
@@ -338,10 +338,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
   function validate(): string[] {
     const errs: string[] = [];
     if (!driverName.trim()) errs.push(t("wizard.nameRequired"));
-    if (!accountEmail.trim()) errs.push("Indica tu correo electrónico");
+    if (!accountEmail.trim()) errs.push(t("wizard.emailRequired"));
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim())) errs.push("Introduce un correo electrónico válido");
     if (needsAccountPassword) {
-      if (newPassword.length < 8) errs.push("Crea una contraseña de al menos 8 caracteres");
+      if (newPassword.length < 8) errs.push(t("wizard.passwordShort"));
       if (newPassword !== confirmPassword) errs.push(t("wizard.passwordMismatch"));
     }
     if (!profile) errs.push(t("onboarding.errorProfile"));
@@ -600,7 +600,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
             autoCapitalize="none"
             style={[s.input, { minHeight: 48, opacity: 0.85 }]}
           />
-          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? "Escribe tu correo personal para poder entrar también en Android. Tendrás que confirmarlo por correo antes de usarlo." : t("wizard.emailExplanation")}</Text>
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? t("wizard.emailAppleExplanation") : t("wizard.emailExplanation")}</Text>
           {needsAccountPassword ? <>
             <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.password")}</Text>
             <TextInput
@@ -690,7 +690,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
                   </>}
           {activeStep === "base" && <>
-<SectionHeader title=t("wizard.base") icon="business-outline" />
+<SectionHeader title={t("wizard.base")} icon="business-outline" />
         <Text style={s.subtitleInline}>
           {t("wizard.baseHelp")}
         </Text>
