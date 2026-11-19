@@ -6,6 +6,7 @@ import {
   allocateWholeCompensations,
   isWithinAlertWindow56Days,
   isCompensationInTime,
+  isActiveCompensationDeadline,
   checkWeeklyRestSequence,
 } from "../lib/weekly-compensation";
 
@@ -72,4 +73,19 @@ test("alerta de 144 horas y de dos semanales reducidos consecutivos", () => {
   ]);
   assert.equal(alerts.some(a=>a.code==="WEEKLY_REST_144H"),true);
   assert.equal(alerts.some(a=>a.code==="CONSECUTIVE_REDUCED_WEEKLY_RESTS"),true);
+});
+
+
+test("el total pendiente solo considera plazos vigentes, incluido el día límite", () => {
+  const today = "2026-11-19";
+  const rows = [
+    { id: "vencida", fechaLimite: "2026-11-01", minutos: 900 },
+    { id: "vence-hoy", fechaLimite: "2026-11-19", minutos: 360 },
+    { id: "futura", fechaLimite: "2026-12-01", minutos: 480 },
+  ];
+  const vigentes = rows.filter(r => isActiveCompensationDeadline(r.fechaLimite, today));
+  assert.deepEqual(vigentes.map(r => r.id), ["vence-hoy", "futura"]);
+  assert.equal(vigentes.reduce((sum, r) => sum + r.minutos, 0), 840);
+  assert.equal(isActiveCompensationDeadline("", today), false);
+  assert.equal(isActiveCompensationDeadline("2026-11-18", today), false);
 });
