@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -167,6 +167,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   });
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState("account");
+  const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     let active = true;
@@ -269,6 +271,65 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
   const showPaymentSection = profile === "morocco" || profile === "ferry";
   const showUserPaymentSection = profile === "standard";
+
+
+  // Exactly one step mounts at a time. Inputs retain values in component state
+  // when moving back and forth, and nothing is written until the final save.
+  const steps = [
+    {id:"account",title:"Datos de acceso"},
+    {id:"profile",title:"Perfil de conductor"},
+    {id:"zone",title:"Zona de trabajo"},
+    {id:"trips",title:"Tipos de viaje"},
+    {id:"base",title:"Lugar de base"},
+    {id:"diets",title:"Dietas"},
+    {id:"extras",title:"Complementos y descansos fuera de base"},
+    ...(showUserPaymentSection ? [{id:"paymentStandard",title:"Forma de remuneración"}] : []),
+    {id:"period",title:"Periodo de cálculo"},
+    ...(showPaymentSection ? [{id:"paymentSpecial",title:"Tarifas de viaje"}] : []),
+  ];
+  const stepIndex = Math.max(0,steps.findIndex(item=>item.id===step));
+  const activeStep = steps[stepIndex].id;
+  const isLastStep = stepIndex===steps.length-1;
+  const moveStep = (next:number) => {
+    const target=steps[next];
+    if(!target)return;
+    setErrors([]);
+    setStep(target.id);
+    scrollRef.current?.scrollTo({y:0,animated:false});
+  };
+  const nextStep = () => {
+    const errs:string[]=[];
+    if(activeStep==="account"){
+      if(!driverName.trim())errs.push("Es obligatorio indicar tu nombre y apellidos");
+      if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim()))errs.push("Indica un correo electrónico válido");
+      if(needsAccountPassword){
+        if(newPassword.length<8)errs.push("La contraseña debe tener al menos 8 caracteres");
+        if(newPassword!==confirmPassword)errs.push("Las contraseñas no coinciden");
+      }
+    }
+    if(activeStep==="profile"&&!profile)errs.push(t("onboarding.errorProfile"));
+    if(activeStep==="zone"&&!zone)errs.push(t("onboarding.errorZone"));
+    if(activeStep==="trips"&&!Object.values(tripTypes).some(Boolean))errs.push(t("onboarding.errorTripType"));
+    if(activeStep==="base"){
+      if(!baseLocation.base_name.trim())errs.push("Indica el nombre de tu base");
+      if(!baseLocation.base_city.trim())errs.push("Indica la ciudad de tu base");
+      if(!baseLocation.base_country.trim())errs.push("Indica el país de tu base");
+      if(!(parseFloat(baseLocation.base_radius_km.replace(",","."))>0))errs.push("El radio de base debe ser mayor que 0");
+    }
+    if(activeStep==="period"){
+      if(!periodMode)errs.push(t("onboarding.errorPeriod"));
+      if(periodMode==="MANUAL"){
+        const from=parseInt(manualFrom,10),to=parseInt(manualTo,10);
+        if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||from>31||to<1||to>31)errs.push(t("onboarding.errorManualDays"));
+      }
+    }
+    if(activeStep==="paymentSpecial"&&payment.mode!=="morocco_diet"){
+      const value=parseFloat(payment.mode==="morocco_trip"?payment.tripRate:payment.pernightRate);
+      if(!Number.isFinite(value)||value<=0)errs.push("Indica una tarifa válida, mayor que cero");
+    }
+    if(errs.length){setErrors(errs);return;}
+    moveStep(stepIndex+1);
+  };
 
   function toggleTrip(key: keyof TripTypes) {
     setTripTypes((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -501,6 +562,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
   return (
     <View style={[s.container, { paddingTop: (insets.top || webTopInset) }]}>
       <ScrollView
+        ref={scrollRef}
         style={s.scroll}
         contentContainerStyle={[s.scrollContent, { paddingBottom: 120 }]}
         keyboardShouldPersistTaps="handled"
@@ -510,9 +572,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
           <Ionicons name="settings-outline" size={32} color={Colors.light.tint} />
           <Text style={s.title}>{t("onboarding.title")}</Text>
           <Text style={s.subtitle}>{t("onboarding.subtitle")}</Text>
+          <Text style={{color:Colors.light.tint,fontWeight:"700",marginTop:12}}>Paso {stepIndex+1} de {steps.length} · {steps[stepIndex].title}</Text>
         </View>
 
-        <View style={{ marginBottom: 20 }}>
+                  {activeStep === "account" && <>
+<View style={{ marginBottom: 20 }}>
           <Text style={s.inputLabel}>Nombre y apellidos *</Text>
           <TextInput
             accessibilityLabel="Nombre y apellidos, obligatorio"
@@ -567,7 +631,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
             <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Con esta contraseña podrás entrar también con correo, además de Google o Apple. No se guarda en la configuración de Tacoplan.</Text>
           </> : null}
         </View>
-        <SectionHeader title={t("onboarding.sectionProfile")} icon="person-outline" />
+                  </>}
+          {activeStep === "profile" && <>
+<SectionHeader title={t("onboarding.sectionProfile")} icon="person-outline" />
         <View style={s.optionRow}>
           {profileOptions.map((opt) => (
             <Pressable
@@ -587,7 +653,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
-        <SectionHeader title={t("onboarding.sectionZone")} icon="map-outline" />
+                  </>}
+          {activeStep === "zone" && <>
+<SectionHeader title={t("onboarding.sectionZone")} icon="map-outline" />
         <View style={s.chipRow}>
           {zoneOptions.map((opt) => (
             <Pressable
@@ -600,7 +668,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
-        <SectionHeader title={t("onboarding.sectionTripTypes")} icon="compass-outline" />
+                  </>}
+          {activeStep === "trips" && <>
+<SectionHeader title={t("onboarding.sectionTripTypes")} icon="compass-outline" />
         <View style={s.checkboxGroup}>
           {tripOptions.map((opt) => (
             <Pressable
@@ -618,7 +688,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
-        <SectionHeader title="Lugar de base" icon="business-outline" />
+                  </>}
+          {activeStep === "base" && <>
+<SectionHeader title="Lugar de base" icon="business-outline" />
         <Text style={s.subtitleInline}>
           Indica tu lugar de base para mejorar el cálculo de descansos semanales, descansos fuera de base y compensaciones.
         </Text>
@@ -698,7 +770,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           </View>
         </View>
 
-        <SectionHeader title={t("onboarding.sectionDiets")} icon="cash-outline" />
+                  </>}
+          {activeStep === "diets" && <>
+<SectionHeader title={t("onboarding.sectionDiets")} icon="cash-outline" />
         <View style={s.gridContainer}>
           {dietFields.map((f) => (
             <View key={f.key} style={s.gridItem}>
@@ -715,7 +789,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
-        <SectionHeader title={t("onboarding.sectionExtras")} icon="add-circle-outline" />
+                  </>}
+          {activeStep === "extras" && <>
+<SectionHeader title={t("onboarding.sectionExtras")} icon="add-circle-outline" />
         <View style={s.gridContainer}>
           {extraFields.map((f) => (
             <View key={f.key} style={s.gridItem}>
@@ -749,7 +825,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ))}
         </View>
 
-        {showUserPaymentSection && (
+                  </>}
+          {activeStep === "paymentStandard" && <>
+{showUserPaymentSection && (
           <>
             <SectionHeader title={t("usuario.paymentMode")} icon="card-outline" />
             <View style={s.chipRow}>
@@ -854,7 +932,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           </>
         )}
 
-        <SectionHeader title={t("onboarding.sectionPeriod")} icon="calendar-outline" />
+                  </>}
+          {activeStep === "period" && <>
+<SectionHeader title={t("onboarding.sectionPeriod")} icon="calendar-outline" />
         <View style={s.chipRow}>
           {periodOptions.map((opt) => (
             <Pressable
@@ -895,7 +975,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
           </View>
         )}
 
-        {showPaymentSection && (
+                  </>}
+          {activeStep === "paymentSpecial" && <>
+{showPaymentSection && (
           <>
             <SectionHeader title={t("onboarding.sectionPayment")} icon="wallet-outline" />
             <View style={s.chipRow}>
@@ -943,6 +1025,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
             )}
           </>
         )}
+          </>}
       </ScrollView>
 
       <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Platform.OS === "web" ? 34 : 16) }]}>
@@ -953,20 +1036,27 @@ export default function OnboardingSetup({ onComplete }: Props) {
             ))}
           </View>
         )}
-        <Pressable
-          style={[s.saveButton, saving && s.saveButtonDisabled]}
-          onPress={handleSave}
+        <View style={{flexDirection:"row",gap:10}}>
+          {stepIndex>0?<Pressable accessibilityRole="button" onPress={()=>moveStep(stepIndex-1)} disabled={saving}
+            style={{flex:1,borderWidth:1,borderColor:Colors.light.tint,borderRadius:12,minHeight:50,alignItems:"center",justifyContent:"center"}}>
+            <Text style={{fontSize:16,fontWeight:"700",color:Colors.light.tint}}>Atrás</Text>
+          </Pressable>:null}
+          <Pressable
+          accessibilityRole="button"
+          style={[s.saveButton,{flex:2,minHeight:50}, saving && s.saveButtonDisabled]}
+          onPress={isLastStep?handleSave:nextStep}
           disabled={saving}
         >
           {saving ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <>
-              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-              <Text style={s.saveButtonText}>{t("onboarding.saveButton")}</Text>
+              <Ionicons name={isLastStep?"checkmark-circle-outline":"arrow-forward"} size={20} color="#fff" />
+              <Text style={s.saveButtonText}>{isLastStep?t("onboarding.saveButton"):"Siguiente"}</Text>
             </>
           )}
-        </Pressable>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
