@@ -50,6 +50,14 @@ export function isCompensationInTime(restEndAt: string, deadline: string): boole
     /^\d{4}-\d{2}-\d{2}$/.test(deadline) && day <= deadline;
 }
 
+/** Only unexpired compensation deadlines belong to the actionable pending list.
+ * The deadline day itself is inclusive. Expiry does not erase the legal history.
+ */
+export function isActiveCompensationDeadline(deadline: string | null | undefined, today: string): boolean {
+  return typeof deadline === "string" && /^\d{4}-\d{2}-\d{2}$/.test(deadline) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(today) && deadline >= today;
+}
+
 /** Filtro visual, NO prescripción legal ni borrado. Inicio del día, UTC. */
 export function isWithinAlertWindow56Days(
   sourceDate: string | null | undefined,
