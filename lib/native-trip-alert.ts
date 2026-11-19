@@ -25,13 +25,13 @@ export async function notifyLocalTripWithoutPushToken(
       content: {
         title: notice.title,
         body: notice.body,
-        sound: "tacoplan_viaje.wav",
+        sound: "tacoplan_viaje_3.wav",
         data: { target: "viaje", tripId: notice.data.tripId, source: "traffic", eventId: notice.data.eventId },
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
         seconds: 1,
-        channelId: "traffic-assigned-v1",
+        channelId: "traffic-assigned-v2",
       },
     });
   } catch (error) {
