@@ -9,7 +9,7 @@ export default function HeaderMenuButton() {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Abrir menú de Tacoplan"
-      onPress={() => router.navigate("/(tabs)/usuario")}
+      onPress={() => router.push("/(tabs)/usuario")}
       hitSlop={8}
       style={({ pressed }) => ({
         minWidth: 44, height: 42, paddingHorizontal: 9, borderRadius: 12,
