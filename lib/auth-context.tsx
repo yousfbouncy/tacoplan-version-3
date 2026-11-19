@@ -741,7 +741,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetPassword = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: "https://tacoplan.es/restablecer-contrasena",
+    });
     if (error) throw new Error(error.message);
     return { ok: true, message: "Te hemos enviado un enlace para restablecer tu contrasena" };
   }, []);
