@@ -3,17 +3,14 @@ import { AppState, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { getJornadaAbierta } from "@/lib/local-storage";
-import { changeDriverActivity, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
+import { changeDriverActivity, loadDriverActivities, saveDriverActivities } from "@/lib/driver-activities";
+import { updateDrivingDetection, type DrivingDetection } from "./driving-activity-engine";
 
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
 const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
-const MIN_SPEED = 15 / 3.6;
-const CONFIRM_MS = 60_000;
-const STOP_MS = 60_000;
-const MAX_GAP_MS = 90_000;
 type Fix = Location.LocationObject;
-type Detection = { userId: string; shiftId: string; movingSince: number | null; stoppedSince: number | null; lastFix: number };
+type Detection = DrivingDetection & { userId: string; shiftId: string };
 let detection: Detection | null = null;
 let foreground: Location.LocationSubscription | null = null;
 let activeUser: string | null = null;
@@ -39,41 +36,46 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   const userId = owner;
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
-    detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
+    detection = { userId, shiftId, movingSince: null, lastFix: 0 };
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
-    const ts = fix.timestamp;
-    if (!Number.isFinite(ts) || ts <= detection.lastFix) continue;
-    const previous = detection.lastFix;
-    detection.lastFix = ts;
-    if (previous && ts - previous > MAX_GAP_MS) {
-      detection.movingSince = null;
-      detection.stoppedSince = null;
+    const previous = detection!;
+    const result = updateDrivingDetection(previous, fix);
+    if (result.state === previous) continue;
+    detection = { ...result.state, userId, shiftId };
+    if (!result.transition) continue;
+
+    const log = await loadDriverActivities(userId, shiftId);
+    const active = log.segments.findLast(s => s.endedAt === null);
+    const autoRestKey = `@tacoplan/driving-autostart/rest:${userId}:${shiftId}`;
+
+    if (result.transition === "REST") {
+      // Stop at the first valid GPS fix below 6 km/h. Only transition from
+      // an actual active drive, never overwrite WORK, AVAILABLE or manual REST.
+      if (active?.type !== "DRIVING") continue;
+      const effectiveTime = new Date(Math.max(fix.timestamp, Date.parse(active.startedAt)));
+      const next = changeDriverActivity(log, "REST", effectiveTime);
+      if (next !== log) {
+        await saveDriverActivities(userId, next);
+        const startedAt = next.segments.findLast(s => s.endedAt === null)?.startedAt;
+        if (startedAt) await AsyncStorage.setItem(autoRestKey, startedAt);
+      }
+      continue;
     }
-    const speed = fix.coords.speed;
-    const good = typeof speed === "number" && Number.isFinite(speed) &&
-      typeof fix.coords.accuracy === "number" && fix.coords.accuracy <= 75;
-    if (!good) { detection.movingSince = null; continue; }
-    if (speed >= MIN_SPEED) {
-      detection.stoppedSince = null;
-      if (detection.movingSince === null) detection.movingSince = ts;
-      if (ts - detection.movingSince >= CONFIRM_MS) {
-        const log = await loadDriverActivities(userId, shiftId);
-        if (log.segments.findLast(s => s.endedAt === null)?.type !== "DRIVING") {
-          const latestStart = log.segments.findLast(s => s.endedAt === null)?.startedAt;
-          const effectiveStart = Math.max(detection!.movingSince!, latestStart ? Date.parse(latestStart) : 0);
-          await saveDriverActivities(userId, changeDriverActivity(log, "DRIVING", new Date(effectiveStart)));
-        }
-      }
-    } else {
-      detection.movingSince = null;
-      if (detection.stoppedSince === null) detection.stoppedSince = ts;
-      if (ts - detection.stoppedSince >= STOP_MS) {
-        const log = await loadDriverActivities(userId, shiftId);
-        const next = pauseDriverActivity(log, new Date(Math.max(detection!.stoppedSince!,
-          Date.parse(log.segments.findLast(s => s.endedAt === null)?.startedAt || "1970-01-01"))));
-        if (next !== log) await saveDriverActivities(userId, next);
-      }
+
+    // >=15 km/h for 60 seconds. Backdate to confirmed moving start without
+    // overlapping the current activity. Never close a manually selected REST.
+    const marker = await AsyncStorage.getItem(autoRestKey);
+    const autoRest = active?.type === "REST" && !!marker && marker === active.startedAt;
+    if (active?.type === "DRIVING") continue;
+    if (active && !autoRest && active.type !== "REST") continue;
+    if (active?.type === "REST" && !autoRest) continue;
+    const movementStart = result.movementStart ?? fix.timestamp;
+    const earliest = active ? Date.parse(active.startedAt) : 0;
+    const next = changeDriverActivity(log, "DRIVING", new Date(Math.max(movementStart, earliest)));
+    if (next !== log) {
+      await saveDriverActivities(userId, next);
+      if (autoRest) await AsyncStorage.removeItem(autoRestKey);
     }
   }
 }
@@ -116,7 +118,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
       foreground = null;
       if (!await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
         await Location.startLocationUpdatesAsync(DRIVING_TASK, {
-          accuracy: Location.Accuracy.Balanced, timeInterval: 10000, distanceInterval: 10,
+          accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0,
           activityType: Location.ActivityType.AutomotiveNavigation,
           foregroundService: { notificationTitle: "Tacoplan · Conducción automática",
             notificationBody: "Detectando conducción durante la jornada" },
