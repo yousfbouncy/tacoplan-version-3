@@ -1,3 +1,4 @@
+import { isValidAccountEmail } from "@/lib/account-email";
 import React, { useState, useEffect, useRef } from "react";
 import {
   StyleSheet,
@@ -301,7 +302,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
     const errs:string[]=[];
     if(activeStep==="account"){
       if(!driverName.trim())errs.push(t("wizard.nameRequired"));
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail.trim()))errs.push(t("wizard.emailInvalid"));
+      if(!isValidAccountEmail(accountEmail))errs.push(t("wizard.emailInvalid"));
       if(needsAccountPassword){
         if(newPassword.length<8)errs.push(t("wizard.passwordShort"));
         if(newPassword!==confirmPassword)errs.push(t("wizard.passwordMismatch"));
@@ -339,7 +340,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
     const errs: string[] = [];
     if (!driverName.trim()) errs.push(t("wizard.nameRequired"));
     if (!accountEmail.trim()) errs.push(t("wizard.emailRequired"));
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim())) errs.push("Introduce un correo electrónico válido");
+    if (!isValidAccountEmail(accountEmail)) errs.push(t("wizard.emailInvalid"));
     if (needsAccountPassword) {
       if (newPassword.length < 8) errs.push(t("wizard.passwordShort"));
       if (newPassword !== confirmPassword) errs.push(t("wizard.passwordMismatch"));
