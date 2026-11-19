@@ -6,6 +6,7 @@ import {
   allocateWholeCompensations,
   isWithinAlertWindow56Days,
   isCompensationInTime,
+  checkWeeklyRestSequence,
 } from "../lib/weekly-compensation";
 
 test("un semanal de 30 h genera 15 h; no 14 h", () => {
@@ -62,4 +63,13 @@ test("56 días limitan alertas, no eliminan obligaciones", () => {
   assert.equal(isWithinAlertWindow56Days("2026-09-24T12:00:00Z",now),true);
   assert.equal(isWithinAlertWindow56Days("2026-09-23T12:00:00Z",now),false);
   assert.equal(isWithinAlertWindow56Days("2026-02-15T12:00:00Z",now),false);
+});
+
+test("alerta de 144 horas y de dos semanales reducidos consecutivos", () => {
+  const alerts = checkWeeklyRestSequence([
+    {startAt:"2026-11-02T08:00:00Z",endAt:"2026-11-03T14:00:00Z",durationMin:1800},
+    {startAt:"2026-11-10T00:00:00Z",endAt:"2026-11-11T06:00:00Z",durationMin:1800},
+  ]);
+  assert.equal(alerts.some(a=>a.code==="WEEKLY_REST_144H"),true);
+  assert.equal(alerts.some(a=>a.code==="CONSECUTIVE_REDUCED_WEEKLY_RESTS"),true);
 });
