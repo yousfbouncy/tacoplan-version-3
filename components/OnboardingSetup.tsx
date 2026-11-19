@@ -362,7 +362,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
       if (needsAccountPassword) {
         // Adds email/password sign-in to an OAuth account without replacing Google/Apple login.
         // Supabase Auth stores the password securely; do not save it in profiles or AsyncStorage.
-        const {error:passwordError} = await supabase.auth.updateUser({password:newPassword});
+        const {error:passwordError} = await supabase.auth.updateUser({password:newPassword, data:{tacoplan_password_enabled:true}});
         if (passwordError) throw new Error("No se ha podido configurar la contraseña: " + passwordError.message);
         setNeedsAccountPassword(false);
         setNewPassword("");
