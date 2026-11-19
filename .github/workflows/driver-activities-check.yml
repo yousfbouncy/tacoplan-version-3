@@ -35,6 +35,9 @@ on:
       - 'tests/autostart-engine.test.ts'
       - 'tests/driving-activity-autostart.test.ts'
       - 'tests/driving-auto-runtime.test.ts'
+      - 'lib/recent-legal-infractions.ts'
+      - 'tests/recent-legal-infractions.test.ts'
+      - 'supabase/migrations/20261119_recent_legal_infractions.sql'
       - 'app/_layout.tsx'
       - 'app/(tabs)/index.tsx'
       - 'tests/driver-activities.test.ts'
@@ -86,5 +89,6 @@ jobs:
       - run: node --import tsx --test tests/notification-sounds.test.ts
       - run: node --import tsx --test tests/large-safe-storage.test.ts
       - run: node --import tsx --test tests/driving-activity-autostart.test.ts tests/driving-auto-runtime.test.ts
+      - run: node --import tsx --test tests/recent-legal-infractions.test.ts
       - run: npm run typecheck
       - run: npm test
