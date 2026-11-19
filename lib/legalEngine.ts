@@ -1,6 +1,7 @@
+import { isWithinAlertWindow56Days } from "./weekly-compensation";
 import type { Jornada, Compensacion } from "./local-storage";
 
-export const POLICIA_VENTANA_DIAS = 52;
+export const POLICIA_VENTANA_DIAS = 56;
 
 export function formatFechaES(dateStr: string): string {
   try {
@@ -30,10 +31,15 @@ export function policeWindowStart(dateRef: Date = new Date()): string {
 /** Toda compensación no abonada sigue pendiente, aunque hayan pasado 52 días. */
 export function isCompWithinPoliceWindow(
   c: Compensacion,
-  _allJornadas: Jornada[],
-  _dateRef: Date = new Date(),
+  allJornadas: Jornada[],
+  dateRef: Date = new Date(),
 ): boolean {
-  return !c.compensada;
+  if (c.compensada) return false;
+  const linked = allJornadas.find(j => j.id === c.jornadaId);
+  return isWithinAlertWindow56Days(
+    c.sourceRestStartAt ?? linked?.previousRestStartAt ?? linked?.fechaInicio ?? null,
+    dateRef,
+  );
 }
 
 export interface LegalInfraction {
@@ -506,15 +512,12 @@ export function evaluateJornada(
       compensacionDeudaMin = deuda;
       warnings.push({
         code: "COMPENSACION_GENERADA",
-        description: `Descanso semanal reducido genera deuda de ${formatHM(deuda)} a compensar en 14 dias desde el fin del descanso`.replace(/\s+/g, " ").trim(),
+        description: `Descanso semanal reducido genera deuda de ${formatHM(deuda)} a compensar antes del final de la tercera semana siguiente`,
       });
     }
   }
 
-  // REGLA 52 DÍAS: filtrar compensaciones a la ventana retrospectiva de policía.
-  // Fuera de esta ventana → no suman, no generan warning ni infracción en la app
-  // (el usuario ya habrá podido marcar manualmente las que corresponda).
-  // Se filtra por FECHA DE LA JORNADA (no fechaLimite), 52 días hacia atrás.
+  // Filtro visual de 56 días, no prescripción legal ni cancelación de la deuda.
   const pendientes = compensaciones.filter(c => isCompWithinPoliceWindow(c, allJornadas, new Date()));
   if (pendientes.length > 0) {
     const totalPendienteMin = pendientes.reduce(
