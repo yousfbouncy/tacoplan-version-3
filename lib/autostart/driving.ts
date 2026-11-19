@@ -39,7 +39,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     detection = { userId, shiftId, movingSince: null, lastFix: 0 };
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
-    const previous = detection!;
+    const previous: DrivingDetection = detection!;
     const result = updateDrivingDetection(previous, fix);
     if (result.state === previous) continue;
     detection = { ...result.state, userId, shiftId };
