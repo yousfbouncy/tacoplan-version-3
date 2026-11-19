@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'components/DriverActivityPanel.tsx'
+      - 'components/OnboardingSetup.tsx'
       - 'components/JornadaActivityHistory.tsx'
       - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
@@ -23,6 +24,7 @@ on:
     branches: [main]
     paths:
       - 'components/DriverActivityPanel.tsx'
+      - 'components/OnboardingSetup.tsx'
       - 'components/JornadaActivityHistory.tsx'
       - 'app/(tabs)/historial.tsx'
       - 'lib/driver-activities.ts'
@@ -44,5 +46,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm test
+      - run: node --import tsx --test tests/weekly-compensation.test.ts
       - run: npm run typecheck
+      - run: npm test
