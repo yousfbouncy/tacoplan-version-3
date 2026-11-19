@@ -168,7 +168,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState("account");
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   useEffect(() => {
     let active = true;
