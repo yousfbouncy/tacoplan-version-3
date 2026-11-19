@@ -1,5 +1,5 @@
 import { getLargeSafeItem, setLargeSafeItem, removeLargeSafeItem } from "./large-safe-storage";
-import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days, checkWeeklyRestSequence } from "./weekly-compensation";
+import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days, checkWeeklyRestSequence, isActiveCompensationDeadline } from "./weekly-compensation";
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
@@ -3759,14 +3759,12 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   const maxBisemanalMin = 90 * 60;
 
   const comps = await getAllCompensaciones();
-  // Ventana visual de 56 días solicitada: ocultar alertas antiguas SIN
-  // cancelar ni eliminar obligaciones históricas en almacenamiento.
-  const compPendientes = comps
-    .filter(c => isCompWithinPoliceWindow(c, all, ahora))
-    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
-
-
   const hoyStr = formatDateStr(ahora);
+  // Only deadlines still actionable (including today) enter pending totals.
+  // Expired records remain in storage and legal history: do not mark them paid.
+  const compPendientes = comps
+    .filter(c => isCompWithinPoliceWindow(c, all, ahora) && isActiveCompensationDeadline(c.fechaLimite, hoyStr))
+    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
 
   let compensacionAgregada: CompensacionAgregada | null = null;
 
@@ -3906,7 +3904,7 @@ export async function marcarTodasCompensadas(): Promise<void> {
   const hoyStr = formatDateStr(new Date());
   const now = new Date().toISOString();
   for (const c of comps) {
-    if (!c.compensada) {
+    if (!c.compensada && isActiveCompensationDeadline(c.fechaLimite, hoyStr)) {
       c.compensada = true;
       c.fechaCompensacion = hoyStr;
       c.updatedAt = now;
