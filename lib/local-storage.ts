@@ -1,4 +1,4 @@
-import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations } from "./weekly-compensation";
+import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days } from "./weekly-compensation";
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
@@ -382,11 +382,13 @@ function policeWindowStart(dateRef: Date = new Date()): string {
 }
 function isCompWithinPoliceWindow(
   c: Compensacion,
-  _allJornadas: Jornada[],
-  _dateRef: Date = new Date(),
+  allJornadas: Jornada[],
+  dateRef: Date = new Date(),
 ): boolean {
-  // La ventana de inspección no extingue una compensación aún pendiente.
-  return !c.compensada;
+  if (c.compensada) return false;
+  const linked = allJornadas.find(j => j.id === c.jornadaId);
+  const source = c.sourceRestStartAt ?? linked?.previousRestStartAt ?? linked?.fechaInicio ?? null;
+  return isWithinAlertWindow56Days(source, dateRef);
 }
 
 /** Devuelve el lunes de una semana UTC, para los límites reglamentarios. */
@@ -1023,8 +1025,14 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
   }
   for (const group of groupedAutomatic.values()) {
     const duration = group[0].recoveryRestDurationMin!;
-    const capacity = automaticCompensationCapacityMin(duration);
-    const sorted = [...group].sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+    const capacity = automaticCompensationCapacityMin(duration, {
+      kind: duration >= 45 * 60 ? "weekly_normal" : duration >= 24 * 60 ? "weekly_reduced" : "daily",
+      dailyBaseMin: 660,
+    });
+    const sorted = [...group]
+      .filter(item => item.recoveryRestEndAt != null &&
+        isCompensationInTime(item.recoveryRestEndAt, item.fechaLimite))
+      .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
     const paid = new Set(allocateWholeCompensations(
       sorted.map(c => ({ id: c.id, min: c.horasDeuda * 60 + c.minutosDeuda })),
       capacity,
@@ -1741,12 +1749,18 @@ async function processCompensaciones(
   // Sólo asignar tiempo adicional al descanso mínimo legal.
   // No compensar con un semanal reducido ni doblecontar las mismas horas.
   if (restStart && restEnd) {
-    const capacity = automaticCompensationCapacityMin(descansoAnteriorMin);
+    const restKind = tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
+      ? "weekly_reduced" as const
+      : tipoDescansoAnterior === "DESCANSO_SEMANAL_COMPLETO" || descansoAnteriorMin >= 45 * 60
+        ? "weekly_normal" as const
+        : "daily" as const;
+    const capacity = automaticCompensationCapacityMin(descansoAnteriorMin, { kind: restKind, dailyBaseMin: 660 });
     if (capacity > 0) {
       const prior = comps
         .filter(c => !c.compensada &&
           (c.sourceRestEndAt ? c.sourceRestEndAt <= restStart :
-            c.jornadaId !== jornadaId && c.fechaLimite < fechaInicio))
+            c.jornadaId !== jornadaId && c.fechaLimite >= restEnd.slice(0,10)))
+        .filter(c => isCompensationInTime(restEnd, c.fechaLimite))
         .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
       const ids = new Set(allocateWholeCompensations(
         prior.map(c => ({ id: c.id, min: c.horasDeuda * 60 + c.minutosDeuda })),
@@ -3719,10 +3733,8 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   const maxBisemanalMin = 90 * 60;
 
   const comps = await getAllCompensaciones();
-  // REGLA 52 DÍAS: sólo pendientes DENTRO de la ventana de policía activa
-  // participan en el banner / agregada / alertas. Se filtra por FECHA de la
-  // JORNADA (fechaInicio) que generó la compensación; NO por fechaLimite.
-  // Las compensaciones fuera de 52d hacia atrás quedan en BBDD pero "prescritas en UI".
+  // Ventana visual de 56 días solicitada: ocultar alertas antiguas SIN
+  // cancelar ni eliminar obligaciones históricas en almacenamiento.
   const compPendientes = comps
     .filter(c => isCompWithinPoliceWindow(c, all, ahora))
     .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
