@@ -65,8 +65,8 @@ function chunkKeys(manifest: Manifest): string[] {
  * leaves that pointer and its previous data unchanged.
  */
 export function createLargeSafeStorage(adapter: StorageAdapter, chunkLargeWrites: boolean) {
-  const pending = new Map<string, Promise<void>>();
-  const serialize = (key: string, work: () => Promise<void>): Promise<void> => {
+  const pending = new Map<string, Promise<unknown>>();
+  const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const previous = pending.get(key) ?? Promise.resolve();
     const op = previous.catch(() => {}).then(work);
     pending.set(key, op);
@@ -76,7 +76,9 @@ export function createLargeSafeStorage(adapter: StorageAdapter, chunkLargeWrites
     return op;
   };
 
-  const read = async (key: string): Promise<string | null> => {
+  // Reads must share the per-key queue. Otherwise a reader holding the old
+  // manifest could race a writer that has committed and reclaimed old chunks.
+  const read = (key: string): Promise<string | null> => serialize(key, async () => {
     const raw = await adapter.getItem(key);
     const manifest = manifestFrom(raw);
     if (!manifest) return raw; // legacy key: never discard existing user data
@@ -90,7 +92,7 @@ export function createLargeSafeStorage(adapter: StorageAdapter, chunkLargeWrites
       throw new Error("Tacoplan: incomplete local storage document; do not overwrite");
     }
     return pairs.map(([, value]) => value!).join("");
-  };
+  });
 
   const write = (key: string, value: string) => serialize(key, async () => {
     if (!chunkLargeWrites || utf8Bytes(value) <= MAX_CHUNK_BYTES) {
