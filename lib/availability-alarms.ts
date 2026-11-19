@@ -158,13 +158,13 @@ async function reconcileAvailabilityAlarms(
   // Android keeps a channel's sound/importance settings after creation.
   // Use a new channel ID so upgraded installations receive the audible defaults.
   // The user can still silence this channel in the system's notification settings.
-  const availabilityChannelId = "availability-alarms-sound-v2";
+  const availabilityChannelId = "availability-alarms-sound-v3";
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync(availabilityChannelId, {
       name: "Alarmas de disponibilidad",
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 350, 150, 350],
-      sound: "default",
+      sound: "tacoplan_disponibilidad_5.wav",
     });
   }
 
