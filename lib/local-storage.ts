@@ -1015,6 +1015,7 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
 
   // Revalidar sólo recuperaciones automáticas antiguas identificables.
   // Las marcadas manualmente carecen de recoveryRestStartAt: no tocarlas.
+  const recoveryJourneys = await getAllJornadas();
   const groupedAutomatic = new Map<string, Compensacion[]>();
   for (const item of list) {
     if (!item.compensada || !item.recoveryRestStartAt ||
@@ -1025,9 +1026,18 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
   }
   for (const group of groupedAutomatic.values()) {
     const duration = group[0].recoveryRestDurationMin!;
+    const sourceStart = group[0].recoveryRestStartAt!;
+    const precedingShift = recoveryJourneys.find(j => !!j.endAt &&
+      new Date(j.endAt).getTime() === new Date(sourceStart).getTime());
+    const dailyPlanned = precedingShift?.plannedRestType === "daily";
+    const canReduceDaily = dailyPlanned && precedingShift?.plannedRestMin === 9 * 60 &&
+      computeReducidosSinceLastWeeklyRest(
+        recoveryJourneys.filter(j => j.startAt < (precedingShift?.startAt ?? sourceStart))
+      ) < 3;
     const capacity = automaticCompensationCapacityMin(duration, {
-      kind: duration >= 45 * 60 ? "weekly_normal" : duration >= 24 * 60 ? "weekly_reduced" : "daily",
-      dailyBaseMin: 660,
+      kind: duration >= 45 * 60 ? "weekly_normal" : dailyPlanned ? "daily" :
+        duration >= 24 * 60 ? "weekly_reduced" : "daily",
+      dailyBaseMin: canReduceDaily ? 540 : 660,
     });
     const sorted = [...group]
       .filter(item => item.recoveryRestEndAt != null &&
