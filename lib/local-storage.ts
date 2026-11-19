@@ -1,3 +1,4 @@
+import { getLargeSafeItem, setLargeSafeItem, removeLargeSafeItem } from "./large-safe-storage";
 import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days, checkWeeklyRestSequence } from "./weekly-compensation";
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
@@ -35,15 +36,15 @@ function reportJornadaDateDebug(hypothesisId: string, location: string, msg: str
   void data;
 }
 async function getItemScoped(base: string): Promise<string | null> {
-  return AsyncStorage.getItem(await userScopedKey(base));
+  return getLargeSafeItem(await userScopedKey(base));
 }
 
 async function setItemScoped(base: string, value: string): Promise<void> {
-  await AsyncStorage.setItem(await userScopedKey(base), value);
+  await setLargeSafeItem(await userScopedKey(base), value);
 }
 
 async function removeItemScoped(base: string): Promise<void> {
-  await AsyncStorage.removeItem(await userScopedKey(base));
+  await removeLargeSafeItem(await userScopedKey(base));
 }
 
 export interface DietaItem {
