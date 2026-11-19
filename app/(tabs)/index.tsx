@@ -1077,6 +1077,10 @@ export default function DashboardScreen() {
     confirmedStart && (!resolvedAbierta || resolvedAbierta.id !== confirmedStart.id)
       ? confirmedStart : resolvedAbierta;
   const estado = estadoQuery.data;
+  // Operational/legal warnings are shown in the notification center, not as
+  // intrusive banners above the driver's active shift.
+  const currentLegalAlerts = estado?.alertas ?? [];
+  const currentLegalAlertCount = currentLegalAlerts.length;
 
   const isCrossSundayMonday = useMemo(() => {
     if (!abierta) return false;
@@ -2445,8 +2449,25 @@ export default function DashboardScreen() {
             <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.light.textSecondary, marginBottom: 10 }}>
               {activeInfractionsCount > 0
                 ? `Tienes ${activeInfractionsCount} posible${activeInfractionsCount === 1 ? " infracción" : "s infracciones"} de los últimos 56 días.`
+                : currentLegalAlertCount > 0 ? `Tienes ${currentLegalAlertCount} avisos legales actuales`
                 : unreadCount > 0 ? `Tienes ${unreadCount} sin leer` : "No tienes notificaciones pendientes"}
             </Text>
+
+            {currentLegalAlertCount > 0 && (
+              <View style={{ backgroundColor: "#3C2331", borderWidth: 1, borderColor: "#E05262", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <Ionicons name="warning" size={20} color="#FFB86C" />
+                  <Text style={{ color: "#FFFFFF", fontFamily: "Inter_700Bold", fontSize: 14, flex: 1 }}>
+                    Avisos actuales del estado legal ({currentLegalAlertCount})
+                  </Text>
+                </View>
+                {currentLegalAlerts.map((alerta, index) => (
+                  <Text key={index} style={{ color: "#F4CBD0", fontSize: 12, marginBottom: 6 }}>
+                    {alerta.mensaje}
+                  </Text>
+                ))}
+              </View>
+            )}
 
             {activeInfractionsCount > 0 && (
               <View style={{ backgroundColor: "#3C2331", borderWidth: 1, borderColor: "#E05262", borderRadius: 12, padding: 12, marginBottom: 12 }}>
@@ -2700,8 +2721,8 @@ export default function DashboardScreen() {
               hitSlop={8}
               style={[styles.headerActionButton, { marginLeft: 10 }]}
             >
-              <Ionicons name={activeInfractionsCount > 0 ? "notifications" : "notifications-outline"} size={24} color={activeInfractionsCount > 0 ? "#FF4D67" : "#FFFFFF"} />
-              {(unreadCount > 0 || activeInfractionsCount > 0) && (
+              <Ionicons name={activeInfractionsCount > 0 || currentLegalAlertCount > 0 ? "notifications" : "notifications-outline"} size={24} color={activeInfractionsCount > 0 || currentLegalAlertCount > 0 ? "#FF4D67" : "#FFFFFF"} />
+              {(unreadCount > 0 || activeInfractionsCount > 0 || currentLegalAlertCount > 0) && (
                 <View
                   style={{
                     position: "absolute",
@@ -2719,7 +2740,7 @@ export default function DashboardScreen() {
                   }}
                 >
                   <Text style={{ fontFamily: "Inter_700Bold", fontSize: 10, color: "#fff" }}>
-                    {unreadCount + activeInfractionsCount > 99 ? "99+" : String(unreadCount + activeInfractionsCount)}
+                    {unreadCount + activeInfractionsCount + currentLegalAlertCount > 99 ? "99+" : String(unreadCount + activeInfractionsCount + currentLegalAlertCount)}
                   </Text>
                 </View>
               )}
@@ -2742,13 +2763,7 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        {estado && estado.alertas.length > 0 && (
-          <View style={styles.alertSection}>
-            {estado.alertas.map((a, i) => (
-              <AlertBanner key={i} tipo={a.tipo} mensaje={a.mensaje} />
-            ))}
-          </View>
-        )}
+        {/* Current legal alerts live in the notification bell, not above the shift. */}
 
         {isMoroccoMode && ferryConfig.paymentMode === "morocco_trip" && (
           <Pressable
