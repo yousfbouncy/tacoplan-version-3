@@ -380,9 +380,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
       onComplete();
     } catch (err) {
       if (Platform.OS === "web") {
-        alert(t("common.error"));
+        alert(err instanceof Error ? err.message : t("common.error"));
       } else {
-        Alert.alert(t("common.error"));
+        Alert.alert(t("common.error"), err instanceof Error ? err.message : "No se ha podido guardar la configuración");
       }
     } finally {
       setSaving(false);
