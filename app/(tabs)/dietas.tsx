@@ -144,9 +144,17 @@ function DietasFeatureContent() {
     } catch {}
 
     if (!user) return;
-    try {
-      const [rates, extras] = await Promise.all([fetchDietRates(user.id), fetchDayExtras(user.id)]);
-      if (rates.length > 0) setCustomRates(rates as any);
+    // Independent fetches: one failed request must not discard the other.
+    // Keep the user's local saved settings when Supabase is unreachable.
+    const [ratesResult, extrasResult] = await Promise.allSettled([
+      fetchDietRates(user.id),
+      fetchDayExtras(user.id),
+    ]);
+    if (ratesResult.status === "fulfilled" && ratesResult.value.length > 0) {
+      setCustomRates(ratesResult.value as any);
+    }
+    if (extrasResult.status === "fulfilled") {
+      const extras = extrasResult.value;
       setDayExtras((prev) => {
         const e: any = extras || {};
         const pf = (v: any, fb: number) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
@@ -160,8 +168,16 @@ function DietasFeatureContent() {
           offsite_weekly_complete_internacional: pf(e.offsite_weekly_complete_internacional, prev.offsite_weekly_complete_internacional),
         };
       });
-    } catch (e) {
-      console.error("[DIETAS] Failed to load rates/extras from Supabase", e);
+    }
+    if (ratesResult.status === "rejected" || extrasResult.status === "rejected") {
+      // A network outage should not open the Expo red error overlay.
+      // No data is overwritten and the next focus retries automatically.
+      const diagnostic = (reason: unknown) =>
+        reason instanceof Error ? reason.message : String(reason);
+      console.warn("[DIETAS] Supabase config temporarily unavailable; keeping local values", {
+        rates: ratesResult.status === "rejected" ? diagnostic(ratesResult.reason) : "ok",
+        extras: extrasResult.status === "rejected" ? diagnostic(extrasResult.reason) : "ok",
+      });
     }
   }, [user]);
 
