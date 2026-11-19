@@ -1,5 +1,5 @@
 import React,{useCallback,useEffect,useState} from "react";
-import {ActivityIndicator,Alert,Platform,Pressable,ScrollView,Text,TextInput,View} from "react-native";
+import {ActivityIndicator,Pressable,ScrollView,Text,TextInput,View} from "react-native";
 import {supabase} from "@/lib/supabase";
 import {useAuth} from "@/lib/auth-context";
 
@@ -122,7 +122,7 @@ export default function ExistingAccountSetup({children}:{children:React.ReactNod
       </>:null}
       {error?<Text accessibilityRole="alert" style={{color:"#FFC5C5",fontSize:13}}>{error}</Text>:null}
       {notice?<Text accessibilityRole="alert" style={{color:"#B4F3D1",fontSize:13}}>{notice}</Text>:null}
-      <Pressable disabled={saving} onPress={()=>void save()} style={{backgroundColor:blue,borderRadius:12,padding:16,alignItems:"center",opacity:saving?.65:1}}>
+      <Pressable disabled={saving} onPress={()=>void save()} style={{backgroundColor:blue,borderRadius:12,padding:16,alignItems:"center",opacity:saving ? 0.65 : 1}}>
         <Text style={{color:"#FFFFFF",fontWeight:"800",fontSize:16}}>{saving?"Guardando…":"Guardar y continuar"}</Text>
       </Pressable>
       {notice?<Pressable onPress={()=>void check()} style={{padding:10,alignItems:"center"}}><Text style={{color:"#FFFFFF",textDecorationLine:"underline"}}>Ya he verificado mi correo: comprobar de nuevo</Text></Pressable>:null}
