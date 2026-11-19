@@ -2122,9 +2122,7 @@ export default function UsuarioScreen() {
           <View style={styles.card}>
             <SectionHeader title="Periodos" icon="calendar-outline" />
             {renderMenuList([
-              { key: "periodo", label: "Periodo de contabilización", icon: "calendar-outline" as const },
-              { key: "periodo", label: "Periodo dietas / pluses", icon: "cash-outline" as const },
-              { key: "periodo", label: "Ciclo de nómina", icon: "wallet-outline" as const },
+              { key: "periodo", label: "Periodo de contabilización (dietas, pluses y nómina)", icon: "calendar-outline" as const },
             ] as any)}
           </View>
         )}
