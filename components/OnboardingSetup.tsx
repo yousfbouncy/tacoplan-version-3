@@ -276,16 +276,16 @@ export default function OnboardingSetup({ onComplete }: Props) {
   // Exactly one step mounts at a time. Inputs retain values in component state
   // when moving back and forth, and nothing is written until the final save.
   const steps = [
-    {id:"account",title:"Datos de acceso"},
-    {id:"profile",title:"Perfil de conductor"},
-    {id:"zone",title:"Zona de trabajo"},
-    {id:"trips",title:"Tipos de viaje"},
-    {id:"base",title:"Lugar de base"},
-    {id:"diets",title:"Dietas"},
-    {id:"extras",title:"Complementos y descansos fuera de base"},
-    ...(showUserPaymentSection ? [{id:"paymentStandard",title:"Forma de remuneración"}] : []),
-    {id:"period",title:"Periodo de cálculo"},
-    ...(showPaymentSection ? [{id:"paymentSpecial",title:"Tarifas de viaje"}] : []),
+    {id:"account",title:t("wizard.account")},
+    {id:"profile",title:t("wizard.profile")},
+    {id:"zone",title:t("wizard.zone")},
+    {id:"trips",title:t("wizard.trips")},
+    {id:"base",title:t("wizard.base")},
+    {id:"diets",title:t("wizard.diets")},
+    {id:"extras",title:t("wizard.extras")},
+    ...(showUserPaymentSection ? [{id:"paymentStandard",title:t("wizard.paymentStandard")}] : []),
+    {id:"period",title:t("wizard.period")},
+    ...(showPaymentSection ? [{id:"paymentSpecial",title:t("wizard.paymentSpecial")}] : []),
   ];
   const stepIndex = Math.max(0,steps.findIndex(item=>item.id===step));
   const activeStep = steps[stepIndex].id;
@@ -300,21 +300,21 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const nextStep = () => {
     const errs:string[]=[];
     if(activeStep==="account"){
-      if(!driverName.trim())errs.push("Es obligatorio indicar tu nombre y apellidos");
-      if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim()))errs.push("Indica un correo electrónico válido");
+      if(!driverName.trim())errs.push(t("wizard.nameRequired"));
+      if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim()))errs.push(t("wizard.emailInvalid"));
       if(needsAccountPassword){
-        if(newPassword.length<8)errs.push("La contraseña debe tener al menos 8 caracteres");
-        if(newPassword!==confirmPassword)errs.push("Las contraseñas no coinciden");
+        if(newPassword.length<8)errs.push(t("wizard.passwordShort"));
+        if(newPassword!==confirmPassword)errs.push(t("wizard.passwordMismatch"));
       }
     }
     if(activeStep==="profile"&&!profile)errs.push(t("onboarding.errorProfile"));
     if(activeStep==="zone"&&!zone)errs.push(t("onboarding.errorZone"));
     if(activeStep==="trips"&&!Object.values(tripTypes).some(Boolean))errs.push(t("onboarding.errorTripType"));
     if(activeStep==="base"){
-      if(!baseLocation.base_name.trim())errs.push("Indica el nombre de tu base");
-      if(!baseLocation.base_city.trim())errs.push("Indica la ciudad de tu base");
-      if(!baseLocation.base_country.trim())errs.push("Indica el país de tu base");
-      if(!(parseFloat(baseLocation.base_radius_km.replace(",","."))>0))errs.push("El radio de base debe ser mayor que 0");
+      if(!baseLocation.base_name.trim())errs.push(t("wizard.baseNameRequired"));
+      if(!baseLocation.base_city.trim())errs.push(t("wizard.baseCityRequired"));
+      if(!baseLocation.base_country.trim())errs.push(t("wizard.baseCountryRequired"));
+      if(!(parseFloat(baseLocation.base_radius_km.replace(",","."))>0))errs.push(t("wizard.baseRadiusRequired"));
     }
     if(activeStep==="period"){
       if(!periodMode)errs.push(t("onboarding.errorPeriod"));
@@ -325,7 +325,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
     }
     if(activeStep==="paymentSpecial"&&payment.mode!=="morocco_diet"){
       const value=parseFloat(payment.mode==="morocco_trip"?payment.tripRate:payment.pernightRate);
-      if(!Number.isFinite(value)||value<=0)errs.push("Indica una tarifa válida, mayor que cero");
+      if(!Number.isFinite(value)||value<=0)errs.push(t("wizard.specialRateRequired"));
     }
     if(errs.length){setErrors(errs);return;}
     moveStep(stepIndex+1);
@@ -337,20 +337,20 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
   function validate(): string[] {
     const errs: string[] = [];
-    if (!driverName.trim()) errs.push("Es obligatorio indicar tu nombre y apellidos");
+    if (!driverName.trim()) errs.push(t("wizard.nameRequired"));
     if (!accountEmail.trim()) errs.push("Indica tu correo electrónico");
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(accountEmail.trim())) errs.push("Introduce un correo electrónico válido");
     if (needsAccountPassword) {
       if (newPassword.length < 8) errs.push("Crea una contraseña de al menos 8 caracteres");
-      if (newPassword !== confirmPassword) errs.push("Las contraseñas no coinciden");
+      if (newPassword !== confirmPassword) errs.push(t("wizard.passwordMismatch"));
     }
     if (!profile) errs.push(t("onboarding.errorProfile"));
     if (!zone) errs.push(t("onboarding.errorZone"));
-    if (!baseLocation.base_name.trim()) errs.push("Indica el nombre de tu base");
-    if (!baseLocation.base_city.trim()) errs.push("Indica la ciudad de tu base");
-    if (!baseLocation.base_country.trim()) errs.push("Indica el país de tu base");
+    if (!baseLocation.base_name.trim()) errs.push(t("wizard.baseNameRequired"));
+    if (!baseLocation.base_city.trim()) errs.push(t("wizard.baseCityRequired"));
+    if (!baseLocation.base_country.trim()) errs.push(t("wizard.baseCountryRequired"));
     const baseRadius = parseFloat(baseLocation.base_radius_km.replace(",", "."));
-    if (!Number.isFinite(baseRadius) || baseRadius <= 0) errs.push("El radio de base debe ser mayor que 0");
+    if (!Number.isFinite(baseRadius) || baseRadius <= 0) errs.push(t("wizard.baseRadiusRequired"));
     if (!tripTypes.nacional && !tripTypes.internacional && !tripTypes.morocco && !tripTypes.ferry)
       errs.push(t("onboarding.errorTripType"));
     if (!periodMode) errs.push(t("onboarding.errorPeriod"));
@@ -572,25 +572,25 @@ export default function OnboardingSetup({ onComplete }: Props) {
           <Ionicons name="settings-outline" size={32} color={Colors.light.tint} />
           <Text style={s.title}>{t("onboarding.title")}</Text>
           <Text style={s.subtitle}>{t("onboarding.subtitle")}</Text>
-          <Text style={{color:Colors.light.tint,fontWeight:"700",marginTop:12}}>Paso {stepIndex+1} de {steps.length} · {steps[stepIndex].title}</Text>
+          <Text style={{color:Colors.light.tint,fontWeight:"700",marginTop:12}}>{t("wizard.step")} {stepIndex+1} {t("wizard.of")} {steps.length} · {steps[stepIndex].title}</Text>
         </View>
 
                   {activeStep === "account" && <>
 <View style={{ marginBottom: 20 }}>
-          <Text style={s.inputLabel}>Nombre y apellidos *</Text>
+          <Text style={s.inputLabel}>{t("wizard.name")}</Text>
           <TextInput
             accessibilityLabel="Nombre y apellidos, obligatorio"
             value={driverName}
             onChangeText={setDriverName}
-            placeholder="Escribe tu nombre y apellidos"
+            placeholder={t("wizard.namePlaceholder")}
             placeholderTextColor="#8292A6"
             autoCapitalize="words"
             autoCorrect={false}
             maxLength={100}
             style={[s.input, { minHeight: 48 }]}
           />
-          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Obligatorio para completar tu configuración inicial.</Text>
-          <Text style={[s.inputLabel, { marginTop: 14 }]}>Correo electrónico *</Text>
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{t("wizard.nameExplanation")}</Text>
+          <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.email")}</Text>
           <TextInput
             accessibilityLabel="Correo de la cuenta"
             value={accountEmail}
@@ -600,9 +600,9 @@ export default function OnboardingSetup({ onComplete }: Props) {
             autoCapitalize="none"
             style={[s.input, { minHeight: 48, opacity: 0.85 }]}
           />
-          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? "Escribe tu correo personal para poder entrar también en Android. Tendrás que confirmarlo por correo antes de usarlo." : "Correo de la cuenta con la que has iniciado sesión."}</Text>
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? "Escribe tu correo personal para poder entrar también en Android. Tendrás que confirmarlo por correo antes de usarlo." : t("wizard.emailExplanation")}</Text>
           {needsAccountPassword ? <>
-            <Text style={[s.inputLabel, { marginTop: 14 }]}>Crear contraseña *</Text>
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.password")}</Text>
             <TextInput
               accessibilityLabel="Crear contraseña para acceder con correo"
               value={newPassword}
@@ -611,11 +611,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
               autoCapitalize="none"
               autoCorrect={false}
               textContentType="newPassword"
-              placeholder="Mínimo 8 caracteres"
+              placeholder={t("wizard.passwordPlaceholder")}
               placeholderTextColor="#8292A6"
               style={[s.input, { minHeight: 48 }]}
             />
-            <Text style={[s.inputLabel, { marginTop: 14 }]}>Repetir contraseña *</Text>
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.passwordAgain")}</Text>
             <TextInput
               accessibilityLabel="Confirmar contraseña"
               value={confirmPassword}
@@ -624,11 +624,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
               autoCapitalize="none"
               autoCorrect={false}
               textContentType="newPassword"
-              placeholder="Confirma tu contraseña"
+              placeholder={t("wizard.passwordAgainPlaceholder")}
               placeholderTextColor="#8292A6"
               style={[s.input, { minHeight: 48 }]}
             />
-            <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Con esta contraseña podrás entrar también con correo, además de Google o Apple. No se guarda en la configuración de Tacoplan.</Text>
+            <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{t("wizard.passwordExplanation")}</Text>
           </> : null}
         </View>
                   </>}
@@ -690,13 +690,13 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
                   </>}
           {activeStep === "base" && <>
-<SectionHeader title="Lugar de base" icon="business-outline" />
+<SectionHeader title=t("wizard.base") icon="business-outline" />
         <Text style={s.subtitleInline}>
-          Indica tu lugar de base para mejorar el cálculo de descansos semanales, descansos fuera de base y compensaciones.
+          {t("wizard.baseHelp")}
         </Text>
         <View style={s.gridContainer}>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>Nombre de la base</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseName")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_name}
@@ -1039,7 +1039,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
         <View style={{flexDirection:"row",gap:10}}>
           {stepIndex>0?<Pressable accessibilityRole="button" onPress={()=>moveStep(stepIndex-1)} disabled={saving}
             style={{flex:1,borderWidth:1,borderColor:Colors.light.tint,borderRadius:12,minHeight:50,alignItems:"center",justifyContent:"center"}}>
-            <Text style={{fontSize:16,fontWeight:"700",color:Colors.light.tint}}>Atrás</Text>
+            <Text style={{fontSize:16,fontWeight:"700",color:Colors.light.tint}}>{t("wizard.back")}</Text>
           </Pressable>:null}
           <Pressable
           accessibilityRole="button"
@@ -1052,7 +1052,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
           ) : (
             <>
               <Ionicons name={isLastStep?"checkmark-circle-outline":"arrow-forward"} size={20} color="#fff" />
-              <Text style={s.saveButtonText}>{isLastStep?t("onboarding.saveButton"):"Siguiente"}</Text>
+              <Text style={s.saveButtonText}>{isLastStep?t("onboarding.saveButton") : t("wizard.next")}</Text>
             </>
           )}
           </Pressable>
