@@ -14,13 +14,7 @@ export function formatFechaES(dateStr: string): string {
   }
 }
 
-/**
- * Ventana retrospectiva de inspección/policía (52 días hacia atrás).
- * Se filtra por FECHA DE LA JORNADA ASOCIADA (fechaInicio), NO por fechaLimite.
- * Cualquier compensación derivada de una jornada >52d de antigüedad se considera
- * FUERA DE VIGILANCIA ACTIVA:
- *   → NO suma, NO warning, NO infracción en UI (sigue en BBDD).
- */
+/** Ventana retrospectiva sólo para información de inspección, nunca para extinguir deudas. */
 export function policeWindowStart(dateRef: Date = new Date()): string {
   const d = new Date(Date.UTC(
     dateRef.getUTCFullYear(),
@@ -33,18 +27,13 @@ export function policeWindowStart(dateRef: Date = new Date()): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Toda compensación no abonada sigue pendiente, aunque hayan pasado 52 días. */
 export function isCompWithinPoliceWindow(
   c: Compensacion,
-  allJornadas: Jornada[],
-  dateRef: Date = new Date(),
+  _allJornadas: Jornada[],
+  _dateRef: Date = new Date(),
 ): boolean {
-  if (c.compensada) return false;
-  const start = policeWindowStart(dateRef);
-  if (c.jornadaId) {
-    const j = allJornadas.find((x) => x.id === c.jornadaId);
-    if (j) return j.fechaInicio >= start;
-  }
-  return c.fechaLimite >= start;
+  return !c.compensada;
 }
 
 export interface LegalInfraction {
