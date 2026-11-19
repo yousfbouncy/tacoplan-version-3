@@ -19,6 +19,7 @@ import { useI18n } from "@/lib/i18n-context";
 import { userScopedKey } from "@/lib/user-scope";
 import { useAuth } from "@/lib/auth-context";
 import { markOnboardingCompleted, saveUserConfig } from "@/lib/config-service";
+import { supabase } from "@/lib/supabase";
 
 const SETTINGS_KEY = "tacoplan_user_settings";
 const PERIOD_KEY = "tacoplan_period_config";
@@ -124,6 +125,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<DriverProfile | null>(null);
+  const [driverName, setDriverName] = useState("");
   const [zone, setZone] = useState<OperationZone | null>(null);
   const [tripTypes, setTripTypes] = useState<TripTypes>({
     nacional: false,
@@ -168,8 +170,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
           AsyncStorage.getItem(await userScopedKey(PERIOD_KEY, userId)),
           AsyncStorage.getItem(await userScopedKey(FERRY_KEY, userId)),
         ]);
+        if (user?.name?.trim()) setDriverName(user.name.trim());
         if (settingsRaw) {
           const s = JSON.parse(settingsRaw);
+          if (typeof s.driver_name === "string" && s.driver_name.trim()) setDriverName(s.driver_name.trim());
           setDiets({
             nac_100: s.nac_100 ?? DEFAULT_DIETS.nac_100,
             nac_60: s.nac_60 ?? DEFAULT_DIETS.nac_60,
@@ -244,6 +248,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
 
   function validate(): string[] {
     const errs: string[] = [];
+    if (!driverName.trim()) errs.push("Es obligatorio indicar tu nombre y apellidos");
     if (!profile) errs.push(t("onboarding.errorProfile"));
     if (!zone) errs.push(t("onboarding.errorZone"));
     if (!baseLocation.base_name.trim()) errs.push("Indica el nombre de tu base");
@@ -326,6 +331,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
         price_per_trip_nacional: pricePerTripNac,
         price_per_trip_internacional: pricePerTripIntl,
         price_per_trip_regional: pricePerTripReg,
+        driver_name: driverName.trim(),
         driver_profile: profile,
         operation_zone: zone,
         trip_types: tripTypes,
@@ -357,6 +363,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
         ferryRestEnabled: profile === "ferry",
       };
       await saveUserConfig(userId, { settings: userSettings, period: periodConfig, ferry: ferryConfig });
+      const { error: nameError } = await supabase.from("profiles").upsert({ id:userId, display_name:driverName.trim(), name:driverName.trim(), updated_at:new Date().toISOString() } as any,{onConflict:"id"});
+      if (nameError) throw new Error("No se ha podido guardar tu nombre. Comprueba la conexión e inténtalo de nuevo.");
 
       const onboardingData = {
         completed: true,
@@ -452,6 +460,21 @@ export default function OnboardingSetup({ onComplete }: Props) {
           <Text style={s.subtitle}>{t("onboarding.subtitle")}</Text>
         </View>
 
+        <View style={{ marginBottom: 20 }}>
+          <Text style={s.inputLabel}>Nombre y apellidos *</Text>
+          <TextInput
+            accessibilityLabel="Nombre y apellidos, obligatorio"
+            value={driverName}
+            onChangeText={setDriverName}
+            placeholder="Escribe tu nombre y apellidos"
+            placeholderTextColor="#8292A6"
+            autoCapitalize="words"
+            autoCorrect={false}
+            maxLength={100}
+            style={[s.input, { minHeight: 48 }]}
+          />
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Obligatorio para completar tu configuración inicial.</Text>
+        </View>
         <SectionHeader title={t("onboarding.sectionProfile")} icon="person-outline" />
         <View style={s.optionRow}>
           {profileOptions.map((opt) => (
