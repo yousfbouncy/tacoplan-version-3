@@ -119,11 +119,11 @@ function AuthGate() {
         if (Platform.OS === "android") {
           // Android notification-channel settings persist after creation.
           // A dedicated channel avoids mixing traffic assignments with shifts.
-          await Notifications.setNotificationChannelAsync("traffic-assigned-v1", {
+          await Notifications.setNotificationChannelAsync("traffic-assigned-v2", {
             name: "Nuevos viajes de Tráfico",
             importance: Notifications.AndroidImportance.MAX,
             vibrationPattern: [0, 180, 90, 180, 90, 180, 90, 270],
-            sound: "tacoplan_viaje.wav",
+            sound: "tacoplan_viaje_3.wav",
           });
         }
 
