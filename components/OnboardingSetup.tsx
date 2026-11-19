@@ -126,6 +126,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [driverName, setDriverName] = useState("");
+  const [accountEmail, setAccountEmail] = useState(user?.email ?? "");
+  const [needsAccountPassword, setNeedsAccountPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [zone, setZone] = useState<OperationZone | null>(null);
   const [tripTypes, setTripTypes] = useState<TripTypes>({
     nacional: false,
@@ -161,6 +165,23 @@ export default function OnboardingSetup({ onComplete }: Props) {
   });
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.auth.getUser().then(({data,error})=>{
+      if(!active || error || !data.user || data.user.id !== userId) return;
+      setAccountEmail(data.user.email || user?.email || "");
+      const providers: string[] = Array.isArray(data.user.app_metadata?.providers) ? data.user.app_metadata.providers : [];
+      const oauth = providers.includes("google") || providers.includes("apple") ||
+        data.user.app_metadata?.provider === "google" || data.user.app_metadata?.provider === "apple";
+      const emailIdentity = providers.includes("email") ||
+        data.user.identities?.some(identity=>identity.provider === "email") === true;
+      setNeedsAccountPassword(oauth && !emailIdentity);
+      const cloudName = String(data.user.user_metadata?.full_name || data.user.user_metadata?.name || "").trim();
+      if(cloudName) setDriverName(previous=>previous.trim() ? previous : cloudName);
+    }).catch(()=>{});
+    return()=>{ active=false; };
+  },[userId,user?.email]);
 
   useEffect(() => {
     (async () => {
@@ -249,6 +270,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
   function validate(): string[] {
     const errs: string[] = [];
     if (!driverName.trim()) errs.push("Es obligatorio indicar tu nombre y apellidos");
+    if (!accountEmail.trim()) errs.push("No se ha podido obtener el correo de tu cuenta");
+    if (needsAccountPassword) {
+      if (newPassword.length < 8) errs.push("Crea una contraseña de al menos 8 caracteres");
+      if (newPassword !== confirmPassword) errs.push("Las contraseñas no coinciden");
+    }
     if (!profile) errs.push(t("onboarding.errorProfile"));
     if (!zone) errs.push(t("onboarding.errorZone"));
     if (!baseLocation.base_name.trim()) errs.push("Indica el nombre de tu base");
@@ -315,6 +341,15 @@ export default function OnboardingSetup({ onComplete }: Props) {
       if (!userId) {
         Alert.alert(t("common.error"), t("common.notAuthenticated"));
         return;
+      }
+      if (needsAccountPassword) {
+        // Adds email/password sign-in to an OAuth account without replacing Google/Apple login.
+        // Supabase Auth stores the password securely; do not save it in profiles or AsyncStorage.
+        const {error:passwordError} = await supabase.auth.updateUser({password:newPassword});
+        if (passwordError) throw new Error("No se ha podido configurar la contraseña: " + passwordError.message);
+        setNeedsAccountPassword(false);
+        setNewPassword("");
+        setConfirmPassword("");
       }
       const existingRaw = await AsyncStorage.getItem(await userScopedKey(SETTINGS_KEY, userId));
       const existingSettings = existingRaw ? JSON.parse(existingRaw) : {};
@@ -474,6 +509,45 @@ export default function OnboardingSetup({ onComplete }: Props) {
             style={[s.input, { minHeight: 48 }]}
           />
           <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Obligatorio para completar tu configuración inicial.</Text>
+          <Text style={[s.inputLabel, { marginTop: 14 }]}>Correo electrónico *</Text>
+          <TextInput
+            accessibilityLabel="Correo de la cuenta"
+            value={accountEmail}
+            editable={false}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={[s.input, { minHeight: 48, opacity: 0.85 }]}
+          />
+          <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Correo asociado a tu inicio de sesión. Si usas «Ocultar mi correo» de Apple, aparecerá la dirección privada proporcionada por Apple.</Text>
+          {needsAccountPassword ? <>
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>Crear contraseña *</Text>
+            <TextInput
+              accessibilityLabel="Crear contraseña para acceder con correo"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="newPassword"
+              placeholder="Mínimo 8 caracteres"
+              placeholderTextColor="#8292A6"
+              style={[s.input, { minHeight: 48 }]}
+            />
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>Repetir contraseña *</Text>
+            <TextInput
+              accessibilityLabel="Confirmar contraseña"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="newPassword"
+              placeholder="Confirma tu contraseña"
+              placeholderTextColor="#8292A6"
+              style={[s.input, { minHeight: 48 }]}
+            />
+            <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>Con esta contraseña podrás entrar también con correo, además de Google o Apple. No se guarda en la configuración de Tacoplan.</Text>
+          </> : null}
         </View>
         <SectionHeader title={t("onboarding.sectionProfile")} icon="person-outline" />
         <View style={s.optionRow}>
