@@ -47,36 +47,24 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
 
     const log = await loadDriverActivities(userId, shiftId);
     const active = log.segments.findLast(s => s.endedAt === null);
-    const autoRestKey = `@tacoplan/driving-autostart/rest:${userId}:${shiftId}`;
-
     if (result.transition === "REST") {
-      // Stop at the first valid GPS fix below 6 km/h. Only transition from
-      // an actual active drive, never overwrite WORK, AVAILABLE or manual REST.
+      // Immediately turn a running drive into REST at the first accurate fix
+      // below 6 km/h. Do not change manually selected WORK or AVAILABLE.
       if (active?.type !== "DRIVING") continue;
       const effectiveTime = new Date(Math.max(fix.timestamp, Date.parse(active.startedAt)));
       const next = changeDriverActivity(log, "REST", effectiveTime);
-      if (next !== log) {
-        await saveDriverActivities(userId, next);
-        const startedAt = next.segments.findLast(s => s.endedAt === null)?.startedAt;
-        if (startedAt) await AsyncStorage.setItem(autoRestKey, startedAt);
-      }
+      if (next !== log) await saveDriverActivities(userId, next);
       continue;
     }
 
-    // >=15 km/h for 60 seconds. Backdate to confirmed moving start without
-    // overlapping the current activity. Never close a manually selected REST.
-    const marker = await AsyncStorage.getItem(autoRestKey);
-    const autoRest = active?.type === "REST" && !!marker && marker === active.startedAt;
+    // After 60 seconds at >=15 km/h end the current activity (including REST).
+    // Backdate the activity switch to the first confirmed moving fix so a
+    // short GPS confirmation delay does not falsely count as a rest.
     if (active?.type === "DRIVING") continue;
-    if (active && !autoRest && active.type !== "REST") continue;
-    if (active?.type === "REST" && !autoRest) continue;
     const movementStart = result.movementStart ?? fix.timestamp;
     const earliest = active ? Date.parse(active.startedAt) : 0;
     const next = changeDriverActivity(log, "DRIVING", new Date(Math.max(movementStart, earliest)));
-    if (next !== log) {
-      await saveDriverActivities(userId, next);
-      if (autoRest) await AsyncStorage.removeItem(autoRestKey);
-    }
+    if (next !== log) await saveDriverActivities(userId, next);
   }
 }
 function enqueue(fixes: Fix[]) {
@@ -116,6 +104,14 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
     if (background.granted && await TaskManager.isAvailableAsync()) {
       foreground?.remove();
       foreground = null;
+      // Re-register an existing background task once after this update:
+      // the previous APK may still have 10s/10m location options.
+      const configKey = "@tacoplan/driving-autostart/location-config-v2";
+      const started = await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK);
+      const currentConfig = await AsyncStorage.getItem(configKey);
+      if (started && currentConfig !== "high-accuracy-v2") {
+        await Location.stopLocationUpdatesAsync(DRIVING_TASK);
+      }
       if (!await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
         await Location.startLocationUpdatesAsync(DRIVING_TASK, {
           accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0,
@@ -124,6 +120,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
             notificationBody: "Detectando conducción durante la jornada" },
           pausesUpdatesAutomatically: false,
         });
+        await AsyncStorage.setItem(configKey, "high-accuracy-v2");
       }
     } else {
       if (await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
