@@ -415,8 +415,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
         // The email is part of Supabase Auth: verification must complete before
         // password login can use it. Never simply store an unverified address.
         const {error:emailError} = await supabase.auth.updateUser({email:accountEmail.trim()});
-        if (emailError) throw new Error("No se ha podido solicitar el cambio de correo: "+emailError.message);
-        const notice = "Te hemos enviado un correo de confirmación. Verifica la nueva dirección y vuelve a la configuración para terminar de establecer la contraseña.";
+        if (emailError) throw new Error(t("wizard.emailSaveError")+": "+emailError.message);
+        const notice = t("wizard.emailVerificationNotice");
         if (Platform.OS === "web") alert(notice); else Alert.alert("Verifica tu correo",notice);
         return;
       }
@@ -424,7 +424,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
         // Adds email/password sign-in to an OAuth account without replacing Google/Apple login.
         // Supabase Auth stores the password securely; do not save it in profiles or AsyncStorage.
         const {error:passwordError} = await supabase.auth.updateUser({password:newPassword, data:{tacoplan_password_enabled:true}});
-        if (passwordError) throw new Error("No se ha podido configurar la contraseña: " + passwordError.message);
+        if (passwordError) throw new Error(t("wizard.passwordSaveError")+": " + passwordError.message);
         setNeedsAccountPassword(false);
         setNewPassword("");
         setConfirmPassword("");
@@ -477,7 +477,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
       };
       await saveUserConfig(userId, { settings: userSettings, period: periodConfig, ferry: ferryConfig });
       const { error: nameError } = await supabase.from("profiles").upsert({ id:userId, display_name:driverName.trim(), name:driverName.trim(), updated_at:new Date().toISOString() } as any,{onConflict:"id"});
-      if (nameError) throw new Error("No se ha podido guardar tu nombre. Comprueba la conexión e inténtalo de nuevo.");
+      if (nameError) throw new Error(t("wizard.nameSaveError"));
 
       const onboardingData = {
         completed: true,
@@ -495,7 +495,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
       if (Platform.OS === "web") {
         alert(err instanceof Error ? err.message : t("common.error"));
       } else {
-        Alert.alert(t("common.error"), err instanceof Error ? err.message : "No se ha podido guardar la configuración");
+        Alert.alert(t("common.error"), err instanceof Error ? err.message : t("wizard.saveError"));
       }
     } finally {
       setSaving(false);
@@ -579,7 +579,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
 <View style={{ marginBottom: 20 }}>
           <Text style={s.inputLabel}>{t("wizard.name")}</Text>
           <TextInput
-            accessibilityLabel="Nombre y apellidos, obligatorio"
+            accessibilityLabel={t("wizard.nameAccessibility")}
             value={driverName}
             onChangeText={setDriverName}
             placeholder={t("wizard.namePlaceholder")}
@@ -592,7 +592,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
           <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{t("wizard.nameExplanation")}</Text>
           <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.email")}</Text>
           <TextInput
-            accessibilityLabel="Correo de la cuenta"
+            accessibilityLabel={t("wizard.emailAccessibility")}
             value={accountEmail}
             onChangeText={setAccountEmail}
             editable={oauthProvider === "apple"}
@@ -604,7 +604,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
           {needsAccountPassword ? <>
             <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.password")}</Text>
             <TextInput
-              accessibilityLabel="Crear contraseña para acceder con correo"
+              accessibilityLabel={t("wizard.passwordAccessibility")}
               value={newPassword}
               onChangeText={setNewPassword}
               secureTextEntry
@@ -617,7 +617,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
             />
             <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.passwordAgain")}</Text>
             <TextInput
-              accessibilityLabel="Confirmar contraseña"
+              accessibilityLabel={t("wizard.passwordAgainAccessibility")}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry
@@ -706,7 +706,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
             />
           </View>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>Ciudad</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseCity")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_city}
@@ -716,17 +716,17 @@ export default function OnboardingSetup({ onComplete }: Props) {
             />
           </View>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>País</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseCountry")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_country}
               onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_country: val }))}
-              placeholder="España"
+              placeholder={t("wizard.baseCountry")}
               placeholderTextColor={Colors.light.textSecondary}
             />
           </View>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>Radio base</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseRadius")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_radius_km}
@@ -737,17 +737,17 @@ export default function OnboardingSetup({ onComplete }: Props) {
             />
           </View>
           <View style={[s.gridItem, { width: "100%" as any }]}>
-            <Text style={s.inputLabel}>Dirección opcional</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseAddress")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_address}
               onChangeText={(val) => setBaseLocation((prev) => ({ ...prev, base_address: val }))}
-              placeholder="Calle, polígono o centro operativo"
+              placeholder={t("wizard.baseAddressPlaceholder")}
               placeholderTextColor={Colors.light.textSecondary}
             />
           </View>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>Latitud opcional</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseLatitude")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_latitude}
@@ -758,7 +758,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
             />
           </View>
           <View style={s.gridItem}>
-            <Text style={s.inputLabel}>Longitud opcional</Text>
+            <Text style={s.inputLabel}>{t("wizard.baseLongitude")}</Text>
             <TextInput
               style={s.input}
               value={baseLocation.base_longitude}
