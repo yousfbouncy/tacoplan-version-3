@@ -1,3 +1,4 @@
+import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations } from "./weekly-compensation";
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
@@ -381,24 +382,14 @@ function policeWindowStart(dateRef: Date = new Date()): string {
 }
 function isCompWithinPoliceWindow(
   c: Compensacion,
-  allJornadas: Jornada[],
-  dateRef: Date = new Date(),
+  _allJornadas: Jornada[],
+  _dateRef: Date = new Date(),
 ): boolean {
-  if (c.compensada) return false;
-  const start = policeWindowStart(dateRef);
-  if (c.jornadaId) {
-    const j = allJornadas.find((x) => x.id === c.jornadaId);
-    if (j) return j.fechaInicio >= start;
-  }
-  // fallback: si no hay jornada asociada, usamos fechaLimite para no perder
-  return c.fechaLimite >= start;
+  // La ventana de inspección no extingue una compensación aún pendiente.
+  return !c.compensada;
 }
 
-/**
- * Semana natural UTC (lunes 00:00 -> domingo 23:59).
- * Usado para agrupar descansos semanales reducidos: dentro de una MISMA SEMANA
- * solo el ÚLTIMO de ellos genera deuda compensable.
- */
+/** Devuelve el lunes de una semana UTC, para los límites reglamentarios. */
 function getUtcWeekMonday(iso: string): string {
   const d = new Date(iso);
   const day = d.getUTCDay(); // 0=domingo, 1=lunes, ..., 6=sábado
@@ -1020,29 +1011,34 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
   let changed = false;
   const now = new Date().toISOString();
 
-  // 1) Desmarcar compensaciones "compensadas=true" SOLAMENTE SI FUERON
-  //    MARCADAS POR EL ALGORITMO ANTIGUO ERRÓNEO.
-  //    CRITERIO DE INVIOLABILIDAD:
-  //      Si recoveredInJornadaId == null → MARCADA MANUALMENTE POR USUARIO.
-  //                                           NUNCA LA TOCAMOS (prevalece el usuario).
-  //      Si recoveredInJornadaId != null → marcada por el código automático.
-  //    Umbral LEGAL correcto: recoveryRestDurationMin >= 24h + deudaMin de C/U.
-  for (const c of list) {
-    if (!c.compensada) continue;
-    // 👉 MARCA MANUAL DE USUARIO: NO TOCAR NUNCA.
-    if (c.recoveredInJornadaId == null) continue;
-    // 👉 Aquí sólo llega lo marcado automáticamente.
-    const deudaMin = c.horasDeuda * 60 + c.minutosDeuda;
-    const umbralLegalMin = 24 * 60 + deudaMin;  // semanal minimo (24h) + deuda que compensa
-    if (deudaMin > 0 && (c.recoveryRestDurationMin == null || c.recoveryRestDurationMin < umbralLegalMin)) {
-      c.compensada = false;
-      c.fechaCompensacion = null;
-      c.recoveredInJornadaId = null;
-      c.recoveryRestStartAt = null;
-      c.recoveryRestEndAt = null;
-      c.recoveryRestDurationMin = null;
-      c.updatedAt = now;
-      c.syncStatus = "pending";
+  // Revalidar sólo recuperaciones automáticas antiguas identificables.
+  // Las marcadas manualmente carecen de recoveryRestStartAt: no tocarlas.
+  const groupedAutomatic = new Map<string, Compensacion[]>();
+  for (const item of list) {
+    if (!item.compensada || !item.recoveryRestStartAt ||
+        item.recoveryRestDurationMin == null) continue;
+    const group = groupedAutomatic.get(item.recoveryRestStartAt) ?? [];
+    group.push(item);
+    groupedAutomatic.set(item.recoveryRestStartAt, group);
+  }
+  for (const group of groupedAutomatic.values()) {
+    const duration = group[0].recoveryRestDurationMin!;
+    const capacity = automaticCompensationCapacityMin(duration);
+    const sorted = [...group].sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+    const paid = new Set(allocateWholeCompensations(
+      sorted.map(c => ({ id: c.id, min: c.horasDeuda * 60 + c.minutosDeuda })),
+      capacity,
+    ));
+    for (const item of group) {
+      if (paid.has(item.id)) continue;
+      item.compensada = false;
+      item.fechaCompensacion = null;
+      item.recoveredInJornadaId = null;
+      item.recoveryRestStartAt = null;
+      item.recoveryRestEndAt = null;
+      item.recoveryRestDurationMin = null;
+      item.updatedAt = now;
+      item.syncStatus = "pending";
       changed = true;
     }
   }
@@ -1149,9 +1145,7 @@ async function getAllCompensaciones(): Promise<Compensacion[]> {
   if (loadedJornadasForNorm === null) {
     try { loadedJornadasForNorm = await getAllJornadas(); } catch { loadedJornadasForNorm = []; }
   }
-  const normalized = await normalizeHistoricalCompensaciones(mergedCleaned, loadedJornadasForNorm);
-  if (normalized) changed = true;
-
+  // Sin normalización destructiva de descansos semanales históricos.
   if (changed) {
     await saveAllCompensaciones(mergedCleaned);
     return mergedCleaned;
@@ -1718,120 +1712,8 @@ function computeDerivedFields(
  *
  * @returns true si hubo mutaciones en `comps` (el llamante debe persistir).
  */
-async function normalizeHistoricalCompensaciones(
-  comps: Compensacion[],
-  allJornadas: Jornada[],
-): Promise<boolean> {
-  const now = new Date().toISOString();
-
-  // PASO 0: Construir todos los WeeklyRestSlot históricos a partir de jornadas.
-  type WeeklyRestSlot = {
-    jornadaId: string;
-    fechaInicioJornada: string;
-    restStartAt: string;
-    restEndAt: string;
-    restDurationMin: number;
-    isReduced: boolean;
-    inBase: boolean;
-  };
-  const slots: WeeklyRestSlot[] = [];
-
-  for (const j of allJornadas) {
-    if (!j.previousRestStartAt || !j.previousRestEndAt) continue;
-    const gap = j.descansoAnteriorMin ??
-      Math.max(0, Math.round((new Date(j.previousRestEndAt).getTime() - new Date(j.previousRestStartAt).getTime()) / 60000));
-    const tipo = j.tipoDescansoAnterior ?? clasificarDescanso(gap);
-    slots.push({
-      jornadaId: j.id,
-      fechaInicioJornada: j.fechaInicio,
-      restStartAt: j.previousRestStartAt,
-      restEndAt: j.previousRestEndAt,
-      restDurationMin: gap,
-      isReduced: tipo === "DESCANSO_SEMANAL_REDUCIDO",
-      inBase: j.previousRestInBase === "in_base",
-    });
-  }
-
-  if (slots.length === 0) return false;
-
-  // 0.2) Agrupar reducidos por SEMANA NATURAL UTC:
-  const byWeek = new Map<string, WeeklyRestSlot[]>();
-  for (const s of slots) {
-    if (!s.isReduced) continue;
-    const key = getUtcWeekMonday(s.restStartAt);
-    const arr = byWeek.get(key) ?? [];
-    arr.push(s);
-    byWeek.set(key, arr);
-  }
-
-  let changed = false;
-  type PrimerEnBaseToCheck = {
-    slot: WeeklyRestSlot;
-    semanaMondayStr: string;
-  };
-  const primerosEnBaseCheck: PrimerEnBaseToCheck[] = [];
-
-  // 0.3) Para cada semana con >=2 reducidos: borrar compensaciones de PRIMEROS,
-  //      registrar PRIMERO-EN-BASE.
-  for (const [semanaMondayStr, weekSlots] of byWeek) {
-    if (weekSlots.length <= 1) continue;
-    const sorted = [...weekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
-    const primeros = sorted.slice(0, sorted.length - 1);
-
-    // a) PRIMEROS (no-últimos): eliminar su compensación si existe.
-    for (const p of primeros) {
-      const idx = comps.findIndex(c => c.jornadaId === p.jornadaId);
-      if (idx >= 0) {
-        comps.splice(idx, 1);
-        changed = true;
-      }
-    }
-
-    // b) PRIMERO + inBase: apuntar para regla PRIMERO-EN-BASE.
-    const primero = sorted[0];
-    if (primero && primero.inBase) {
-      primerosEnBaseCheck.push({ slot: primero, semanaMondayStr });
-    }
-  }
-
-  // PASO 0-BIS: REGLA PRIMERO-EN-BASE
-  if (primerosEnBaseCheck.length > 0) {
-    primerosEnBaseCheck.sort(
-      (a, b) => a.slot.restStartAt.localeCompare(b.slot.restStartAt),
-    );
-    for (const { slot: primerSlot, semanaMondayStr } of primerosEnBaseCheck) {
-      const pendientes: Compensacion[] = comps.filter(c => !c.compensada);
-      const pendientesAntesSemana: Compensacion[] = [];
-      for (const c of pendientes) {
-        const j = allJornadas.find(x => x.id === c.jornadaId);
-        if (!j) { pendientesAntesSemana.push(c); continue; }
-        if (!j.previousRestStartAt) continue;
-        const week = getUtcWeekMonday(j.previousRestStartAt);
-        if (week < semanaMondayStr) pendientesAntesSemana.push(c);
-      }
-      if (pendientesAntesSemana.length === 0) continue;
-      const totalAntesMin = pendientesAntesSemana.reduce(
-        (s, c) => s + c.horasDeuda * 60 + c.minutosDeuda, 0,
-      );
-      const umbralPrimeroMin = 9 * 60 + totalAntesMin;
-      if (primerSlot.restDurationMin >= umbralPrimeroMin && totalAntesMin > 0) {
-        for (const c of pendientesAntesSemana) {
-          c.compensada = true;
-          c.fechaCompensacion = primerSlot.fechaInicioJornada;
-          c.recoveredInJornadaId = null; // marca inviolable (como usuario manual)
-          c.recoveryRestStartAt = primerSlot.restStartAt;
-          c.recoveryRestEndAt = primerSlot.restEndAt;
-          c.recoveryRestDurationMin = primerSlot.restDurationMin;
-          c.updatedAt = now;
-          c.syncStatus = "pending";
-        }
-        changed = true;
-      }
-    }
-  }
-
-  return changed;
-}
+// La normalización antigua eliminaba reducciones previas de una misma semana.
+// Ya no se ejecuta, y se conserva el historial existente para poder auditarlo.
 
 async function processCompensaciones(
   descansoAnteriorMin: number | null,
@@ -1850,299 +1732,79 @@ async function processCompensaciones(
     | "previousRestObservations"
   > | null,
 ): Promise<void> {
-  let comps = await getAllCompensaciones();
-  const allJornadas = await getAllJornadas();
+  if (descansoAnteriorMin == null || descansoAnteriorMin <= 0) return;
+  const comps = await getAllCompensaciones();
   const now = new Date().toISOString();
+  const restStart = restMeta?.previousRestStartAt ?? null;
+  const restEnd = restMeta?.previousRestEndAt ?? null;
 
-  // ======================================================================
-  // PASO 0: NORMALIZAR SEMANAS NATURALES (REGLA MISMA SEMANA).
-  //   Dentro de una MISMA semana UTC (lunes-domingo) puede haber 2 o más
-  //   descansos semanales reducidos (24h ≤ d <45h).
-  //   - SOLO el ÚLTIMO (más reciente) de esa semana GENERA deuda/compensación.
-  //   - Los PRIMEROS de esa semana:
-  //       a) NO generan deuda NUEVA.
-  //       b) Si ya generaron deuda en un cierre anterior → la ELIMINAMOS
-  //          (el usuario lo creía bueno en su momento pero no lo es).
-  //       c) Adicional: si el PRIMERO de la semana fue EN BASE y hay
-  //          compensaciones PENDIENTES de SEMANAS ANTERIORES y
-  //          duracionEsePrimerDescanso >= 9h + totalPendientes → MARCAMOS
-  //          COMPENSADAS automáticamente.
-  // ======================================================================
-
-  // 0.1) Construir listado global de descansos reducidos semanales:
-  //      por cada jornada cerrada su previousRestStartAt / previousRestEndAt /
-  //      previousRestInBase / duración / tipo.
-  type WeeklyRestSlot = {
-    jornadaId: string;
-    fechaInicioJornada: string;
-    restStartAt: string;
-    restEndAt: string;
-    restDurationMin: number;
-    isReduced: boolean; // 24h <= d < 45h
-    inBase: boolean;
-  };
-  const slots: WeeklyRestSlot[] = [];
-
-  for (const j of allJornadas) {
-    if (!j.previousRestStartAt || !j.previousRestEndAt) continue;
-    const gap = j.descansoAnteriorMin ??
-      Math.max(0, Math.round((new Date(j.previousRestEndAt).getTime() - new Date(j.previousRestStartAt).getTime()) / 60000));
-    const tipo = j.tipoDescansoAnterior ?? clasificarDescanso(gap);
-    const inBase = j.previousRestInBase === "in_base";
-    slots.push({
-      jornadaId: j.id,
-      fechaInicioJornada: j.fechaInicio,
-      restStartAt: j.previousRestStartAt,
-      restEndAt: j.previousRestEndAt,
-      restDurationMin: gap,
-      isReduced: tipo === "DESCANSO_SEMANAL_REDUCIDO",
-      inBase,
-    });
-  }
-
-  // Añadir también el descanso ANTERIOR de ESTA jornada (que acaba de cerrarse)
-  // si el usuario lo clasificó como semanal reducido y aún no está en slots.
-  if (
-    descansoAnteriorMin != null &&
-    restMeta?.previousRestStartAt &&
-    restMeta.previousRestEndAt &&
-    tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" &&
-    !slots.find(s => s.jornadaId === jornadaId)
-  ) {
-    slots.push({
-      jornadaId,
-      fechaInicioJornada: fechaInicio,
-      restStartAt: restMeta.previousRestStartAt,
-      restEndAt: restMeta.previousRestEndAt,
-      restDurationMin: descansoAnteriorMin,
-      isReduced: true,
-      inBase: restMeta.previousRestInBase === "in_base",
-    });
-  }
-
-  // 0.2) Agrupar reducidos por SEMANA NATURAL UTC:
-  const byWeek = new Map<string, WeeklyRestSlot[]>();
-  for (const s of slots) {
-    if (!s.isReduced) continue;
-    const key = getUtcWeekMonday(s.restStartAt);
-    const arr = byWeek.get(key) ?? [];
-    arr.push(s);
-    byWeek.set(key, arr);
-  }
-
-  // 0.3) Para cada semana con >=2 reducidos: marcar ÚLTIMO y PRIMEROS, y
-  //      borrar compensaciones asociadas a los PRIMEROS (no-últimos).
-  let normalizationChanged = false;
-  type PrimerEnBaseToCheck = {
-    slot: WeeklyRestSlot;
-    semanaMondayStr: string;
-  };
-  const primerosEnBaseCheck: PrimerEnBaseToCheck[] = [];
-
-  for (const [semanaMondayStr, weekSlots] of byWeek) {
-    if (weekSlots.length <= 1) continue;
-    // Ordenar ASC por restStartAt: 0=PRIMERO, length-1=ÚLTIMO
-    const sorted = [...weekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
-    const ultimo = sorted[sorted.length - 1];
-    const primeros = sorted.slice(0, sorted.length - 1);
-
-    // a) PRIMEROS: borrar sus compensaciones asociadas si existen.
-    for (const p of primeros) {
-      const idx = comps.findIndex(c => c.jornadaId === p.jornadaId);
-      if (idx >= 0) {
-        comps.splice(idx, 1);
-        normalizationChanged = true;
-      }
-    }
-
-    // b) PRIMERO de la semana + inBase => apuntar para comprobación REGLA PRIMERO-EN-BASE.
-    const primero = sorted[0];
-    if (primero && primero.inBase) {
-      primerosEnBaseCheck.push({ slot: primero, semanaMondayStr });
-    }
-
-    // c) ÚLTIMO: no tocar aquí; se procesará normalmente en el bloque GENERAR DEUDA de abajo.
-    //    (Su compensación, si ya existía, se conserva).
-  }
-
-  if (normalizationChanged) {
-    await saveAllCompensaciones(comps);
-  }
-
-  // Recargamos pendientes después de la normalización:
-  let pendientesExistentes = comps
-    .filter((c) => !c.compensada)
-    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
-  let totalPendienteMin = pendientesExistentes.reduce(
-    (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda,
-    0,
-  );
-
-  // ======================================================================
-  // PASO 0-BIS: REGLA PRIMER DESC. SEMANAL REDUCIDO EN BASE.
-  //   El PRIMER descanso reducido de una semana natural que es EN BASE,
-  //   si había compensaciones pendientes de SEMANAS ANTERIORES a ésta, y
-  //   duraciónPrimerDescanso >= 9h + totalPendientesAnteriores → MARCA
-  //   COMPENSADAS automáticamente.
-  // ======================================================================
-  if (primerosEnBaseCheck.length > 0) {
-    // Re-ordenamos por fecha: procesamos de más antiguo a más nuevo,
-    // y cada compensación marcada NO se usa en el siguiente check.
-    primerosEnBaseCheck.sort(
-      (a, b) => a.slot.restStartAt.localeCompare(b.slot.restStartAt),
-    );
-    for (const { slot: primerSlot, semanaMondayStr } of primerosEnBaseCheck) {
-      // PENDIENTES ANTERIORES a la semana de este primer descanso:
-      // una compensación "anterior" es aquella cuyo SU DESCANSO GENERADOR
-      // (jornada.fechaInicio) pertenece a una semana ANTERIOR a semanaMondayStr.
-      const pendientesAntesSemana: Compensacion[] = [];
-      for (const c of pendientesExistentes) {
-        const j = allJornadas.find(x => x.id === c.jornadaId);
-        if (!j) continue; // sin jornada ligada → la tratamos como "anterior" por defecto
-        if (!j.previousRestStartAt) continue;
-        const week = getUtcWeekMonday(j.previousRestStartAt);
-        if (week < semanaMondayStr) pendientesAntesSemana.push(c);
-      }
-      if (pendientesAntesSemana.length === 0) continue;
-      const totalAntesMin = pendientesAntesSemana.reduce(
-        (s, c) => s + c.horasDeuda * 60 + c.minutosDeuda, 0,
-      );
-      const umbralPrimeroMin = 9 * 60 + totalAntesMin;
-      if (primerSlot.restDurationMin >= umbralPrimeroMin && totalAntesMin > 0) {
-        for (const c of pendientesAntesSemana) {
-          c.compensada = true;
-          c.fechaCompensacion = primerSlot.fechaInicioJornada;
-          // Como es una marcación "regla primero en base", NO ponemos
-          // recoveredInJornadaId (identificamos esta marca como si fuera
-          // manual de usuario => no se desmarcará en migraciones futuras).
-          c.recoveredInJornadaId = null;
-          c.recoveryRestStartAt = primerSlot.restStartAt;
-          c.recoveryRestEndAt = primerSlot.restEndAt;
-          c.recoveryRestDurationMin = primerSlot.restDurationMin;
-          c.updatedAt = now;
-          c.syncStatus = "pending";
-        }
-        normalizationChanged = true;
-      }
-    }
-    if (normalizationChanged) await saveAllCompensaciones(comps);
-  }
-
-  // Recargamos pendientes tras la regla PRIMERO-EN-BASE:
-  comps = await getAllCompensaciones();
-  pendientesExistentes = comps
-    .filter((c) => !c.compensada)
-    .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
-  totalPendienteMin = pendientesExistentes.reduce(
-    (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda,
-    0,
-  );
-
-  // ======================================================================
-  // BLOQUE COMPENSAR: cada vez que hacemos UN descanso, revisamos si
-  // este descanso contiene las horas de compensación unidas a otro descanso
-  // de al menos 9h (art. 8.7).
-  // REGLA 3-B / 3-C.
-  // ======================================================================
-  if (descansoAnteriorMin != null && descansoAnteriorMin > 0 && pendientesExistentes.length > 0) {
-    const umbralCompensarMin = 9 * 60 + totalPendienteMin;
-
-    if (descansoAnteriorMin >= umbralCompensarMin) {
-      // REGLA 3-C: marcar TODO como compensado.
-      for (const c of pendientesExistentes) {
+  // Sólo asignar tiempo adicional al descanso mínimo legal.
+  // No compensar con un semanal reducido ni doblecontar las mismas horas.
+  if (restStart && restEnd) {
+    const capacity = automaticCompensationCapacityMin(descansoAnteriorMin);
+    if (capacity > 0) {
+      const prior = comps
+        .filter(c => !c.compensada &&
+          (c.sourceRestEndAt ? c.sourceRestEndAt <= restStart :
+            c.jornadaId !== jornadaId && c.fechaLimite < fechaInicio))
+        .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
+      const ids = new Set(allocateWholeCompensations(
+        prior.map(c => ({ id: c.id, min: c.horasDeuda * 60 + c.minutosDeuda })),
+        capacity,
+      ));
+      for (const c of prior) {
+        if (!ids.has(c.id)) continue;
         c.compensada = true;
         c.fechaCompensacion = fechaInicio;
         c.recoveredInJornadaId = jornadaId;
-        c.recoveryRestStartAt = restMeta?.previousRestStartAt ?? null;
-        c.recoveryRestEndAt = restMeta?.previousRestEndAt ?? null;
+        c.recoveryRestStartAt = restStart;
+        c.recoveryRestEndAt = restEnd;
         c.recoveryRestDurationMin = descansoAnteriorMin;
         c.updatedAt = now;
         c.syncStatus = "pending";
       }
-      await saveAllCompensaciones(comps);
-    } else {
-      // REGLA 3-B: semanal completo (o descanso largo) PERO sin llegar a umbralCompensarMin
-      // => NO creamos nada, NO tocamos deuda, NO sumamos ni restamos nada a pendientes.
-      comps = await getAllCompensaciones();
     }
   }
 
-  // ======================================================================
-  // BLOQUE GENERAR DEUDA: SOLO si el descanso que acabo de hacer ANTES de
-  // esta jornada fue un DESCANSO SEMANAL REDUCIDO (24h ≤ duración < 45h)
-  // Y además, después de NORMALIZACIÓN MISMA SEMANA, este descanso ES EL
-  // ÚLTIMO de su semana natural (los PRIMEROS no generan).
-  // BUG 1 / BUG 2 / REGLA 3-A / REGLA MISMA SEMANA.
-  // ======================================================================
-  if (
-    tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" &&
-    descansoAnteriorMin != null &&
-    restMeta?.previousRestStartAt
-  ) {
-    // 1) Comprobar MISMA SEMANA: ¿es el ÚLTIMO reducido de su semana natural?
-    const myWeekMonday = getUtcWeekMonday(restMeta.previousRestStartAt);
-    const myWeekSlots = (byWeek.get(myWeekMonday) ?? []).filter(s => s.isReduced);
-    const sortedWeek = [...myWeekSlots].sort((a, b) => a.restStartAt.localeCompare(b.restStartAt));
-    const soyElUltimo = sortedWeek.length <= 1 ||
-      sortedWeek[sortedWeek.length - 1].jornadaId === jornadaId ||
-      sortedWeek[sortedWeek.length - 1].restStartAt === restMeta.previousRestStartAt;
-
-    // 👉 LOS PRIMEROS de la semana NO GENERAN compensación (saltamos este bloque).
-    if (soyElUltimo) {
-      // Art. 8.6 CE 561/2006: deuda VARIABLE = 45h − duración REAL del descanso reducido.
-      // Ej: 44h 9m → 51m deuda; 34h → 11h deuda.
-      const deudaMin = descansoAnteriorMin < 24 * 60 ? 0 : 45 * 60 - descansoAnteriorMin;
-
-      if (deudaMin > 0) {
-        comps = await getAllCompensaciones();
-        // Idempotencia: cada descanso genera su propia deuda una única vez.
-        // No acumularla en una deuda anterior: se perderían origen, plazo
-        // y posibilidad de compensarla por separado.
-        const alreadyRegistered = comps.some((c) =>
-          c.jornadaId === jornadaId ||
-          (!!restMeta?.previousRestStartAt && c.sourceRestStartAt === restMeta?.previousRestStartAt)
-        );
-        if (!alreadyRegistered) {
-          // Plazo legal: final de la tercera semana siguiente a la semana
-          // del descanso que generó la reducción.
-          const fechaLimite = calculateCompensationDeadline({
-            sourceRestStartAt: restMeta?.previousRestStartAt ?? null,
-            sourceRestEndAt: restMeta?.previousRestEndAt ?? null,
-            jornadaPreviousRestEndAt: restMeta?.previousRestEndAt ?? null,
-            fechaInicioJornada: fechaInicio,
-          });
-
-          const newComp: Compensacion = {
-            id: generateId(),
-            jornadaId,
-            horasDeuda: Math.floor(deudaMin / 60),
-            minutosDeuda: deudaMin % 60,
-            fechaLimite,
-            compensada: false,
-            fechaCompensacion: null,
-            sourceRestStartAt: restMeta?.previousRestStartAt ?? null,
-            sourceRestEndAt: restMeta?.previousRestEndAt ?? null,
-            sourceRestDurationMin: descansoAnteriorMin,
-            sourceRestLegalType: restMeta?.previousRestLegalType ?? null,
-            sourceRestLocationStart: restMeta?.previousRestStartLocation ?? null,
-            sourceRestLocationEnd: restMeta?.previousRestEndLocation ?? null,
-            sourceRestInBase: restMeta?.previousRestInBase ?? null,
-            sourceRestDistanceKm: restMeta?.previousRestDistanceKm ?? null,
-            sourceRestObservations: restMeta?.previousRestObservations ?? null,
-            recoveredInJornadaId: null,
-            recoveryRestStartAt: null,
-            recoveryRestEndAt: null,
-            recoveryRestDurationMin: null,
-            updatedAt: now,
-            syncStatus: "pending",
-          };
-
-          comps.push(newComp);
-        }
-        await saveAllCompensaciones(comps);
-      }
-    }
+  // Cada semanal reducido genera su propia deuda (45 h - descanso real).
+  // No se fusiona con otros ni desaparece por haber otro en la misma semana.
+  const debtMin = tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO"
+    ? weeklyReductionDebtMin(descansoAnteriorMin)
+    : 0;
+  if (debtMin > 0 && restStart && !comps.some(c =>
+    c.jornadaId === jornadaId || c.sourceRestStartAt === restStart
+  )) {
+    comps.push({
+      id: generateId(),
+      jornadaId,
+      horasDeuda: Math.floor(debtMin / 60),
+      minutosDeuda: debtMin % 60,
+      fechaLimite: calculateCompensationDeadline({
+        sourceRestStartAt: restStart,
+        sourceRestEndAt: restEnd,
+        jornadaPreviousRestEndAt: restEnd,
+        fechaInicioJornada: fechaInicio,
+      }),
+      compensada: false,
+      fechaCompensacion: null,
+      sourceRestStartAt: restStart,
+      sourceRestEndAt: restEnd,
+      sourceRestDurationMin: descansoAnteriorMin,
+      sourceRestLegalType: restMeta?.previousRestLegalType ?? null,
+      sourceRestLocationStart: restMeta?.previousRestStartLocation ?? null,
+      sourceRestLocationEnd: restMeta?.previousRestEndLocation ?? null,
+      sourceRestInBase: restMeta?.previousRestInBase ?? null,
+      sourceRestDistanceKm: restMeta?.previousRestDistanceKm ?? null,
+      sourceRestObservations: restMeta?.previousRestObservations ?? null,
+      recoveredInJornadaId: null,
+      recoveryRestStartAt: null,
+      recoveryRestEndAt: null,
+      recoveryRestDurationMin: null,
+      updatedAt: now,
+      syncStatus: "pending",
+    });
   }
+  await saveAllCompensaciones(comps);
 }
 
 export async function getJornadaAbierta(): Promise<Jornada | null> {
@@ -4065,7 +3727,6 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     .filter(c => isCompWithinPoliceWindow(c, all, ahora))
     .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite));
 
-  const compFueraVentana = comps.filter(c => !c.compensada && !isCompWithinPoliceWindow(c, all, ahora));
 
   const hoyStr = formatDateStr(ahora);
 
