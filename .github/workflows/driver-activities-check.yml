@@ -18,6 +18,9 @@ on:
       - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
+      - 'lib/large-safe-storage.ts'
+      - 'lib/large-safe-storage-engine.ts'
+      - 'tests/large-safe-storage.test.ts'
       - 'lib/legalEngine.ts'
       - 'lib/weekly-compensation.ts'
       - 'tests/weekly-compensation.test.ts'
@@ -49,6 +52,9 @@ on:
       - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
+      - 'lib/large-safe-storage.ts'
+      - 'lib/large-safe-storage-engine.ts'
+      - 'tests/large-safe-storage.test.ts'
       - 'lib/legalEngine.ts'
       - 'lib/weekly-compensation.ts'
       - 'tests/weekly-compensation.test.ts'
@@ -70,5 +76,6 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts tests/period-audit-actions.test.ts
       - run: node --import tsx --test tests/notification-sounds.test.ts
+      - run: node --import tsx --test tests/large-safe-storage.test.ts
       - run: npm run typecheck
       - run: npm test
