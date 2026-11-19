@@ -2100,7 +2100,7 @@ async function processCompensaciones(
         // y posibilidad de compensarla por separado.
         const alreadyRegistered = comps.some((c) =>
           c.jornadaId === jornadaId ||
-          (!!restMeta?.previousRestStartAt && c.sourceRestStartAt === restMeta.previousRestStartAt)
+          (!!restMeta?.previousRestStartAt && c.sourceRestStartAt === restMeta?.previousRestStartAt)
         );
         if (!alreadyRegistered) {
           // Plazo legal: final de la tercera semana siguiente a la semana
@@ -2120,15 +2120,15 @@ async function processCompensaciones(
             fechaLimite,
             compensada: false,
             fechaCompensacion: null,
-            sourceRestStartAt: restMeta.previousRestStartAt ?? null,
-            sourceRestEndAt: restMeta.previousRestEndAt ?? null,
+            sourceRestStartAt: restMeta?.previousRestStartAt ?? null,
+            sourceRestEndAt: restMeta?.previousRestEndAt ?? null,
             sourceRestDurationMin: descansoAnteriorMin,
-            sourceRestLegalType: restMeta.previousRestLegalType ?? null,
-            sourceRestLocationStart: restMeta.previousRestStartLocation ?? null,
-            sourceRestLocationEnd: restMeta.previousRestEndLocation ?? null,
-            sourceRestInBase: restMeta.previousRestInBase ?? null,
-            sourceRestDistanceKm: restMeta.previousRestDistanceKm ?? null,
-            sourceRestObservations: restMeta.previousRestObservations ?? null,
+            sourceRestLegalType: restMeta?.previousRestLegalType ?? null,
+            sourceRestLocationStart: restMeta?.previousRestStartLocation ?? null,
+            sourceRestLocationEnd: restMeta?.previousRestEndLocation ?? null,
+            sourceRestInBase: restMeta?.previousRestInBase ?? null,
+            sourceRestDistanceKm: restMeta?.previousRestDistanceKm ?? null,
+            sourceRestObservations: restMeta?.previousRestObservations ?? null,
             recoveredInJornadaId: null,
             recoveryRestStartAt: null,
             recoveryRestEndAt: null,
