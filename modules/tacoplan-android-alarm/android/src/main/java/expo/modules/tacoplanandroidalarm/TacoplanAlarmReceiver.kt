@@ -30,10 +30,10 @@ class TacoplanAlarmReceiver : BroadcastReceiver() {
     ) return
 
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    val channelId = "tacoplan-jornada-native-v1"
+    val channelId = "tacoplan-jornada-native-v2"
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val channel = NotificationChannel(channelId, "Alarmas de límite de jornada", NotificationManager.IMPORTANCE_HIGH)
-      val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+      val alarmSound = Uri.parse("android.resource://${context.packageName}/raw/tacoplan_disponibilidad_5")
       channel.setSound(alarmSound,
         AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
       channel.enableVibration(true)
