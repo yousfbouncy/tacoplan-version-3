@@ -128,8 +128,11 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [profile, setProfile] = useState<DriverProfile | null>(null);
   const [driverName, setDriverName] = useState("");
   const [accountEmail, setAccountEmail] = useState(user?.email ?? "");
+  const [needsAccountPassword, setNeedsAccountPassword] = useState(false);
   const [oauthProvider, setOauthProvider] = useState<"apple"|"google"|"other">("other");
   const [verifiedEmail, setVerifiedEmail] = useState(user?.email ?? "");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [zone, setZone] = useState<OperationZone | null>(null);
   const [tripTypes, setTripTypes] = useState<TripTypes>({
     nacional: false,
@@ -175,10 +178,15 @@ export default function OnboardingSetup({ onComplete }: Props) {
       const authenticatedEmail = data.user.email || user?.email || "";
       setVerifiedEmail(authenticatedEmail);
       const providers: string[] = Array.isArray(data.user.app_metadata?.providers) ? data.user.app_metadata.providers : [];
+      const oauth = providers.includes("google") || providers.includes("apple") ||
+        data.user.app_metadata?.provider === "google" || data.user.app_metadata?.provider === "apple";
+      const emailIdentity = providers.includes("email") ||
+        data.user.identities?.some(identity=>identity.provider === "email") === true;
       const appleAccount = providers.includes("apple") || data.user.app_metadata?.provider === "apple";
       const googleAccount = providers.includes("google") || data.user.app_metadata?.provider === "google";
       setOauthProvider(appleAccount ? "apple" : googleAccount ? "google" : "other");
       setAccountEmail(appleAccount && (!authenticatedEmail || authenticatedEmail.endsWith("@privaterelay.appleid.com")) ? "" : authenticatedEmail);
+      setNeedsAccountPassword(oauth && !emailIdentity);
       const cloudName = String(data.user.user_metadata?.full_name || data.user.user_metadata?.name || "").trim();
       if(cloudName) setDriverName(previous=>previous.trim() ? previous : cloudName);
     }).catch(()=>{});
@@ -295,6 +303,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
     if(activeStep==="account"){
       if(!driverName.trim())errs.push(t("wizard.nameRequired"));
       if(!isValidAccountEmail(accountEmail))errs.push(t("wizard.emailInvalid"));
+      if(needsAccountPassword){
+        if(newPassword.length<8)errs.push(t("wizard.passwordShort"));
+        if(newPassword!==confirmPassword)errs.push(t("wizard.passwordMismatch"));
+      }
     }
     if(activeStep==="profile"&&!profile)errs.push(t("onboarding.errorProfile"));
     if(activeStep==="zone"&&!zone)errs.push(t("onboarding.errorZone"));
@@ -329,6 +341,10 @@ export default function OnboardingSetup({ onComplete }: Props) {
     if (!driverName.trim()) errs.push(t("wizard.nameRequired"));
     if (!accountEmail.trim()) errs.push(t("wizard.emailRequired"));
     if (!isValidAccountEmail(accountEmail)) errs.push(t("wizard.emailInvalid"));
+    if (needsAccountPassword) {
+      if (newPassword.length < 8) errs.push(t("wizard.passwordShort"));
+      if (newPassword !== confirmPassword) errs.push(t("wizard.passwordMismatch"));
+    }
     if (!profile) errs.push(t("onboarding.errorProfile"));
     if (!zone) errs.push(t("onboarding.errorZone"));
     if (!baseLocation.base_name.trim()) errs.push(t("wizard.baseNameRequired"));
@@ -404,6 +420,15 @@ export default function OnboardingSetup({ onComplete }: Props) {
         const notice = t("wizard.emailVerificationNotice");
         if (Platform.OS === "web") alert(notice); else Alert.alert("Verifica tu correo",notice);
         return;
+      }
+      if (needsAccountPassword) {
+        // Adds email/password sign-in to an OAuth account without replacing Google/Apple login.
+        // Supabase Auth stores the password securely; do not save it in profiles or AsyncStorage.
+        const {error:passwordError} = await supabase.auth.updateUser({password:newPassword, data:{tacoplan_password_enabled:true}});
+        if (passwordError) throw new Error(t("wizard.passwordSaveError")+": " + passwordError.message);
+        setNeedsAccountPassword(false);
+        setNewPassword("");
+        setConfirmPassword("");
       }
       const existingRaw = await AsyncStorage.getItem(await userScopedKey(SETTINGS_KEY, userId));
       const existingSettings = existingRaw ? JSON.parse(existingRaw) : {};
@@ -577,7 +602,35 @@ export default function OnboardingSetup({ onComplete }: Props) {
             style={[s.input, { minHeight: 48, opacity: 0.85 }]}
           />
           <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{oauthProvider === "apple" ? t("wizard.emailAppleExplanation") : t("wizard.emailExplanation")}</Text>
-
+          {needsAccountPassword ? <>
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.password")}</Text>
+            <TextInput
+              accessibilityLabel={t("wizard.passwordAccessibility")}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="newPassword"
+              placeholder={t("wizard.passwordPlaceholder")}
+              placeholderTextColor="#8292A6"
+              style={[s.input, { minHeight: 48 }]}
+            />
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>{t("wizard.passwordAgain")}</Text>
+            <TextInput
+              accessibilityLabel={t("wizard.passwordAgainAccessibility")}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="newPassword"
+              placeholder={t("wizard.passwordAgainPlaceholder")}
+              placeholderTextColor="#8292A6"
+              style={[s.input, { minHeight: 48 }]}
+            />
+            <Text style={{ color: Colors.light.textSecondary, fontSize: 12, marginTop: 5 }}>{t("wizard.passwordExplanation")}</Text>
+          </> : null}
         </View>
                   </>}
           {activeStep === "profile" && <>
