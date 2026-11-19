@@ -31,6 +31,7 @@ import {
   formatDateForDisplay,
   parseDisplayDateToISO,
 } from "@/lib/utils";
+import { getPeriodAuditActions } from "@/lib/period-audit-actions";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
 import { useFerry } from "@/lib/ferry-context";
@@ -1158,6 +1159,18 @@ export default function HistorialScreen() {
     }, [user?.id])
   );
 
+  // Las acciones sólo se muestran si la revisión real del periodo encuentra
+  // incidencias manuales o diferencias susceptibles de recálculo.
+  const periodAuditQuery = useQuery<PeriodAuditResult>({
+    queryKey: ["history-period-audit", periodo.from, periodo.to, syncVersion],
+    queryFn: () => auditPeriodConsistency(periodo.from, periodo.to),
+    staleTime: 30_000,
+  });
+  const periodActions = useMemo(
+    () => getPeriodAuditActions(periodAuditQuery.data?.issues ?? []),
+    [periodAuditQuery.data?.issues],
+  );
+
   const jornadasQuery = useQuery<Jornada[]>({
     queryKey: ["jornadas", periodo.from, periodo.to, syncVersion],
     queryFn: () => listarJornadas(periodo.from, periodo.to),
@@ -1361,7 +1374,6 @@ export default function HistorialScreen() {
   const [historyFilter, setHistoryFilter] = useState("all");
   const [historySearch, setHistorySearch] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
-  const [showHistoryTools, setShowHistoryTools] = useState(false);
   const jornadasData = jornadasQuery.data || [];
 
   type ListItem =
@@ -1843,13 +1855,14 @@ export default function HistorialScreen() {
     try {
       const result = await auditPeriodConsistency(periodo.from, periodo.to);
       setPeriodAudit(result);
+      qc.setQueryData(["history-period-audit", periodo.from, periodo.to, syncVersion], result);
       setAuditVisible(true);
     } catch (e: any) {
       Alert.alert(t("common.error"), e?.message || "No se pudo revisar el periodo.");
     } finally {
       setAuditLoading(false);
     }
-  }, [auditLoading, periodo.from, periodo.to, t]);
+  }, [auditLoading, periodo.from, periodo.to, qc, syncVersion, t]);
 
   const doRecalculatePeriod = useCallback(async () => {
     if (recalcLoading) return;
@@ -1864,6 +1877,7 @@ export default function HistorialScreen() {
         qc.refetchQueries({ queryKey: ["day-extra-entries"] }).catch(() => {}),
       ]);
       await refreshNaturalDayDiets();
+      await qc.invalidateQueries({ queryKey: ["history-period-audit"] });
       triggerSync();
 
       if (result.manualArrivalDays.length > 0) {
@@ -2051,11 +2065,10 @@ export default function HistorialScreen() {
           </Pressable>
         </View>
       </View>
-      <View style={{ width: "100%", maxWidth: 760, alignSelf: "center", paddingHorizontal: 16, marginBottom: 10 }}>
+      <View style={{ width: "100%", maxWidth: 760, alignSelf: "center", paddingHorizontal: 16, marginBottom: 12, flexDirection: "row", gap: 10 }}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Generar informe"
-          accessibilityHint="Abrir el generador de informes en la web de Tacoplan"
           onPress={() => {
             void Linking.openURL(`https://tacoplan.es/mi-tacoplan?lang=${encodeURIComponent(locale)}#generar-informe`).catch(() => {
               Alert.alert("No se pudo abrir Tacoplan", "Comprueba tu conexión e inténtalo de nuevo.");
@@ -2063,23 +2076,45 @@ export default function HistorialScreen() {
           }}
           style={({ pressed }) => [
             styles.reportBtn,
-            {
-              minHeight: 54,
-              justifyContent: "center",
-              paddingVertical: 14,
-              backgroundColor: "#1765E8",
-              borderWidth: 1,
-              borderColor: "#6CA4FF",
-              opacity: pressed ? 0.88 : 1,
-            },
+            { flex: 1, minHeight: 44, justifyContent: "center", paddingHorizontal: 8,
+              backgroundColor: "#1765E8", borderWidth: 1, borderColor: "#6CA4FF",
+              opacity: pressed ? 0.88 : 1 },
           ]}
-          hitSlop={6}
         >
-          <Ionicons name="document-text-outline" size={22} color="#FFFFFF" />
-          <Text style={[styles.reportBtnText, { fontSize: 17, color: "#FFFFFF" }]}>Generar informe</Text>
+          <Ionicons name="document-text-outline" size={17} color="#FFFFFF" />
+          <Text style={[styles.reportBtnText, { fontSize: 13, color: "#FFFFFF", flexShrink: 1 }]} numberOfLines={1}>Generar informe</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ver calendario"
+          onPress={openCalendar}
+          style={({ pressed }) => [
+            styles.reportBtn,
+            { flex: 1, minHeight: 44, justifyContent: "center", paddingHorizontal: 8,
+              backgroundColor: "#173756", borderWidth: 1, borderColor: "#5585AE",
+              opacity: pressed ? 0.88 : 1 },
+          ]}
+        >
+          <Ionicons name="calendar-outline" size={17} color="#FFFFFF" />
+          <Text style={[styles.reportBtnText, { fontSize: 13, color: "#FFFFFF", flexShrink: 1 }]} numberOfLines={1}>Ver calendario</Text>
         </Pressable>
       </View>
-      {searchVisible && <TextInput accessibilityLabel="Buscar fecha o lugar" placeholder="Buscar fecha o lugar" placeholderTextColor="#64748B" value={historySearch} onChangeText={setHistorySearch} style={{ backgroundColor: "#11243B", color: Colors.light.text, borderRadius: 18, marginHorizontal: 16, marginBottom: 8, padding: 14 }} />}
+      {searchVisible && (
+        <View style={{ width: "100%", maxWidth: 760, alignSelf: "center", paddingHorizontal: 16, marginBottom: 12 }}>
+          <TextInput
+            autoFocus
+            accessibilityLabel="Buscar fecha o lugar"
+            placeholder="Buscar fecha o lugar..."
+            placeholderTextColor="#64748B"
+            value={historySearch}
+            onChangeText={setHistorySearch}
+            autoCorrect={false}
+            style={{ backgroundColor: "#FFFFFF", color: "#10233B", borderWidth: 2,
+              borderColor: "#4999FF", borderRadius: 12, minHeight: 48, paddingHorizontal: 14,
+              fontSize: 15, fontWeight: "500" }}
+          />
+        </View>
+      )}
       <View style={styles.periodoNav}>
         <Pressable style={styles.periodArrow} onPress={() => setPeriodoIdx((p) => p + 1)} hitSlop={6}>
           <Ionicons name="chevron-back" size={22} color={Colors.light.tint} />
@@ -2096,44 +2131,38 @@ export default function HistorialScreen() {
       </View>
 
       <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, marginBottom: 16 }}>
-        {[{key:"all",label:"Todo"},{key:"jornada",label:"Jornadas"},{key:"rest",label:"Descansos"}].map(f => <Pressable key={f.key} accessibilityRole="button" accessibilityState={{selected: historyFilter === f.key}} onPress={() => setHistoryFilter(f.key)} style={{ flex: 1, minHeight: 44, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: historyFilter === f.key ? Colors.light.primary : "#11243B" }}><Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: historyFilter === f.key ? "#FFFFFF" : Colors.light.text }}>{f.label}</Text></Pressable>)}
-        <Pressable accessibilityRole="button" accessibilityLabel="Herramientas del historial" accessibilityState={{expanded:showHistoryTools}} onPress={() => setShowHistoryTools(v => !v)} style={{ width: 44, borderRadius: 22, backgroundColor: "#11243B", alignItems: "center", justifyContent: "center" }}><Ionicons name="options-outline" size={21} color={Colors.light.tint} /></Pressable>
+        {[{key:"all",label:"Todo"},{key:"rest",label:"Descansos"}].map(f => <Pressable key={f.key} accessibilityRole="button" accessibilityState={{selected: historyFilter === f.key}} onPress={() => setHistoryFilter(f.key)} style={{ flex: 1, minHeight: 44, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: historyFilter === f.key ? Colors.light.primary : "#11243B" }}><Text style={{ fontFamily: "Inter_600SemiBold", fontSize: 12, color: historyFilter === f.key ? "#FFFFFF" : Colors.light.text }}>{f.label}</Text></Pressable>)}
       </View>
-      <View style={[styles.periodToolsRow, !showHistoryTools && { display: "none" }]}>
-        <Pressable
-          onPress={runPeriodAudit}
-          disabled={auditLoading}
-          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
-        >
-          {auditLoading ? (
-            <ActivityIndicator size="small" color={Colors.light.tint} />
-          ) : (
-            <Ionicons name="shield-checkmark-outline" size={17} color={Colors.light.tint} />
+      {(periodActions.needsReview || periodActions.needsRecalculation) && (
+        <View style={[styles.periodToolsRow, { marginBottom: 10 }]}>
+          {periodActions.needsReview && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Revisar incidencias del periodo"
+              onPress={runPeriodAudit}
+              disabled={auditLoading}
+              style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
+            >
+              {auditLoading ? <ActivityIndicator size="small" color="#FFFFFF" /> :
+                <Ionicons name="shield-checkmark-outline" size={17} color="#FFFFFF" />}
+              <Text style={[styles.periodToolText, { color: "#FFFFFF" }]}>Revisar</Text>
+            </Pressable>
           )}
-          <Text style={styles.periodToolText}>Revisar</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={confirmRecalculatePeriod}
-          disabled={recalcLoading}
-          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
-        >
-          {recalcLoading ? (
-            <ActivityIndicator size="small" color={Colors.light.tint} />
-          ) : (
-            <Ionicons name="calculator-outline" size={17} color={Colors.light.tint} />
+          {periodActions.needsRecalculation && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Recalcular datos desactualizados"
+              onPress={confirmRecalculatePeriod}
+              disabled={recalcLoading}
+              style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
+            >
+              {recalcLoading ? <ActivityIndicator size="small" color="#FFFFFF" /> :
+                <Ionicons name="calculator-outline" size={17} color="#FFFFFF" />}
+              <Text style={[styles.periodToolText, { color: "#FFFFFF" }]}>Recalcular</Text>
+            </Pressable>
           )}
-          <Text style={styles.periodToolText}>Recalcular</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={openCalendar}
-          style={({ pressed }) => [styles.periodToolBtn, pressed && { opacity: 0.82 }]}
-        >
-          <Ionicons name="calendar-outline" size={17} color={Colors.light.tint} />
-          <Text style={styles.periodToolText}>Calendario</Text>
-        </Pressable>
-      </View>
+        </View>
+      )}
 
       <Modal visible={auditVisible} transparent animationType="fade" onRequestClose={() => setAuditVisible(false)}>
         <View style={styles.toolsModalOverlay}>
