@@ -47,6 +47,30 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
     return ()=>{valid=false};
   },[userId,shiftId]);
+  // GPS AutoStart writes activities independently of this React screen.
+  // Refresh the displayed current activity so the driving/rest timers reflect
+  // the saved change rather than staying on stale state until navigation.
+  useEffect(()=>{
+    if (!autoDriving || closed || !userId || !shiftId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (cancelled || inFlight || lock.current) return;
+      inFlight = true;
+      try {
+        const latest = await loadLocalDriverActivities(userId, shiftId);
+        if (!cancelled) setLog(previous =>
+          previous && JSON.stringify(previous.segments) === JSON.stringify(latest.segments)
+            ? previous : latest);
+      } catch (error) {
+        console.warn("[DRIVING-AUTO] Failed to refresh activity display", error);
+      } finally { inFlight = false; }
+    };
+    void refresh();
+    const timer = setInterval(()=>{void refresh()}, 2000);
+    return ()=>{cancelled = true; clearInterval(timer);};
+  },[autoDriving,closed,userId,shiftId]);
+
   useEffect(()=>{
     if (!log?.segments.length) return;
     // Retry queued local changes after returning online / reopening the app.
