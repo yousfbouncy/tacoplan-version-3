@@ -1,4 +1,5 @@
 import HeaderMenuButton from "@/components/HeaderMenuButton";
+import { fetchRecentLegalInfractions, type RecentLegalInfraction } from "@/lib/recent-legal-infractions";
 import { dashboardQueryKey, restCountdown } from "@/lib/dashboard-state";
 import { suggestClosingDiet, applyClosingDietSuggestion } from "@/lib/automatic-diet-selection";
 import type { BaseLocationConfig } from "@/lib/base-location";
@@ -447,6 +448,25 @@ export default function DashboardScreen() {
   const unreadCount = useMemo(() => {
     return notifications.reduce((s, n) => s + (n.is_read ? 0 : 1), 0);
   }, [notifications]);
+
+  // Historical legal summaries are stored with each jornada in Supabase.
+  // The authenticated RPC exposes only infractions dated within 56 days.
+  // These notices are separate from admin messages: "mark all read" cannot
+  // dismiss an active infraction while its review window remains open.
+  const recentInfractionsQuery = useQuery<RecentLegalInfraction[]>({
+    queryKey: ["recent-legal-infractions", user?.id],
+    queryFn: fetchRecentLegalInfractions,
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const recentInfractions = recentInfractionsQuery.data ?? [];
+  const activeInfractionsCount = recentInfractions.length;
+
+  useFocusEffect(useCallback(() => {
+    if (user?.id) void recentInfractionsQuery.refetch();
+  }, [user?.id, recentInfractionsQuery.refetch]));
+
 
   const openNotificationDetail = useCallback((notification: UserNotificationRow) => {
     setShowNotifications(false);
@@ -2422,8 +2442,42 @@ export default function DashboardScreen() {
             </View>
 
             <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.light.textSecondary, marginBottom: 10 }}>
-              {unreadCount > 0 ? `Tienes ${unreadCount} sin leer` : "No tienes notificaciones pendientes"}
+              {activeInfractionsCount > 0
+                ? `Tienes ${activeInfractionsCount} posible${activeInfractionsCount === 1 ? " infracción" : "s infracciones"} de los últimos 56 días.`
+                : unreadCount > 0 ? `Tienes ${unreadCount} sin leer` : "No tienes notificaciones pendientes"}
             </Text>
+
+            {activeInfractionsCount > 0 && (
+              <View style={{ backgroundColor: "#3C2331", borderWidth: 1, borderColor: "#E05262", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <Ionicons name="alert-circle" size={20} color="#FF7485" />
+                  <Text style={{ color: "#FFFFFF", fontFamily: "Inter_700Bold", fontSize: 14, flex: 1 }}>
+                    Posibles infracciones registradas ({activeInfractionsCount})
+                  </Text>
+                </View>
+                <Text style={{ color: "#F4CBD0", fontFamily: "Inter_400Regular", fontSize: 12, marginBottom: 10 }}>
+                  Resumen de incidencias detectadas en tus jornadas de los últimos 56 días. Son cálculos orientativos; revisa los datos del tacógrafo.
+                </Text>
+                {recentInfractions.map(infraction => (
+                  <View
+                    key={`${infraction.jornada_id}:${infraction.incident_index}:${infraction.code}`}
+                    style={{ backgroundColor: "#241C2A", padding: 10, borderRadius: 9, marginBottom: 6 }}
+                  >
+                    <Text style={{ color: "#FFADBA", fontFamily: "Inter_600SemiBold", fontSize: 12 }}>
+                      {infraction.occurred_on.split("-").reverse().join("/")} · {infraction.severity.replace(/_/g, " ")}
+                    </Text>
+                    <Text style={{ color: "#FFFFFF", fontFamily: "Inter_500Medium", fontSize: 13, marginTop: 3 }}>
+                      {infraction.description}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {recentInfractionsQuery.isError && (
+              <Text style={{ color: Colors.light.warning, fontSize: 12, marginBottom: 10 }}>
+                No se pudieron actualizar las infracciones desde Supabase. Comprueba tu conexión.
+              </Text>
+            )}
 
             <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
               <Pressable
@@ -2644,8 +2698,8 @@ export default function DashboardScreen() {
               hitSlop={8}
               style={[styles.headerActionButton, { marginLeft: 10 }]}
             >
-              <Ionicons name="notifications-outline" size={24} color="#FFFFFF" />
-              {unreadCount > 0 && (
+              <Ionicons name={activeInfractionsCount > 0 ? "notifications" : "notifications-outline"} size={24} color={activeInfractionsCount > 0 ? "#FF4D67" : "#FFFFFF"} />
+              {(unreadCount > 0 || activeInfractionsCount > 0) && (
                 <View
                   style={{
                     position: "absolute",
@@ -2663,7 +2717,7 @@ export default function DashboardScreen() {
                   }}
                 >
                   <Text style={{ fontFamily: "Inter_700Bold", fontSize: 10, color: "#fff" }}>
-                    {unreadCount > 99 ? "99+" : String(unreadCount)}
+                    {unreadCount + activeInfractionsCount > 99 ? "99+" : String(unreadCount + activeInfractionsCount)}
                   </Text>
                 </View>
               )}
@@ -4456,22 +4510,16 @@ export default function DashboardScreen() {
                 </View>
 
                 {legalResult.infractions.length > 0 && (
-                  <View style={styles.legalModalSection}>
-                    <Text style={[styles.legalModalSectionTitle, { color: Colors.light.danger }]}>{t("dashboard.infractions")}</Text>
-                    {legalResult.infractions.map((inf, i) => (
-                      <View key={i} style={styles.legalModalItem}>
-                        <View style={styles.legalModalItemHeader}>
-                          <Ionicons name="alert-circle" size={14} color={getSeverityColor(inf.severity as any)} />
-                          <View style={[styles.legalModalSeverityBadge, { backgroundColor: getSeverityColor(inf.severity as any) + "18" }]}>
-                            <Text style={[styles.legalModalSeverityText, { color: getSeverityColor(inf.severity as any) }]}>
-                              {getSeverityLabel(inf.severity as any)}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={styles.legalModalItemText}>{inf.description}</Text>
-                      </View>
-                    ))}
-                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => { setShowLegalModal(false); setShowNotifications(true); void recentInfractionsQuery.refetch(); }}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, padding: 10, borderRadius: 10, backgroundColor: Colors.light.surface }}
+                  >
+                    <Ionicons name="notifications-outline" size={17} color={Colors.light.tint} />
+                    <Text style={{ flex: 1, fontSize: 12, color: Colors.light.textSecondary }}>
+                      Las posibles infracciones se consultan en Notificaciones.
+                    </Text>
+                  </Pressable>
                 )}
 
                 {legalResult.warnings.length > 0 && (
