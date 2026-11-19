@@ -91,7 +91,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="usuario"
         options={{
-          href: null,
+          // Mantener la ruta navegable desde el botón superior, pero ocultar su pestaña.
+          tabBarButton: () => null,
           title: t("tabs.more"),
           tabBarIcon: ({ color, size, focused }) => (
             <View style={styles.iconWrap}>{focused && <LinearGradient colors={["#43BFFF", "#0876EC"]} style={[StyleSheet.absoluteFill, styles.iconWrapActive]} />}<Ionicons name="ellipsis-horizontal" size={size} color={focused ? "#FFFFFF" : (typeof color === "string" ? color : Colors.light.tint)} /></View>
