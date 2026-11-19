@@ -15,6 +15,7 @@ import {
   Modal,
   TextInput,
   ScrollView,
+  Linking,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
@@ -2028,7 +2029,11 @@ export default function HistorialScreen() {
           </Pressable>
           )}
           <Pressable
-            onPress={() => router.push("/exportar")}
+            onPress={() => {
+              void Linking.openURL("https://tacoplan.es/mi-tacoplan#generar-informe").catch(() => {
+                Alert.alert("No se pudo abrir Tacoplan", "Comprueba tu conexión e inténtalo de nuevo.");
+              });
+            }}
             style={({ pressed }) => [
               styles.reportBtn,
               screenWidth < 600 && {
