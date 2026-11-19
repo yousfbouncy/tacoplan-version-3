@@ -4197,6 +4197,10 @@ export default function DashboardScreen() {
                 ]}>
                   {t("dashboard.pendingCompensations")}
                 </Text>
+                <Text style={{fontSize: 11, color: Colors.light.textSecondary, marginTop: 3, marginBottom: 6}}>
+                  Las compensaciones se registran automáticamente al completar un descanso válido.
+                  Cálculo orientativo; prevalecen los datos del tacógrafo y la normativa vigente.
+                </Text>
 
                 <View style={[styles.compSummary, isNarrowMobile && { padding: 10, gap: 5 }]}>
                   <View style={[
@@ -4218,23 +4222,6 @@ export default function DashboardScreen() {
                       )}
                     </Text>
                   </View>
-                  {compensationInfo.debtMin > 0 && (
-                    <View style={[
-                      styles.compSummaryRow,
-                      { flexWrap: "wrap" as const, rowGap: 2, columnGap: 8, alignItems: "flex-start" as const },
-                    ]}>
-                      <Text style={[
-                        styles.compSummaryLabel,
-                        isNarrowMobile && { fontSize: 12, flexShrink: 0 },
-                      ]}>Descanso recomendado esta semana</Text>
-                      <Text style={[
-                        styles.compSummaryValue,
-                        isNarrowMobile && { fontSize: 13.5 },
-                      ]}>
-                        45h + {formatMinutosHoras(compensationInfo.debtMin)} = {formatMinutosHoras(45 * 60 + compensationInfo.debtMin)}
-                      </Text>
-                    </View>
-                  )}
                   {estado.compensacionAgregada.fechaPrimerReducido && (
                     <View style={[
                       styles.compSummaryRow,
