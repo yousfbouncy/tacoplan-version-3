@@ -188,3 +188,19 @@ test("rest button resets invalid pauses and credits only a valid 15-minute first
  assert.equal(state.continuousDrivingMs,1*60000);
  assert.equal(state.totals.REST,64*60000);
 });
+
+test("completed 15+30 break never becomes a fresh 15-minute credit after driving resumes",()=>{
+  let log={shiftId:"auto-split",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=changeDriverActivity(log,"REST",t(90));
+  log=changeDriverActivity(log,"DRIVING",t(105)); // first 15m pause
+  log=changeDriverActivity(log,"REST",t(120));
+  assert.equal(getDriverActivityTotals(log,t(150)).qualifiedBreak,true);
+  log=changeDriverActivity(log,"DRIVING",t(150));
+  const state=getDriverActivityTotals(log,t(151));
+  assert.equal(state.firstBreak15Completed,false);
+  assert.equal(state.restButtonMs,0);
+  assert.equal(state.firstBreakProgressMs,0);
+  assert.equal(state.continuousDrivingMs,60000);
+  assert.equal(state.totals.REST,45*60000);
+});
