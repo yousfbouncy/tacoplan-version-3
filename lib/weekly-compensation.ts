@@ -63,3 +63,34 @@ export function isWithinAlertWindow56Days(
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   return midnight >= today - 56 * 86400000 && midnight <= today;
 }
+
+/** Alerta preventiva de planificación semanal; no declara una infracción automática. */
+export function checkWeeklyRestSequence(
+  rests: ReadonlyArray<{startAt: string; endAt: string; durationMin: number}>,
+): Array<{code: "WEEKLY_REST_144H" | "CONSECUTIVE_REDUCED_WEEKLY_RESTS"; message: string}> {
+  const items = rests
+    .filter(r => Number.isFinite(r.durationMin) && r.durationMin >= 24 * 60 &&
+      Number.isFinite(Date.parse(r.startAt)) && Number.isFinite(Date.parse(r.endAt)))
+    .sort((a, b) => a.startAt.localeCompare(b.startAt));
+  const alerts: Array<{code: "WEEKLY_REST_144H" | "CONSECUTIVE_REDUCED_WEEKLY_RESTS"; message: string}> = [];
+  for (let i = 1; i < items.length; i++) {
+    const before = items[i - 1], current = items[i];
+    const elapsedMin = (Date.parse(current.startAt) - Date.parse(before.endAt)) / 60000;
+    if (elapsedMin > 144 * 60) {
+      alerts.push({code:"WEEKLY_REST_144H", message:"Han transcurrido más de 144 horas entre descansos semanales. Revisar planificación."});
+    }
+    const firstWeek = mondayOfIsoWeek(before.startAt);
+    const nextWeek = mondayOfIsoWeek(current.startAt);
+    if (nextWeek - firstWeek === 7 * 86400000 &&
+        before.durationMin < 45 * 60 && current.durationMin < 45 * 60) {
+      alerts.push({code:"CONSECUTIVE_REDUCED_WEEKLY_RESTS", message:"Dos descansos semanales reducidos en semanas consecutivas: comprobar condiciones del transporte internacional y compensaciones."});
+    }
+  }
+  return alerts;
+}
+
+function mondayOfIsoWeek(iso: string): number {
+  const d = new Date(iso);
+  const days = d.getUTCDay() === 0 ? 6 : d.getUTCDay() - 1;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - days);
+}
