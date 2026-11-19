@@ -6,12 +6,13 @@ import {
 } from "@/lib/driver-activities";
 
 import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
+import {useI18n} from "@/lib/i18n-context";
 
 const activityTypes: Array<{type:DriverActivity,label:string,icon:string}> = [
-  {type:"DRIVING",label:"Conducción",icon:"🚛"},
-  {type:"REST",label:"Descanso",icon:"☕"},
-  {type:"AVAILABLE",label:"Disponibilidad",icon:"🕒"},
-  {type:"WORK",label:"Otros trabajos",icon:"🛠️"},
+  {type:"DRIVING",label:"activities.driving",icon:"🚛"},
+  {type:"REST",label:"activities.rest",icon:"☕"},
+  {type:"AVAILABLE",label:"activities.available",icon:"🕒"},
+  {type:"WORK",label:"activities.work",icon:"🛠️"},
 ];
 const format=(milliseconds:number)=> {
   const sec=Math.floor(Math.max(0,milliseconds)/1000);
@@ -24,6 +25,7 @@ const colors={panel:"#102844",card:"#153655",active:"#1266CD",text:"#FFFFFF",sub
 export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   userId:string;shiftId:string;closed?:boolean
 }) {
+  const {t}=useI18n();
   const [log,setLog]=useState<ActivityLog|null>(null);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
@@ -107,16 +109,16 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   },[userId,shiftId,closed]);
   return <View style={{backgroundColor:colors.panel,borderRadius:18,padding:16,marginBottom:15,gap:12}}>
     <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center"}}>
-      <Text style={{color:colors.text,fontWeight:"700",fontSize:17}}>Actividades de la jornada</Text>
+      <Text style={{color:colors.text,fontWeight:"700",fontSize:17}}>{t("activities.title")}</Text>
       {saving?<ActivityIndicator size="small" color={colors.sub}/>:null}
     </View>
     <Pressable onPress={toggleAuto} disabled={autoBusy||closed} accessibilityRole="switch"
       accessibilityState={{checked:autoDriving,disabled:autoBusy||closed}}
       style={{padding:12,borderRadius:10,backgroundColor:autoDriving?"#145B46":"#22435E"}}>
-      <Text style={{color:"#FFFFFF",fontWeight:"700"}}>AutoStart de conducción: {autoDriving?"Activado":"Desactivado"}</Text>
-      <Text style={{color:colors.sub,fontSize:12,marginTop:4}}>Independiente del inicio automático de jornada. Solo usa GPS con una jornada abierta.</Text>
+      <Text style={{color:"#FFFFFF",fontWeight:"700"}}>{t("activities.autoTitle")}: {autoDriving?t("activities.enabled"):t("activities.disabled")}</Text>
+      <Text style={{color:colors.sub,fontSize:12,marginTop:4}}>{t("activities.autoExplanation")}</Text>
     </Pressable>
-    <Text style={{color:colors.sub,fontSize:12}}>Selecciona una actividad. Al cambiar, se detiene la anterior y se conserva su tiempo.</Text>
+    <Text style={{color:colors.sub,fontSize:12}}>{t("activities.chooseExplanation")}</Text>
     <View style={{flexDirection:"row",flexWrap:"wrap",gap:9}}>
       {activityTypes.map(item=>{
         const selected=totals.current===item.type;
@@ -124,7 +126,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
           accessibilityRole="button" accessibilityState={{selected,disabled:!log||saving||closed}}
           style={{width:"48%",backgroundColor:selected?colors.active:colors.card,
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
-          <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
+          <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {t(item.label)}</Text>
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
             {format(item.type==="REST"?totals.restButtonMs:totals.totals[item.type])}
           </Text>
@@ -132,47 +134,47 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       })}
     </View>
     <View style={{borderRadius:12,padding:12,backgroundColor:"#0B2139",gap:5}}>
-      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Resumen de actividades de esta jornada</Text>
+      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{t("activities.summaryTitle")}</Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Conducción {format(totals.totals.DRIVING)} · Disponibilidad {format(totals.totals.AVAILABLE)}
+        {t("activities.driving")} {format(totals.totals.DRIVING)} · {t("activities.available")} {format(totals.totals.AVAILABLE)}
       </Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Otros trabajos {format(totals.totals.WORK)} · Pausas totales {format(totals.totals.REST)}
+        {t("activities.work")} {format(totals.totals.WORK)} · {t("activities.totalBreaks")} {format(totals.totals.REST)}
       </Text>
       {currentSegment ? <Text style={{color:"#75C9FF",fontSize:12}}>
-        En curso: {activityTypes.find(a=>a.type===currentSegment.type)?.label} · {format(currentSegmentMs)}
+        {t("activities.inProgress")}: {t(activityTypes.find(a=>a.type===currentSegment.type)?.label||"activities.driving")} · {format(currentSegmentMs)}
       </Text> : null}
     </View>
     <Text style={{color:colors.sub,fontSize:12}}>
-      Conducción desde la última pausa reglamentaria: {format(totals.continuousDrivingMs)}
+      {t("activities.drivingSince")}: {format(totals.continuousDrivingMs)}
     </Text>
     <View style={{borderRadius:12,padding:12,borderWidth:1,borderColor:"#31587B",gap:5}}>
-      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Pausa reglamentaria · 15 + 30 o 45 seguidos</Text>
+      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{t("activities.breakTitle")}</Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Primer tramo: {format(totals.firstBreakProgressMs)} / 00:15:00 {totals.firstBreakReady ? "✓" : ""}
+        {t("activities.firstPart")}: {format(totals.firstBreakProgressMs)} / 00:15:00 {totals.firstBreakReady ? "✓" : ""}
       </Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Segundo tramo: {format(totals.secondBreakProgressMs)} / 00:30:00
+        {t("activities.secondPart")}: {format(totals.secondBreakProgressMs)} / 00:30:00
       </Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Alternativa sin interrupción: {format(totals.uninterruptedBreakProgressMs)} / 00:45:00
+        {t("activities.continuousOption")}: {format(totals.uninterruptedBreakProgressMs)} / 00:45:00
       </Text>
       <Text style={{color:"#8DC7FF",fontSize:11}}>
-        El primer tramo se reconoce con 15 min como mínimo. El segundo necesita 30 min seguidos; si se interrumpe antes, vuelve a 0. En Historial nunca se pierden los minutos de pausa.
+        {t("activities.splitExplanation")}
       </Text>
     </View>
     <Text style={{color:colors.sub,fontSize:12}}>
       {totals.current==="REST"
         ? totals.qualifiedBreak
-          ? "Pausa de conducción completada (45 min o 15 + 30). El descanso diario se comprueba por separado."
-          : "Descanso actual: "+format(totals.currentRestMs)+" · Para completar pausa de conducción faltan "+format(totals.breakRemainingMs)
+          ? t("activities.breakComplete")
+          : t("activities.currentBreak")+": "+format(totals.currentRestMs)+" · "+t("activities.remaining")+": "+format(totals.breakRemainingMs)
         : totals.firstBreak15Completed
-          ? "Primera pausa de 15 min registrada. Falta una segunda pausa de 30 min."
-          : "Para reiniciar la conducción acumulada se necesitan 45 min de pausa, o 15 + 30 min."}
+          ? t("activities.firstRecorded")
+          : t("activities.requireBreak")}
     </Text>
     <Text style={{color:colors.sub,fontSize:11}}>
-      Pausas realmente registradas: {format(totals.totals.REST)} · Pausa actual sin interrupción: {format(totals.currentRestMs)}
+      {t("activities.actualBreaks")}: {format(totals.totals.REST)} · {t("activities.currentContinuous")}: {format(totals.currentRestMs)}
     </Text>
-    <Text style={{color:colors.sub,fontSize:11}}>Registro orientativo manual o automático · No sustituye al tacógrafo. El segundo plano requiere permiso adicional.</Text>
+    <Text style={{color:colors.sub,fontSize:11}}>{t("activities.disclaimer")}</Text>
   </View>;
 }
