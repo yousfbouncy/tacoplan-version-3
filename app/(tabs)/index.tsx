@@ -1,3 +1,4 @@
+import HeaderMenuButton from "@/components/HeaderMenuButton";
 import { dashboardQueryKey, restCountdown } from "@/lib/dashboard-state";
 import { suggestClosingDiet, applyClosingDietSuggestion } from "@/lib/automatic-diet-selection";
 import type { BaseLocationConfig } from "@/lib/base-location";
@@ -2667,8 +2668,7 @@ export default function DashboardScreen() {
                 </View>
               )}
             </Pressable>
-
-
+            <HeaderMenuButton />
           </View>
           <Text style={styles.headerSubtitle}>{t("login.appDesc")}</Text>
           {lastSyncTime && (
