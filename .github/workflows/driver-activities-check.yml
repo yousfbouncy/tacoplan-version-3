@@ -18,6 +18,8 @@ on:
       - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
+      - 'lib/autostart/driving.ts'
+      - 'lib/autostart/driving-activity-engine.ts'
       - 'lib/large-safe-storage.ts'
       - 'lib/large-safe-storage-engine.ts'
       - 'tests/large-safe-storage.test.ts'
@@ -31,6 +33,7 @@ on:
       - 'app/autostart.tsx'
       - 'tests/autostart-task.test.ts'
       - 'tests/autostart-engine.test.ts'
+      - 'tests/driving-activity-autostart.test.ts'
       - 'app/_layout.tsx'
       - 'app/(tabs)/index.tsx'
       - 'tests/driver-activities.test.ts'
@@ -53,6 +56,8 @@ on:
       - 'tests/notification-sounds.test.ts'
       - 'lib/driver-activities.ts'
       - 'lib/local-storage.ts'
+      - 'lib/autostart/driving.ts'
+      - 'lib/autostart/driving-activity-engine.ts'
       - 'lib/large-safe-storage.ts'
       - 'lib/large-safe-storage-engine.ts'
       - 'tests/large-safe-storage.test.ts'
@@ -79,5 +84,6 @@ jobs:
       - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts tests/period-audit-actions.test.ts
       - run: node --import tsx --test tests/notification-sounds.test.ts
       - run: node --import tsx --test tests/large-safe-storage.test.ts
+      - run: node --import tsx --test tests/driving-activity-autostart.test.ts
       - run: npm run typecheck
       - run: npm test
