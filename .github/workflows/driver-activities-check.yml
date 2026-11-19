@@ -14,6 +14,8 @@ on:
       - 'lib/legalEngine.ts'
       - 'lib/weekly-compensation.ts'
       - 'tests/weekly-compensation.test.ts'
+      - 'lib/period-audit-actions.ts'
+      - 'tests/period-audit-actions.test.ts'
       - 'lib/autostart/**'
       - 'app/autostart.tsx'
       - 'tests/autostart-task.test.ts'
@@ -36,6 +38,8 @@ on:
       - 'lib/legalEngine.ts'
       - 'lib/weekly-compensation.ts'
       - 'tests/weekly-compensation.test.ts'
+      - 'lib/period-audit-actions.ts'
+      - 'tests/period-audit-actions.test.ts'
       - 'tests/driver-activities.test.ts'
       - 'app/(tabs)/index.tsx'
       - '.github/workflows/driver-activities-check.yml'
@@ -50,6 +54,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts
+      - run: node --import tsx --test tests/account-email.test.ts tests/weekly-compensation.test.ts tests/period-audit-actions.test.ts
       - run: npm run typecheck
       - run: npm test
