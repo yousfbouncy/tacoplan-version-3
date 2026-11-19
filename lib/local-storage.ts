@@ -1,4 +1,4 @@
-import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days } from "./weekly-compensation";
+import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWholeCompensations, isCompensationInTime, isWithinAlertWindow56Days, checkWeeklyRestSequence } from "./weekly-compensation";
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
@@ -3802,7 +3802,28 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     };
   }
 
+  // Alertas preventivas de planificación semanal: sólo descansos
+  // identificados como semanales y dentro de la ventana visual de 56 días.
+  const recordedWeekly = all
+    .filter(j => j.previousRestStartAt && j.previousRestEndAt &&
+      j.descansoAnteriorMin != null &&
+      j.descansoAnteriorMin >= 24 * 60 &&
+      isWithinAlertWindow56Days(j.previousRestStartAt, ahora) &&
+      (j.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ||
+       j.tipoDescansoAnterior === "DESCANSO_SEMANAL_COMPLETO"))
+    .map(j => ({
+      startAt: j.previousRestStartAt!,
+      endAt: j.previousRestEndAt!,
+      durationMin: j.descansoAnteriorMin!,
+    }));
+  const weeklySafetyAlerts = checkWeeklyRestSequence(recordedWeekly);
+
   const alertas: EstadoLegal["alertas"] = [];
+  for (const safety of weeklySafetyAlerts) {
+    if (!alertas.some(x => x.mensaje === safety.message)) {
+      alertas.push({ tipo: "warning", mensaje: safety.message });
+    }
+  }
   const restanteSemanalMin = maxSemanalMin - conduccionSemanalMin;
   const restanteBisemanalMin = maxBisemanalMin - conduccionBisemanalMin;
 
