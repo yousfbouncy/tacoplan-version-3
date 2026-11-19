@@ -1,3 +1,4 @@
+import HeaderMenuButton from "@/components/HeaderMenuButton";
 import SubscriptionGate from "@/components/SubscriptionGate";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useMemo, useCallback, useEffect } from "react";
@@ -671,9 +672,8 @@ function DietasFeatureContent() {
               ]}
             >
               <Ionicons name="refresh-outline" size={18} color={Colors.light.tint} />
-
             </Pressable>
-
+            <HeaderMenuButton />
           </View>
         </View>
 
