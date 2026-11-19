@@ -26,7 +26,7 @@ AS $$
   CROSS JOIN LATERAL (
     SELECT CASE
       WHEN COALESCE(NULLIF(left(j.end_at, 10), ''), NULLIF(left(j.fecha_fin, 10), ''), NULLIF(left(j.fecha_inicio, 10), ''))
-           ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
+           ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       THEN COALESCE(NULLIF(left(j.end_at, 10), ''), NULLIF(left(j.fecha_fin, 10), ''), NULLIF(left(j.fecha_inicio, 10), ''))::date
       ELSE NULL::date
     END AS occurred_on
