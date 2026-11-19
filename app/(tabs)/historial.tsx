@@ -1069,7 +1069,7 @@ function JornadaItem({
 
 export default function HistorialScreen() {
   const { width: screenWidth } = useWindowDimensions();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const qc = useQueryClient();
@@ -2057,7 +2057,7 @@ export default function HistorialScreen() {
           accessibilityLabel="Generar informe"
           accessibilityHint="Abrir el generador de informes en la web de Tacoplan"
           onPress={() => {
-            void Linking.openURL("https://tacoplan.es/mi-tacoplan#generar-informe").catch(() => {
+            void Linking.openURL(`https://tacoplan.es/mi-tacoplan?lang=${encodeURIComponent(locale)}#generar-informe`).catch(() => {
               Alert.alert("No se pudo abrir Tacoplan", "Comprueba tu conexión e inténtalo de nuevo.");
             });
           }}
