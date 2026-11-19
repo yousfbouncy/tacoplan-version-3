@@ -70,8 +70,6 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     return ()=>clearInterval(timer);
   },[log?.shiftId,closed]);
   const totals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
-  const currentSegment=log?.segments.findLast(s=>s.endedAt===null);
-  const currentSegmentMs=currentSegment?Math.max(0,now-Date.parse(currentSegment.startedAt)):0;
   const choose=useCallback(async(type:DriverActivity)=>{
     if(!log||closed||lock.current)return;
     lock.current=true;
@@ -133,48 +131,6 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
         </Pressable>;
       })}
     </View>
-    <View style={{borderRadius:12,padding:12,backgroundColor:"#0B2139",gap:5}}>
-      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{t("activities.summaryTitle")}</Text>
-      <Text style={{color:colors.sub,fontSize:12}}>
-        {t("activities.driving")} {format(totals.totals.DRIVING)} · {t("activities.available")} {format(totals.totals.AVAILABLE)}
-      </Text>
-      <Text style={{color:colors.sub,fontSize:12}}>
-        {t("activities.work")} {format(totals.totals.WORK)} · {t("activities.totalBreaks")} {format(totals.totals.REST)}
-      </Text>
-      {currentSegment ? <Text style={{color:"#75C9FF",fontSize:12}}>
-        {t("activities.inProgress")}: {t(activityTypes.find(a=>a.type===currentSegment.type)?.label||"activities.driving")} · {format(currentSegmentMs)}
-      </Text> : null}
-    </View>
-    <Text style={{color:colors.sub,fontSize:12}}>
-      {t("activities.drivingSince")}: {format(totals.continuousDrivingMs)}
-    </Text>
-    <View style={{borderRadius:12,padding:12,borderWidth:1,borderColor:"#31587B",gap:5}}>
-      <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{t("activities.breakTitle")}</Text>
-      <Text style={{color:colors.sub,fontSize:12}}>
-        {t("activities.firstPart")}: {format(totals.firstBreakProgressMs)} / 00:15:00 {totals.firstBreakReady ? "✓" : ""}
-      </Text>
-      <Text style={{color:colors.sub,fontSize:12}}>
-        {t("activities.secondPart")}: {format(totals.secondBreakProgressMs)} / 00:30:00
-      </Text>
-      <Text style={{color:colors.sub,fontSize:12}}>
-        {t("activities.continuousOption")}: {format(totals.uninterruptedBreakProgressMs)} / 00:45:00
-      </Text>
-      <Text style={{color:"#8DC7FF",fontSize:11}}>
-        {t("activities.splitExplanation")}
-      </Text>
-    </View>
-    <Text style={{color:colors.sub,fontSize:12}}>
-      {totals.current==="REST"
-        ? totals.qualifiedBreak
-          ? t("activities.breakComplete")
-          : t("activities.currentBreak")+": "+format(totals.currentRestMs)+" · "+t("activities.remaining")+": "+format(totals.breakRemainingMs)
-        : totals.firstBreak15Completed
-          ? t("activities.firstRecorded")
-          : t("activities.requireBreak")}
-    </Text>
-    <Text style={{color:colors.sub,fontSize:11}}>
-      {t("activities.actualBreaks")}: {format(totals.totals.REST)} · {t("activities.currentContinuous")}: {format(totals.currentRestMs)}
-    </Text>
-    <Text style={{color:colors.sub,fontSize:11}}>{t("activities.disclaimer")}</Text>
+
   </View>;
 }
