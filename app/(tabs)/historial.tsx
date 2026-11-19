@@ -2029,29 +2029,6 @@ export default function HistorialScreen() {
           </Pressable>
           )}
           <Pressable
-            onPress={() => {
-              void Linking.openURL("https://tacoplan.es/mi-tacoplan#generar-informe").catch(() => {
-                Alert.alert("No se pudo abrir Tacoplan", "Comprueba tu conexión e inténtalo de nuevo.");
-              });
-            }}
-            style={({ pressed }) => [
-              styles.reportBtn,
-              screenWidth < 600 && {
-                width: 44,
-                height: 44,
-                paddingHorizontal: 0,
-                paddingVertical: 0,
-              },
-              { opacity: pressed ? 0.9 : 1 },
-            ]}
-            hitSlop={8}
-          >
-            <Ionicons name="document-text-outline" size={16} color="#fff" />
-            {screenWidth >= 600 ? (
-              <Text style={styles.reportBtnText}>{t("Generar informe")}</Text>
-            ) : null}
-          </Pressable>
-          <Pressable
             accessibilityRole="button"
             accessibilityLabel="Buscar en el historial"
             onPress={() => setSearchVisible(v => !v)}
@@ -2073,6 +2050,34 @@ export default function HistorialScreen() {
             <Ionicons name="search-outline" size={20} color={Colors.light.tint} />
           </Pressable>
         </View>
+      </View>
+      <View style={{ width: "100%", maxWidth: 760, alignSelf: "center", paddingHorizontal: 16, marginBottom: 10 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Generar informe"
+          accessibilityHint="Abrir el generador de informes en la web de Tacoplan"
+          onPress={() => {
+            void Linking.openURL("https://tacoplan.es/mi-tacoplan#generar-informe").catch(() => {
+              Alert.alert("No se pudo abrir Tacoplan", "Comprueba tu conexión e inténtalo de nuevo.");
+            });
+          }}
+          style={({ pressed }) => [
+            styles.reportBtn,
+            {
+              minHeight: 54,
+              justifyContent: "center",
+              paddingVertical: 14,
+              backgroundColor: "#1765E8",
+              borderWidth: 1,
+              borderColor: "#6CA4FF",
+              opacity: pressed ? 0.88 : 1,
+            },
+          ]}
+          hitSlop={6}
+        >
+          <Ionicons name="document-text-outline" size={22} color="#FFFFFF" />
+          <Text style={[styles.reportBtnText, { fontSize: 17, color: "#FFFFFF" }]}>Generar informe</Text>
+        </Pressable>
       </View>
       {searchVisible && <TextInput accessibilityLabel="Buscar fecha o lugar" placeholder="Buscar fecha o lugar" placeholderTextColor="#64748B" value={historySearch} onChangeText={setHistorySearch} style={{ backgroundColor: "#11243B", color: Colors.light.text, borderRadius: 18, marginHorizontal: 16, marginBottom: 8, padding: 14 }} />}
       <View style={styles.periodoNav}>
