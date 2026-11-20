@@ -112,7 +112,8 @@ test("3.0.6: 60-second confirmed traffic stop backdates closure to first stopped
  assert.equal(h.log.segments.at(-1).endedAt,null);
  await h.deliver(location(121,0));
  assert.equal(h.log.segments[0].endedAt,new Date(epoch+61_000).toISOString());
- assert.equal(h.log.segments.filter((x:any)=>x.type==="REST").length,0);
+ assert.equal(h.log.segments.at(-1).type,"REST");
+ assert.equal(h.log.segments.at(-1).startedAt,new Date(epoch+61_000).toISOString());
 });
 
 test("3.0.6: GPS short rest under 15m becomes WORK on confirmed movement",async()=>{
