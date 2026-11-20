@@ -3345,8 +3345,7 @@ export default function DashboardScreen() {
                 <Text style={styles.activeShiftCloseText}>Cerrar jornada</Text>
               </Pressable>
 
-            {/* Diagnóstico iOS 3.0.6: no montar el panel de actividades mientras aislamos un fallo nativo al recuperar jornadas abiertas. No afecta a las alarmas ni al widget Android. */}
-             {Platform.OS !== "ios" && user?.id && abierta?.id ? <DriverActivityPanel key={String(abierta.id)} userId={user.id} shiftId={String(abierta.id)} /> : null}
+            {user?.id && abierta?.id ? <DriverActivityPanel key={String(abierta.id)} userId={user.id} shiftId={String(abierta.id)} /> : null}
 
             {abierta.descansoAnteriorMin != null && (
               <View style={{
