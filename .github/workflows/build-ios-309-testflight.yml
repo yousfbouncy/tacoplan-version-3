@@ -5,6 +5,7 @@ on:
       - fix/ios-expo-updates-startup-309
     paths:
       - .github/workflows/build-ios-309-testflight.yml
+      - app.json
   workflow_dispatch:
 jobs:
   build-ios:
@@ -23,11 +24,16 @@ jobs:
         run: |
           node - <<'NODE'
           const e = require('./app.json').expo;
-          if (e.version !== '3.0.9' || e.ios.buildNumber !== '15' ||
+          if (e.version !== '3.0.9' || e.ios.buildNumber !== '16' ||
               e.runtimeVersion?.policy !== 'appVersion' ||
               e.updates.checkAutomatically !== 'NEVER' ||
               e.ios.bundleIdentifier !== 'com.tacoplan')
             throw Error('iOS 3.0.9 native startup config differs');
+          if ('NSAlarmKitUsageDescription' in (e.ios.infoPlist || {}))
+            throw Error('AlarmKit description still enabled');
+          const fs = require('fs');
+          if (fs.existsSync('modules/tacoplan-alarmkit/expo-module.config.json'))
+            throw Error('AlarmKit native module still linked');
           NODE
       - name: Verify Expo access
         run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN" && exit 1)
