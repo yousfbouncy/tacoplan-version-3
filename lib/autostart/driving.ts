@@ -10,6 +10,7 @@ export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
 const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
 const MIN_SPEED = 15 / 3.6;
+const STOP_SPEED = 1 / 3.6;
 const CONFIRM_MS = 3 * 60_000;
 const STOP_MS = 60_000;
 const MAX_GAP_MS = 90_000;
@@ -47,36 +48,77 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
     const ts = fix.timestamp;
     if (!Number.isFinite(ts) || ts <= detection.lastFix) continue;
-    const previous = detection.lastFix;
+    const previousFix = detection.lastFix;
     detection.lastFix = ts;
-    if (previous && ts - previous > MAX_GAP_MS) {
+    if (previousFix && ts - previousFix > MAX_GAP_MS) {
+      // Do not infer a full minute of stationary time from missing GPS samples.
       detection.movingSince = null;
       detection.stoppedSince = null;
     }
     const speed = fix.coords.speed;
-    const good = typeof speed === "number" && Number.isFinite(speed) &&
-      typeof fix.coords.accuracy === "number" && fix.coords.accuracy <= 75;
-    if (!good) { detection.movingSince = null; continue; }
-    if (speed >= MIN_SPEED) {
+    const accuracy = fix.coords.accuracy;
+    const good = typeof speed === "number" && Number.isFinite(speed) && speed >= 0 &&
+      typeof accuracy === "number" && Number.isFinite(accuracy) &&
+      accuracy >= 0 && accuracy <= 75;
+    if (!good) {
+      // An unreliable fix cannot confirm a stop or a restart.
+      detection.movingSince = null;
       detection.stoppedSince = null;
+      continue;
+    }
+    if (speed < STOP_SPEED) {
+      detection.movingSince = null;
+      if (detection.stoppedSince === null) detection.stoppedSince = ts;
+      // Keep DRIVING selected during the first minute; only then close the
+      // driving segment retroactively at the FIRST stationary GPS fix.
+      if (ts - detection.stoppedSince >= STOP_MS) {
+        const log = await loadDriverActivities(userId, shiftId);
+        const active = log.segments.findLast(seg => seg.endedAt === null);
+        if (active?.type !== "DRIVING") continue;
+        const startedAt = Date.parse(active.startedAt);
+        const pauseAt = new Date(Math.max(detection.stoppedSince, startedAt));
+        const next = pauseDriverActivity(log, pauseAt);
+        if (next !== log) await saveDriverActivities(userId, next);
+      }
+      continue;
+    }
+
+    // Above 1 km/h before the minute has elapsed: keep driving selected but
+    // subtract the COMPLETE short stop (even 20 s) from the driving total.
+    // The gap stays unclassified; it is not a legal REST activity.
+    const stoppedSince = detection.stoppedSince;
+    detection.stoppedSince = null;
+    if (stoppedSince !== null && ts - stoppedSince < STOP_MS) {
+      const log = await loadDriverActivities(userId, shiftId);
+      const active = log.segments.findLast(seg => seg.endedAt === null);
+      if (active?.type === "DRIVING") {
+        const endAt = Math.max(stoppedSince, Date.parse(active.startedAt));
+        if (ts > endAt) {
+          const paused = pauseDriverActivity(log, new Date(endAt));
+          const resumed = changeDriverActivity(paused, "DRIVING", new Date(ts));
+          if (resumed !== log) await saveDriverActivities(userId, resumed);
+        }
+        detection.movingSince = null;
+        continue;
+      }
+    }
+
+    // An already confirmed stop follows the normal (existing) 15 km/h
+    // movement confirmation. Merely reaching 1 km/h is not a new driving
+    // authorization after a confirmed stop.
+    if (speed >= MIN_SPEED) {
       if (detection.movingSince === null) detection.movingSince = ts;
       if (ts - detection.movingSince >= CONFIRM_MS) {
         const log = await loadDriverActivities(userId, shiftId);
-        if (log.segments.findLast(s => s.endedAt === null)?.type !== "DRIVING") {
-          const latestStart = log.segments.findLast(s => s.endedAt === null)?.startedAt;
-          const effectiveStart = Math.max(detection!.movingSince!, latestStart ? Date.parse(latestStart) : 0);
-          await saveDriverActivities(userId, changeDriverActivity(log, "DRIVING", new Date(effectiveStart)));
+        if (log.segments.findLast(seg => seg.endedAt === null)?.type !== "DRIVING") {
+          const currentStart = log.segments.findLast(seg => seg.endedAt === null)?.startedAt;
+          const effectiveStart = Math.max(detection.movingSince, currentStart ? Date.parse(currentStart) : 0);
+          const next = changeDriverActivity(log, "DRIVING", new Date(effectiveStart));
+          if (next !== log) await saveDriverActivities(userId, next);
         }
       }
     } else {
       detection.movingSince = null;
-      if (detection.stoppedSince === null) detection.stoppedSince = ts;
-      if (ts - detection.stoppedSince >= STOP_MS) {
-        const log = await loadDriverActivities(userId, shiftId);
-        const next = pauseDriverActivity(log, new Date(Math.max(detection!.stoppedSince!,
-          Date.parse(log.segments.findLast(s => s.endedAt === null)?.startedAt || "1970-01-01"))));
-        if (next !== log) await saveDriverActivities(userId, next);
-      }
     }
   }
 }
@@ -120,7 +162,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
       foreground = null;
       if (!await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
         await Location.startLocationUpdatesAsync(DRIVING_TASK, {
-          accuracy: Location.Accuracy.Balanced, timeInterval: 10000, distanceInterval: 10,
+          accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 0,
           activityType: Location.ActivityType.AutomotiveNavigation,
           foregroundService: { notificationTitle: "Tacoplan · Conducción automática",
             notificationBody: "Detectando conducción durante la jornada" },
@@ -133,7 +175,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
       }
       if (AppState.currentState === "active" && !foreground) {
         const subscription = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, timeInterval: 10000, distanceInterval: 10 },
+          { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 0 },
           fix => { void enqueue([fix]); },
         );
         if (activeUser !== userId || AppState.currentState !== "active") subscription.remove();
