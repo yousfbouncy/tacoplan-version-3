@@ -58,6 +58,44 @@ function parseStoredLog(raw: string | null, shiftId: string): ActivityLog {
 export async function loadLocalDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
   return parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
 }
+/** Cloud-only corrections use independent IDs, so normal local-first sync can
+ * never overwrite them. Keep them OUT of the saved local log and all uploads. */
+export async function loadActivityCorrections(userId:string,shiftId:string):Promise<ActivitySegment[]> {
+  try {
+    const {supabase}=await import("@/lib/supabase");
+    const {data,error}=await supabase.from("tacho_activities")
+      .select("tipo,inicio,fin")
+      .eq("user_id",userId).eq("shift_id",shiftId)
+      .eq("source","admin_adjustment")
+      .order("inicio",{ascending:true});
+    if(error)throw error;
+    return sanitizeLog({segments:(data||[]).map(row=>({
+      type:fromCloudType[String(row.tipo)],
+      startedAt:String(row.inicio),
+      endedAt:row.fin==null?null:String(row.fin),
+    }))},shiftId).segments.filter(segment=>segment.endedAt!==null);
+  } catch(error) {
+    console.warn("[ACTIVITIES] Unable to load cloud corrections",error);
+    return [];
+  }
+}
+
+/** Merge corrections only for display/legal-break preview, never for sync.
+ * Ignore overlapping corrections to avoid double counting after a local edit.
+ * Preserve all local source segments and their stable upload indices. */
+export function mergeActivityCorrections(log:ActivityLog,corrections:ActivitySegment[]):ActivityLog {
+  if(!corrections.length)return log;
+  const extra=corrections.filter(item=>{
+    const a=Date.parse(item.startedAt),b=Date.parse(item.endedAt||"");
+    return Number.isFinite(a)&&Number.isFinite(b)&&b>a&&!log.segments.some(seg=>{
+      const c=Date.parse(seg.startedAt),d=seg.endedAt?Date.parse(seg.endedAt):Infinity;
+      return c<b&&d>a;
+    });
+  });
+  if(!extra.length)return log;
+  return {...log,segments:[...log.segments,...extra].sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt))};
+}
+
 export async function loadDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
   const stored = await loadLocalDriverActivities(userId,shiftId);
   if (stored.segments.length) return stored;
