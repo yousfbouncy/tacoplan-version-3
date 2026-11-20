@@ -5,7 +5,7 @@ import {
   getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
-import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
+import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring,readPendingDrivingStop} from "@/lib/autostart/driving";
 import {useI18n} from "@/lib/i18n-context";
 import {useSubscriptionAccess,readSubscriptionAccess} from "@/lib/subscription-access";
 
@@ -34,6 +34,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   const [saving,setSaving]=useState(false);
   const [autoDriving,setAutoDriving]=useState(false);
   const [autoBusy,setAutoBusy]=useState(false);
+  const [pendingStopSince,setPendingStopSince]=useState<number|null>(null);
   useEffect(()=>{
     let live=true;
     void isDrivingAutoStartEnabled(userId).then(v=>{if(live)setAutoDriving(v)}).catch(()=>{});
@@ -96,7 +97,26 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     const timer=setInterval(()=>setNow(Date.now()),1000);
     return ()=>clearInterval(timer);
   },[log?.shiftId,closed]);
-  const totals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
+  useEffect(()=>{
+    if(closed){setPendingStopSince(null);return;}
+    let live=true;
+    const refresh=async()=>{
+      const stop=await readPendingDrivingStop(userId,shiftId);
+      if(live)setPendingStopSince(stop?.stoppedSince??null);
+    };
+    void refresh();
+    const timer=setInterval(()=>void refresh(),1500);
+    return ()=>{live=false;clearInterval(timer);setPendingStopSince(null)};
+  },[userId,shiftId,closed]);
+  const currentDrivingSegment=log?.segments.findLast(s=>s.endedAt===null);
+  const liveStoppedMs=currentDrivingSegment?.type==="DRIVING" && pendingStopSince!==null
+    ?Math.max(0,now-Math.max(pendingStopSince,Date.parse(currentDrivingSegment.startedAt))):0;
+  const baseTotals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
+  const totals={
+    ...baseTotals,
+    totals:{...baseTotals.totals,DRIVING:Math.max(0,baseTotals.totals.DRIVING-liveStoppedMs)},
+    continuousDrivingMs:Math.max(0,baseTotals.continuousDrivingMs-liveStoppedMs),
+  };
   const choose=useCallback(async(type:DriverActivity)=>{
     if(!log||closed||lock.current||planLoading||!canManageActivities)return;
     lock.current=true;
