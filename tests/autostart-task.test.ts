@@ -5,7 +5,7 @@ import { withTimeout } from "../lib/autostart/runtime";
 
 const mocked = ["expo-task-manager", "expo-notifications", "@react-native-async-storage/async-storage",
   "@/lib/local-storage", "@/lib/user-scope", "@/lib/availability-alarms", "@/lib/jornada-widget-sync",
-  "@/lib/query-client", "@/lib/supabase", "expo-location"];
+  "@/lib/query-client", "@/lib/supabase", "expo-location", "@/lib/paid-automation-access"];
 const bundled = build({
   entryPoints: ["lib/autostart/task.ts"], bundle: true, write: false, platform: "node", format: "cjs",
   plugins: [{ name: "native-adapters", setup(b) {
@@ -17,7 +17,7 @@ const epoch = Date.parse("2026-10-27T08:00:00Z");
 function fix(seconds: number, speed = 15, accuracy = 5) {
   return { timestamp: epoch + seconds * 1000, coords: { speed: speed / 3.6, accuracy, latitude: 41.5, longitude: 1.9 } };
 }
-async function harness(options: { cloudFails?: boolean; createFails?: boolean; otherUser?: boolean; open?: boolean; lastEndLocation?: string | null } = {}) {
+async function harness(options: { cloudFails?: boolean; createFails?: boolean; otherUser?: boolean; open?: boolean; lastEndLocation?: string | null; paidAccess?: boolean } = {}) {
   let stored = JSON.stringify({ userId: "u1", enabled: true, candidate: null, lastDetectedAt: 0, proposals: [], movementSegments: [], firstMovementAt: null });
   let callback: any;
   let open: any = options.open ? { id: "manual" } : null;
@@ -47,6 +47,7 @@ async function harness(options: { cloudFails?: boolean; createFails?: boolean; o
     "@/lib/availability-alarms": { AVAILABILITY_ALARMS_KEY: "alarms", async syncAvailabilityAlarms() {} },
     "@/lib/jornada-widget-sync": { async syncJornadaWidget() {} },
     "@/lib/supabase": { supabase: cloud },
+    "@/lib/paid-automation-access": { async canRunPaidAutomation() { return options.paidAccess !== false; } },
   };
   const code = (await bundled).outputFiles[0].text;
   const module = { exports: {} };
@@ -161,4 +162,11 @@ test("five-minute GPS sampling windows can still confirm the first detected move
   await h.deliver(fix(900));
   assert.equal(h.creates(), 1);
   assert.equal(h.shift().horaInicio, new Date(epoch).toTimeString().slice(0, 5));
+});
+
+test("free plan entitlement prevents GPS AutoStart from creating a shift", async () => {
+  const h = await harness({ paidAccess: false });
+  await h.deliver(fix(0), fix(60), fix(120), fix(180));
+  assert.equal(h.creates(), 0);
+  assert.equal(h.notifications.length, 0);
 });
