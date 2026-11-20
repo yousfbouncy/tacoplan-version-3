@@ -72,6 +72,8 @@ test("3.0.6: backs up start to first slow maneuver after 60-second confirmation 
  await h.deliver(location(30,6.1));
  assert.equal(h.log.segments.length,0);
  await h.deliver(location(60,6.1));
+ assert.equal(h.log.segments.length,0);
+ await h.deliver(location(90,6.1));
  assert.equal(h.log.segments.length,1);
  assert.equal(h.log.segments[0].type,"DRIVING");
  assert.equal(h.log.segments[0].startedAt,new Date(epoch).toISOString());
