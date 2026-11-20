@@ -1,0 +1,42 @@
+name: Publish 3.0.8 admin updates screen OTA
+on:
+  push:
+    branches:
+      - fix/admin-update-config-duplicate-rows-mobile
+    paths:
+      - .github/workflows/publish-admin-updates-fix-308.yml
+  workflow_dispatch:
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify app release and OTA environment
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(e.version!=='3.0.8' || e.android.versionCode!==20215 ||
+             e.runtimeVersion?.policy!=='appVersion' || !e.updates?.enabled ||
+             eas.build.production.channel!=='production') throw Error('Unexpected OTA runtime');
+          NODE
+      - run: test -n "$EXPO_TOKEN" || (echo "Expo credentials missing" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+      - name: Publish Android 3.0.8 OTA
+        run: |
+          npx --yes eas-cli update --channel production --platform android --non-interactive --message "Tacoplan 3.0.8: admin actualizaciones sin registros duplicados"
+      - name: Publish iPhone 3.0.8 OTA
+        run: |
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.8: admin actualizaciones sin registros duplicados"
