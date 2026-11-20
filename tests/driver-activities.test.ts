@@ -164,3 +164,24 @@ test("closing uses recorded driving time and can split Sunday/Monday without inv
   assert.equal(summary.closed.segments[2].endedAt,t(142).toISOString());
   assert.equal(getDriverActivityTotals(summary.closed,t(200)).totals.DRIVING,92*60000);
 });
+
+
+test("20-second GPS stop is excluded from driving without creating a REST segment",()=>{
+  let log={shiftId:"short-stop",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  const paused=pauseDriverActivity(log,new Date(t(1).getTime()));
+  log=changeDriverActivity(paused,"DRIVING",new Date(t(1).getTime()+20_000));
+  const state=getDriverActivityTotals(log,new Date(t(2).getTime()));
+  assert.equal(state.totals.DRIVING,100_000);
+  assert.equal(state.totals.REST,0);
+  assert.equal(state.current,"DRIVING");
+});
+test("stop confirmed after one minute is backdated to the first stationary sample",()=>{
+  let log={shiftId:"long-stop",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+  log=changeDriverActivity(log,"DRIVING",t(0));
+  log=pauseDriverActivity(log,t(1));
+  const state=getDriverActivityTotals(log,t(3));
+  assert.equal(state.totals.DRIVING,60_000);
+  assert.equal(state.current,null);
+  assert.equal(state.totals.REST,0);
+});
