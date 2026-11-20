@@ -9,6 +9,10 @@ on:
       - 'app/(tabs)/index.tsx'
       - lib/availability-alarms.ts
       - lib/alarmkit-bridge.ts
+      - lib/autostart/driving.ts
+      - components/DriverActivityPanel.tsx
+      - 'app/(tabs)/historial.tsx'
+      - tests/driver-activities.test.ts
 jobs:
   publish-ios-306:
     runs-on: ubuntu-latest
@@ -51,4 +55,4 @@ jobs:
         run: npx --yes eas-cli whoami
       - name: Publish ONLY iOS on production channel (runtime 3.0.6)
         run: |
-          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - AlarmKit desactivado, avisos por notificaciones"
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - AutoStart parada GPS, historial Gratis y planes"
