@@ -1174,9 +1174,10 @@ export default function HistorialScreen() {
   );
 
   const {access: planAccess}=useSubscriptionAccess();
-  const historyLimited=planAccess.restrictions_enabled&&!planAccess.pro_access;
-  // 14 calendar days including today; compute on render so the boundary advances.
-  const freeHistoryFrom=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-13);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;},[periodo.from,periodo.to]);
+  const historyLimited=planAccess.restrictions_enabled&&planAccess.history_days!==null;
+  const visibleHistoryDays=planAccess.history_days??14;
+  // Include today in a dynamically configured number of calendar days.
+  const freeHistoryFrom=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-(visibleHistoryDays-1));return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;},[periodo.from,periodo.to,visibleHistoryDays]);
   const visibleHistoryFrom=historyLimited&&periodo.from<freeHistoryFrom?freeHistoryFrom:periodo.from;
   const jornadasQuery = useQuery<Jornada[]>({
     queryKey: ["jornadas", visibleHistoryFrom, periodo.to, syncVersion,historyLimited],
@@ -2680,8 +2681,8 @@ export default function HistorialScreen() {
           ListFooterComponent={historyLimited ? (
             <View style={{backgroundColor:Colors.light.surface,borderColor:Colors.light.tint,borderWidth:1,borderRadius:18,padding:18,marginVertical:14,alignItems:"center",gap:10}}>
               <Ionicons name="lock-closed-outline" size={26} color={Colors.light.tint}/>
-              <Text style={{fontSize:17,fontFamily:"Inter_700Bold",color:Colors.light.text,textAlign:"center"}}>Has llegado al límite del historial gratuito</Text>
-              <Text style={{fontSize:13,fontFamily:"Inter_400Regular",color:Colors.light.textSecondary,textAlign:"center",lineHeight:20}}>El plan Gratis permite consultar los últimos 14 días. Tus registros anteriores siguen guardados y no se eliminan. Para consultar el historial completo necesitas el Plan Pro.</Text>
+              <Text style={{fontSize:17,fontFamily:"Inter_700Bold",color:Colors.light.text,textAlign:"center"}}>Has llegado al límite del historial de tu plan</Text>
+              <Text style={{fontSize:13,fontFamily:"Inter_400Regular",color:Colors.light.textSecondary,textAlign:"center",lineHeight:20}}>Tu plan permite consultar los últimos {visibleHistoryDays} días. Tus registros anteriores siguen guardados y no se eliminan. Consulta los planes disponibles para ampliar el historial.</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="Ver Plan Pro para consultar todo el historial"
                 onPress={()=>void Linking.openURL("https://www.tacoplan.es/planes").catch(error=>console.warn("[PLANES] No se pudo abrir la web",error))}
                 style={{backgroundColor:Colors.light.tint,paddingVertical:13,paddingHorizontal:22,borderRadius:12,minWidth:220,alignItems:"center",marginTop:4}}>

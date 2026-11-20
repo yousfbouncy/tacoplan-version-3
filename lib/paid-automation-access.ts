@@ -17,7 +17,10 @@ export async function canRunPaidAutomation(userId:string):Promise<boolean>{
     });
     if(!response.ok)return false;
     const access=await response.json();
-    const allowed=access.restrictions_enabled!==true||access.plus_access===true;
+    const allowed=access.restrictions_enabled!==true ||
+      (access.features && typeof access.features.auto==='boolean'
+        ? access.features.auto===true && access.free_plan_expired!==true
+        : access.plus_access===true);
     cache={userId,allowed,at:Date.now()};
     return allowed;
   }catch{return false;}
