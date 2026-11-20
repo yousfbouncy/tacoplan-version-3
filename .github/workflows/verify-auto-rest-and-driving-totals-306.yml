@@ -1,0 +1,27 @@
+name: Verify AutoStart REST and driving counters 3.0.6
+on:
+  push:
+    branches:
+      - feature/auto-rest-break-and-driving-totals-306
+    paths:
+      - .github/workflows/verify-auto-rest-and-driving-totals-306.yml
+      - lib/driver-activities.ts
+      - lib/autostart/driving.ts
+      - components/DriverActivityPanel.tsx
+      - tests/driver-activities.test.ts
+      - tests/driving-start-306-runtime.test.ts
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
