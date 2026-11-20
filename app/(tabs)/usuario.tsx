@@ -1,5 +1,6 @@
 import { enableAutoStart, disableAutoStart } from "@/lib/autostart/service";
 import { readAutoStartState } from "@/lib/autostart/task";
+import {useSubscriptionAccess,readSubscriptionAccess} from "@/lib/subscription-access";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
@@ -911,6 +912,8 @@ export default function UsuarioScreen() {
     return () => cancelAnimationFrame(id);
   }, [sectionParam, normalizeSectionKey]);
 
+  const {access:planAccess,loading:planLoading}=useSubscriptionAccess();
+  const canUseAutoStart=!planAccess.restrictions_enabled||planAccess.plus_access;
   const [profileName, setProfileName] = useState(user?.name || "");
   const [savingProfile, setSavingProfile] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -933,7 +936,12 @@ export default function UsuarioScreen() {
     if (!userId || autoStartBusy) return;
     setAutoStartBusy(true);
     try {
-      if (autoStartEnabled) await disableAutoStart(); else await enableAutoStart(userId);
+      if (autoStartEnabled) await disableAutoStart();
+      else {
+        const fresh=await readSubscriptionAccess();
+        if(fresh.restrictions_enabled&&!fresh.plus_access){Alert.alert("Plan Plus","AutoStart requiere Plus o Pro.");return;}
+        await enableAutoStart(userId);
+      }
       const state = await readAutoStartState();
       setAutoStartEnabled(state.enabled && state.userId === userId);
     } catch (e: any) { Alert.alert("AutoStart", e?.message || "No se pudo cambiar AutoStart."); }
@@ -1981,9 +1989,9 @@ export default function UsuarioScreen() {
               <View style={styles.quickActionIcon}><Ionicons name="play-circle" size={24} color={Colors.light.tint} /></View>
               <Pressable accessibilityRole="button" onPress={() => router.push("/autostart" as any)} style={{ flex: 1 }}>
                 <Text style={styles.quickActionTitle}>AutoStart (inicio automático)</Text>
-                <Text style={styles.quickActionSubtitle}>{Platform.OS === "web" ? "Disponible en la aplicación Android / iOS" : "Detecta el movimiento y propone el inicio de jornada"}</Text>
+                <Text style={styles.quickActionSubtitle}>{!canUseAutoStart?"Requiere Plus o Pro":Platform.OS === "web" ? "Disponible en la aplicación Android / iOS" : "Detecta el movimiento y propone el inicio de jornada"}</Text>
               </Pressable>
-              <Switch accessibilityLabel="AutoStart" value={autoStartEnabled} onValueChange={toggleAutoStart} disabled={autoStartBusy || Platform.OS === "web" || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
+              <Switch accessibilityLabel="AutoStart" value={autoStartEnabled} onValueChange={toggleAutoStart} disabled={autoStartBusy || planLoading || (!canUseAutoStart&&!autoStartEnabled) || Platform.OS === "web" || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
             </View>
             <View style={styles.preferenceDivider} />
             <View style={styles.quickActionRow}>
