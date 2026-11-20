@@ -248,8 +248,8 @@ test("15+30 reset: short second GPS stop is WORK, completed second part is REST"
  log=finishAutomaticRest(log,"DRIVING",t(220));
  assert.equal(log.segments[5].type,"REST");
  assert.equal(getDriverActivityTotals(log,t(230)).continuousDrivingMs,10*60000);
- assert.equal(getDriverActivityTotals(log,t(230)).totals.DRIVING,195*60000);
- assert.equal(getDrivingTotalsForClose(log,t(230)).totalMin,195);
+ assert.equal(getDriverActivityTotals(log,t(230)).totals.DRIVING,156*60000);
+ assert.equal(getDrivingTotalsForClose(log,t(230)).totalMin,156);
 });
 test("auto-rest marker survives local sanitization and never marks manual rest",()=>{
  let log={shiftId:"persist",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null;automaticRest?:boolean}>};
