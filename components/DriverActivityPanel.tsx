@@ -28,7 +28,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
 }) {
   const {t}=useI18n();
   const {access,loading:planLoading}=useSubscriptionAccess();
-  const canManageActivities=!access.restrictions_enabled || access.plus_access;
+  const canManageActivities=!access.restrictions_enabled || (access.features.manual&&!access.free_plan_expired);
+  const canUseAuto=!access.restrictions_enabled || (access.features.auto&&!access.free_plan_expired);
   const [log,setLog]=useState<ActivityLog|null>(null);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
@@ -123,7 +124,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     setSaving(true);
     try{
       const latestPlan=await readSubscriptionAccess();
-      if(latestPlan.restrictions_enabled&&!latestPlan.plus_access)return;
+      if(latestPlan.restrictions_enabled&&(!latestPlan.features.manual||latestPlan.free_plan_expired))return;
       // Use the latest persisted log: the GPS task can write while this screen is open.
       const latest=await loadDriverActivities(userId,shiftId);
       const next=changeDriverActivity(latest,type);
@@ -135,15 +136,15 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     finally{lock.current=false;setSaving(false)}
   },[userId,shiftId,log,closed,planLoading,canManageActivities]);
   const toggleAuto=useCallback(async()=>{
-    if(autoBusy||closed||planLoading||(!canManageActivities&&!autoDriving))return;
+    if(autoBusy||closed||planLoading||(!canUseAuto&&!autoDriving))return;
     setAutoBusy(true);
     try{
-      if(!autoDriving){const current=await readSubscriptionAccess();if(current.restrictions_enabled&&!current.plus_access)return;}
+      if(!autoDriving){const current=await readSubscriptionAccess();if(current.restrictions_enabled&&(!current.features.auto||current.free_plan_expired))return;}
       await setDrivingAutoStartEnabled(userId,!autoDriving);
       setAutoDriving(!autoDriving);
     }catch(e){console.warn("[DRIVING-AUTO] toggle failed",e)}
     finally{setAutoBusy(false)}
-  },[userId,autoDriving,autoBusy,closed,canManageActivities,planLoading]);
+  },[userId,autoDriving,autoBusy,closed,canUseAuto,planLoading]);
   useEffect(()=>{
     if(closed)return;
     const timer=setInterval(async()=>{
@@ -160,8 +161,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       <Text style={{color:colors.text,fontWeight:"700",fontSize:17}}>{t("activities.title")}</Text>
       {saving?<ActivityIndicator size="small" color={colors.sub}/>:null}
     </View>
-    {!canManageActivities?<Text style={{color:colors.sub}}>La selección de actividades y AutoStart requieren Plus o Pro. Tus registros anteriores se conservan.</Text>:null}
-    <Pressable onPress={toggleAuto} disabled={autoBusy||closed||planLoading||(!canManageActivities&&!autoDriving)} accessibilityRole="switch"
+    {(!canManageActivities||!canUseAuto)?<Text style={{color:colors.sub}}>Tu plan limita {(!canManageActivities&&!canUseAuto)?'las actividades manuales y AutoStart':!canManageActivities?'las actividades manuales':'AutoStart'}. Los registros anteriores se conservan.</Text>:null}
+    <Pressable onPress={toggleAuto} disabled={autoBusy||closed||planLoading||(!canUseAuto&&!autoDriving)} accessibilityRole="switch"
       accessibilityState={{checked:autoDriving,disabled:autoBusy||closed}}
       style={{padding:12,borderRadius:10,backgroundColor:autoDriving?"#145B46":"#22435E"}}>
       <Text style={{color:"#FFFFFF",fontWeight:"700"}}>{t("activities.autoTitle")}: {autoDriving?t("activities.enabled"):t("activities.disabled")}</Text>
