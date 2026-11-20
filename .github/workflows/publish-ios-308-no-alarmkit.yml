@@ -5,6 +5,8 @@ on:
       - fix/ios-308-disable-alarmkit-ota
     paths:
       - .github/workflows/publish-ios-308-no-alarmkit.yml
+      - lib/availability-alarms.ts
+      - lib/alarmkit-bridge.ts
   workflow_dispatch:
 jobs:
   publish:
