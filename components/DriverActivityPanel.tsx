@@ -1,7 +1,7 @@
 import React, {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {ActivityIndicator,AppState,Pressable,Text,View} from "react-native";
 import {
-  type ActivityLog,type DriverActivity,changeDriverActivity,closeDriverActivities,
+  type ActivityLog,type DriverActivity,changeDriverActivity,finishAutomaticRest,closeDriverActivities,
   getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
@@ -102,7 +102,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       if(fresh.restrictions_enabled&&!fresh.plus_access)return;
       // Use the latest persisted log: the GPS task can write while this screen is open.
       const latest=await loadDriverActivities(userId,shiftId);
-      const next=changeDriverActivity(latest,type);
+      const next=finishAutomaticRest(latest,type,new Date());
       if(next===latest)return;
       await saveDriverActivities(userId,next);
       setNow(Date.now());
@@ -153,11 +153,18 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
-            {format(totals.totals[item.type])}
+            {format(item.type==="DRIVING"?totals.continuousDrivingMs:item.type==="REST"?totals.restButtonMs:totals.totals[item.type])}
           </Text>
         </Pressable>;
       })}
     </View>
+    {totals.hasCompletedDrivingBreak ? (
+      <View style={{backgroundColor:"#163C57",borderRadius:12,padding:12,borderWidth:1,borderColor:"#376B89",gap:5}}>
+        <Text style={{color:colors.sub,fontSize:12,fontWeight:"600"}}>Conducción total acumulada de la jornada</Text>
+        <Text style={{color:"#FFFFFF",fontSize:21,fontWeight:"700",fontVariant:["tabular-nums"]}}>{format(totals.totals.DRIVING)}</Text>
+        <Text style={{color:colors.sub,fontSize:11}}>El contador de conducción se reinicia tras 45 min o 15 + 30 min; el total se conserva para el formulario de cierre.</Text>
+      </View>
+    ) : null}
     <View style={{borderRadius:12,padding:12,backgroundColor:"#0B2139",gap:5}}>
       <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Resumen de actividades de esta jornada</Text>
       <Text style={{color:colors.sub,fontSize:12}}>
