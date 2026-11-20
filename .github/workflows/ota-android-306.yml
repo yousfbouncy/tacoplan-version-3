@@ -1,0 +1,54 @@
+name: Validate and publish Android 3.0.6 OTA (manual)
+on:
+  push:
+    branches:
+      - ota-android-3.0.6-free-restrictions
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Enter PUBLICAR-3.0.6 to publish an OTA for Android 3.0.6"
+        required: true
+        type: string
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify original 3.0.6 runtime
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const config=require('./eas.json');
+          if(e.version!=='3.0.6'||e.runtimeVersion?.policy!=='appVersion'||!e.updates?.enabled||config.build?.preview?.channel!=='preview'){
+            throw new Error('Wrong runtime/channel, refusing to publish to 3.0.6');
+          }
+          const sounds=e.plugins.find(p=>Array.isArray(p)&&p[0]==='expo-notifications')?.[1]?.sounds??[];
+          if(sounds.length!==1||sounds[0]!=='./assets/sounds/tacoplan_viaje.wav')throw new Error('3.0.6 native notification sounds changed');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == 'PUBLICAR-3.0.6' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npx eas-cli whoami
+      - run: npx eas-cli update --channel preview --platform android --environment preview --non-interactive --message "Tacoplan 3.0.6: restricciones Gratis, sin cambios nativos"
