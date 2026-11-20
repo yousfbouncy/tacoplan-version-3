@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,pauseDriverActivity,startAutomaticRest,finishAutomaticRest} from "../lib/driver-activities";
+import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,mergeActivityCorrections,pauseDriverActivity,startAutomaticRest,finishAutomaticRest} from "../lib/driver-activities";
 
 const t=(min:number)=>new Date(Date.parse("2026-11-16T08:00:00.000Z")+min*60000);
 test("activity changes are exclusive and repeated taps do not duplicate segments",()=>{
@@ -259,4 +259,29 @@ test("auto-rest marker survives local sanitization and never marks manual rest",
  assert.equal(persisted.segments[1].automaticRest,true);
  const manual=changeDriverActivity(changeDriverActivity(log,"DRIVING",t(20)),"REST",t(21));
  assert.equal(manual.segments.at(-1)?.automaticRest,undefined);
+});
+
+test("independent 47-minute rest correction resets driving counter without mutating local GPS log or total",()=>{
+ let log={shiftId:"mwp65qi93j52kiufu",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=changeDriverActivity(log,"DRIVING",t(1)); // repeated tap is ignored
+ log=changeDriverActivity(log,"WORK",t(240));
+ log=changeDriverActivity(log,"DRIVING",t(290));
+ const correction={type:"REST" as const,startedAt:t(241).toISOString(),endedAt:t(288).toISOString()};
+ const combined=mergeActivityCorrections(log,[correction]);
+ assert.equal(log.segments.length,3);
+ assert.equal(combined.segments.length,4);
+ const state=getDriverActivityTotals(combined,t(305));
+ assert.equal(state.hasCompletedDrivingBreak,true);
+ assert.equal(state.continuousDrivingMs,15*60000);
+ assert.equal(state.totals.DRIVING,255*60000);
+ assert.equal(getDrivingTotalsForClose(combined,t(305)).totalMin,255);
+ assert.equal(getDrivingTotalsForClose(log,t(305)).totalMin,255);
+});
+test("cloud correction does not duplicate a local segment overlapping the corrected rest",()=>{
+ let log={shiftId:"same",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
+ log=changeDriverActivity(log,"REST",t(0));
+ log=changeDriverActivity(log,"DRIVING",t(47));
+ const correction={type:"REST" as const,startedAt:t(0).toISOString(),endedAt:t(47).toISOString()};
+ assert.equal(mergeActivityCorrections(log,[correction]),log);
 });
