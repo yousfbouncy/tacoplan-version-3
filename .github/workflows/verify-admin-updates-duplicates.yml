@@ -5,6 +5,9 @@ on:
       - fix/admin-update-config-duplicate-rows-mobile
     paths:
       - .github/workflows/verify-admin-updates-duplicates.yml
+      - lib/update-service.ts
+      - components/admin/AdminPanelScreen.tsx
+      - supabase/functions/admin-update-config/index.ts
   workflow_dispatch:
 jobs:
   validate:
