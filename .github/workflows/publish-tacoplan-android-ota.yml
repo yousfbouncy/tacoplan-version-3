@@ -1,0 +1,44 @@
+name: Publish Tacoplan Android OTA (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PUBLICAR-3.0.8 to authorize an Android OTA for runtime 3.0.8"
+        required: true
+        type: string
+jobs:
+  publish-android-308:
+    if: ${{ inputs.confirm == 'PUBLICAR-3.0.8' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify EAS token is available
+        run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN secret" && exit 1)
+      - name: Verify app/runtime and Expo Updates settings
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(e.version!=='3.0.8' || e.runtimeVersion?.policy!=='appVersion' || !e.updates?.enabled || eas.build?.preview?.channel!=='preview') {
+            throw Error('Runtime mismatch: refusing OTA publication');
+          }
+          NODE
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify TypeScript
+        run: npm run typecheck
+      - name: Run tests
+        run: npm test
+      - name: Verify Expo account
+        run: npx eas-cli whoami
+      - name: Publish only to Android preview channel (runtime 3.0.8)
+        run: npx eas-cli update --channel preview --platform android --environment preview --non-interactive --message "Tacoplan 3.0.8: restricciones de planes y AutoStart"
