@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type DriverActivity = "DRIVING" | "REST" | "AVAILABLE" | "WORK";
-export type ActivitySegment = { type: DriverActivity; startedAt: string; endedAt: string | null };
+export type ActivitySegment = { type: DriverActivity; startedAt: string; endedAt: string | null; automaticRest?: boolean };
 export type ActivityLog = { shiftId: string; segments: ActivitySegment[] };
 
 const key = (userId: string, shiftId: string) => "tacoplan_driver_activities_v1:" + userId + ":" + shiftId;
@@ -14,7 +14,7 @@ export function sanitizeLog(input: unknown, shiftId: string): ActivityLog {
     if (!s || !kinds.includes(s.type) || !Number.isFinite(Date.parse(s.startedAt))) continue;
     if (s.endedAt !== null && (!s.endedAt || !Number.isFinite(Date.parse(s.endedAt)))) continue;
     if (s.endedAt && Date.parse(s.endedAt) < Date.parse(s.startedAt)) continue;
-    segments.push({type:s.type, startedAt:s.startedAt, endedAt:s.endedAt});
+    segments.push({type:s.type, startedAt:s.startedAt, endedAt:s.endedAt, ...(s.automaticRest === true && s.type === "REST" ? {automaticRest:true} : {})});
   }
   return {shiftId, segments};
 }
@@ -180,6 +180,38 @@ export function pauseDriverActivity(log: ActivityLog, now = new Date()): Activit
   return {...log,segments:log.segments.map((s,index)=>index===open?{...s,endedAt:now.toISOString()}:s)};
 }
 
+/** GPS-confirmed stationary period: mark REST from the FIRST reliable stop
+ * fix, while keeping the same one-minute detection and subtraction rules.
+ * Distinguish it from user-selected REST: only GPS REST may be reclassified
+ * when a short stop ends. Never manufacture daily/weekly rest certification. */
+export function startAutomaticRest(log: ActivityLog, at: Date): ActivityLog {
+  const open = log.segments.findLast(s=>s.endedAt===null);
+  if (open?.type!=="DRIVING") return log;
+  const next = changeDriverActivity(log,"REST",at);
+  if (next===log) return log;
+  return {...next,segments:next.segments.map((segment,index)=>
+    index===next.segments.length-1?{...segment,automaticRest:true}:segment)};
+}
+
+/** On a return to driving or on a manual activity change, short GPS pauses
+ * that cannot qualify as a 15-minute first or 30-minute second stage are
+ * categorized as WORK. The historical total of DRIVING is never changed. */
+export function finishAutomaticRest(log: ActivityLog,nextType:DriverActivity,at:Date): ActivityLog {
+  const last=log.segments.findLast(s=>s.endedAt===null);
+  if(last?.type!=="REST"||last.automaticRest!==true||nextType==="REST")
+    return changeDriverActivity(log,nextType,at);
+  const start=Date.parse(last.startedAt);
+  const duration=at.getTime()-start;
+  if(duration<0) return log;
+  const earlier={...log,segments:log.segments.slice(0,-1)};
+  const alreadyHad15=getDriverActivityTotals(earlier,new Date(start)).firstBreak15Completed;
+  const requiredMs=(alreadyHad15?30:15)*60_000;
+  if(duration>=requiredMs)return changeDriverActivity(log,nextType,at);
+  const segments=log.segments.map((segment,index)=>index===log.segments.length-1
+    ?{...segment,type:"WORK" as const,automaticRest:undefined}:segment);
+  return changeDriverActivity({...log,segments},nextType,at);
+}
+
 export async function saveDriverActivities(userId: string, log: ActivityLog): Promise<void> {
   await AsyncStorage.setItem(key(userId,log.shiftId), JSON.stringify(log));
   await updatePending(userId,log.shiftId,true);
@@ -203,6 +235,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   let currentRestQualified = false;
   let currentRestQualifiedBySplit = false;
   let drivingStarted = false;
+  let hasCompletedDrivingBreak = false;
   let lastActivity:DriverActivity|null=null;
   const min = 60000;
   // Use chronologically ordered, non-overlapping activity segments. The end
@@ -220,6 +253,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
       if (restSinceDrivingMs >= 45*min || (firstBreak15Completed && restSinceDrivingMs>=30*min)) {
         currentRestQualifiedBySplit = firstBreak15Completed && restSinceDrivingMs>=30*min;
         currentRestQualified=true;
+        if (drivingStarted || continuousDrivingMs>0) hasCompletedDrivingBreak=true;
         continuousDrivingMs=0;
         firstBreak15Completed=false;
         drivingStarted=false;
@@ -271,7 +305,7 @@ export function getDriverActivityTotals(log: ActivityLog, now = new Date()) {
   // 15-minute stage is retained; an invalid (<15 min) stage returns to zero.
   // The full REST total remains untouched for the journey history.
   const restButtonMs = current==="REST" ? currentRestMs : firstBreak15Completed ? 15*min : 0;
-  return {totals,current,continuousDrivingMs,currentRestMs,restButtonMs,firstBreak15Completed,
+  return {totals,current,continuousDrivingMs,hasCompletedDrivingBreak,currentRestMs,restButtonMs,firstBreak15Completed,
     qualifiedBreak,breakRemainingMs,drivingStarted,firstBreakProgressMs,firstBreakReady,
     secondBreakProgressMs,uninterruptedBreakProgressMs,currentRestQualifiedBySplit};
 }

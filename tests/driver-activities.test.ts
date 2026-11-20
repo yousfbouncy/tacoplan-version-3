@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,pauseDriverActivity} from "../lib/driver-activities";
+import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,pauseDriverActivity,startAutomaticRest,finishAutomaticRest} from "../lib/driver-activities";
 
 const t=(min:number)=>new Date(Date.parse("2026-11-16T08:00:00.000Z")+min*60000);
 test("activity changes are exclusive and repeated taps do not duplicate segments",()=>{
@@ -203,4 +203,60 @@ test("completed 15+30 break never becomes a fresh 15-minute credit after driving
   assert.equal(state.firstBreakProgressMs,0);
   assert.equal(state.continuousDrivingMs,60000);
   assert.equal(state.totals.REST,45*60000);
+});
+
+test("GPS stop starts REST retroactively and under 15 minutes becomes WORK when driving resumes",()=>{
+ let log={shiftId:"auto-short",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null;automaticRest?:boolean}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=startAutomaticRest(log,t(90));
+ assert.equal(getDriverActivityTotals(log,t(91)).current,"REST");
+ assert.equal(getDriverActivityTotals(log,t(91)).totals.DRIVING,90*60000);
+ log=finishAutomaticRest(log,"DRIVING",t(100));
+ assert.deepEqual(log.segments.map(x=>x.type),["DRIVING","WORK","DRIVING"]);
+ assert.equal(getDriverActivityTotals(log,t(110)).totals.WORK,10*60000);
+ assert.equal(getDriverActivityTotals(log,t(110)).continuousDrivingMs,100*60000);
+ assert.equal(getDrivingTotalsForClose(log,t(110)).totalMin,100);
+});
+test("a 45-minute auto REST resets the visible driving but preserves journey total",()=>{
+ let log={shiftId:"auto45",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null;automaticRest?:boolean}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=startAutomaticRest(log,t(90));
+ assert.equal(getDriverActivityTotals(log,t(134)).hasCompletedDrivingBreak,false);
+ const state=getDriverActivityTotals(log,t(135));
+ assert.equal(state.hasCompletedDrivingBreak,true);
+ assert.equal(state.continuousDrivingMs,0);
+ assert.equal(state.totals.DRIVING,90*60000);
+ log=finishAutomaticRest(log,"DRIVING",t(135));
+ assert.equal(getDriverActivityTotals(log,t(145)).continuousDrivingMs,10*60000);
+ assert.equal(getDriverActivityTotals(log,t(145)).totals.DRIVING,100*60000);
+ assert.equal(getDrivingTotalsForClose(log,t(145)).totalMin,100);
+});
+test("15+30 reset: short second GPS stop is WORK, completed second part is REST",()=>{
+ let log={shiftId:"auto-split",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null;automaticRest?:boolean}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=startAutomaticRest(log,t(120));
+ log=finishAutomaticRest(log,"DRIVING",t(135));
+ assert.equal(getDriverActivityTotals(log,t(150)).firstBreak15Completed,true);
+ log=startAutomaticRest(log,t(150));
+ log=finishAutomaticRest(log,"DRIVING",t(179));
+ assert.equal(log.segments[3].type,"WORK");
+ assert.equal(getDriverActivityTotals(log,t(190)).hasCompletedDrivingBreak,false);
+ log=startAutomaticRest(log,t(190));
+ assert.equal(getDriverActivityTotals(log,t(219)).qualifiedBreak,false);
+ assert.equal(getDriverActivityTotals(log,t(220)).qualifiedBreak,true);
+ assert.equal(getDriverActivityTotals(log,t(220)).hasCompletedDrivingBreak,true);
+ log=finishAutomaticRest(log,"DRIVING",t(220));
+ assert.equal(log.segments[5].type,"REST");
+ assert.equal(getDriverActivityTotals(log,t(230)).continuousDrivingMs,10*60000);
+ assert.equal(getDriverActivityTotals(log,t(230)).totals.DRIVING,156*60000);
+ assert.equal(getDrivingTotalsForClose(log,t(230)).totalMin,156);
+});
+test("auto-rest marker survives local sanitization and never marks manual rest",()=>{
+ let log={shiftId:"persist",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null;automaticRest?:boolean}>};
+ log=changeDriverActivity(log,"DRIVING",t(0));
+ log=startAutomaticRest(log,t(1));
+ const persisted=sanitizeLog(JSON.parse(JSON.stringify(log)),"persist");
+ assert.equal(persisted.segments[1].automaticRest,true);
+ const manual=changeDriverActivity(changeDriverActivity(log,"DRIVING",t(20)),"REST",t(21));
+ assert.equal(manual.segments.at(-1)?.automaticRest,undefined);
 });

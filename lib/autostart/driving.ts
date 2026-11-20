@@ -3,7 +3,7 @@ import { AppState, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { getJornadaAbierta } from "@/lib/local-storage";
-import { changeDriverActivity, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
+import { changeDriverActivity, finishAutomaticRest, startAutomaticRest, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
 import { updateDrivingDetection, type DrivingDetection } from "./driving-activity-engine";
 import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 
@@ -84,12 +84,12 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     const log = await loadDriverActivities(userId, shiftId);
     const active = log.segments.findLast(s => s.endedAt === null);
     if (result.transition === "STOP") {
-      // A full minute at <1 km/h. Close the driving segment at the FIRST
-      // stationary GPS fix, not after the confirmation delay. A stop never
-      // creates a legal REST activity on its own.
+      // GPS has confirmed a full minute stopped. Begin a provisional REST
+      // at the FIRST stationary fix, rather than losing its first 60 seconds.
+      // If it ends too early it will become WORK; tachograph remains official.
       if (active?.type !== "DRIVING") continue;
       const effectiveTime = new Date(Math.max(result.stopStart ?? fix.timestamp, Date.parse(active.startedAt)));
-      const next = pauseDriverActivity(log, effectiveTime);
+      const next = startAutomaticRest(log, effectiveTime);
       if (next !== log) await saveDriverActivities(userId, next);
       continue;
     }
@@ -112,7 +112,10 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     if (active?.type === "DRIVING") continue;
     const movementStart = result.movementStart ?? fix.timestamp;
     const earliest = active ? Date.parse(active.startedAt) : 0;
-    const next = changeDriverActivity(log, "DRIVING", new Date(Math.max(movementStart, earliest)));
+    const startTime = new Date(Math.max(movementStart, earliest));
+    const next = active?.type === "REST"
+      ? finishAutomaticRest(log,"DRIVING",startTime)
+      : changeDriverActivity(log,"DRIVING",startTime);
     if (next !== log) await saveDriverActivities(userId, next);
   }
 }
