@@ -22,6 +22,7 @@ export default function UpdateGate() {
   const lastCheckAtRef = useRef<number>(0);
   const checkingRef = useRef(false);
   const statusRef = useRef<GateStatus["type"]>("checking");
+  const silentIosOtaAttemptedRef = useRef(false);
   useEffect(() => { statusRef.current = status.type; }, [status.type]);
 
   const runCheck = useCallback(async (reason: string) => {
@@ -44,7 +45,24 @@ export default function UpdateGate() {
           minRequiredVersion: decision.minRequiredVersion,
         });
       } else if (decision.kind === "ota") {
-        setStatus({ type: "ota_available", message: decision.message });
+        if (Platform.OS === "ios") {
+          // iPhone: apply JS OTA on next cold launch without repeatedly
+          // interrupting an active driving shift with an old update message.
+          // Fetch once per app session. Never force a JS reload while driving.
+          if (!silentIosOtaAttemptedRef.current) {
+            silentIosOtaAttemptedRef.current = true;
+            if (Updates.isEnabled) {
+              try {
+                await Updates.fetchUpdateAsync();
+              } catch (error) {
+                devLog("[UPDATES] Silent iOS OTA download failed:", error);
+              }
+            }
+          }
+          setStatus({ type: "up_to_date" });
+        } else {
+          setStatus({ type: "ota_available", message: decision.message });
+        }
       } else if (decision.kind === "optional") {
         setStatus({
           type: "update_optional",
