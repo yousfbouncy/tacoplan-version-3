@@ -1174,7 +1174,7 @@ export default function HistorialScreen() {
   );
 
   const {access: planAccess}=useSubscriptionAccess();
-  const historyLimited=planAccess.restrictions_enabled&&!planAccess.plus_access;
+  const historyLimited=planAccess.restrictions_enabled&&!planAccess.pro_access;
   // 14 calendar days including today; compute on render so the boundary advances.
   const freeHistoryFrom=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-13);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;},[periodo.from,periodo.to]);
   const visibleHistoryFrom=historyLimited&&periodo.from<freeHistoryFrom?freeHistoryFrom:periodo.from;
@@ -2677,6 +2677,18 @@ export default function HistorialScreen() {
               tintColor={Colors.light.tint}
             />
           }
+          ListFooterComponent={historyLimited ? (
+            <View style={{backgroundColor:Colors.light.surface,borderColor:Colors.light.tint,borderWidth:1,borderRadius:18,padding:18,marginVertical:14,alignItems:"center",gap:10}}>
+              <Ionicons name="lock-closed-outline" size={26} color={Colors.light.tint}/>
+              <Text style={{fontSize:17,fontFamily:"Inter_700Bold",color:Colors.light.text,textAlign:"center"}}>Has llegado al límite del historial gratuito</Text>
+              <Text style={{fontSize:13,fontFamily:"Inter_400Regular",color:Colors.light.textSecondary,textAlign:"center",lineHeight:20}}>El plan Gratis permite consultar los últimos 14 días. Tus registros anteriores siguen guardados y no se eliminan. Para consultar el historial completo necesitas el Plan Pro.</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Ver Plan Pro para consultar todo el historial"
+                onPress={()=>void Linking.openURL("https://www.tacoplan.es/planes").catch(error=>console.warn("[PLANES] No se pudo abrir la web",error))}
+                style={{backgroundColor:Colors.light.tint,paddingVertical:13,paddingHorizontal:22,borderRadius:12,minWidth:220,alignItems:"center",marginTop:4}}>
+                <Text style={{fontSize:14,fontFamily:"Inter_700Bold",color:"#FFFFFF"}}>Ver Plan Pro</Text>
+              </Pressable>
+            </View>
+          ) : undefined}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Ionicons name="document-text-outline" size={48} color={Colors.light.border} />

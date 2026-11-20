@@ -48,6 +48,13 @@ async function harness(){
         segments.push({type,startedAt:now.toISOString(),endedAt:null});
         return {shiftId:old.shiftId,segments};
       },
+      pauseDriverActivity(old:any,now:Date){
+        const segments=old.segments.map((seg:any)=>({...seg}));
+        const active=segments.findLast((seg:any)=>seg.endedAt===null);
+        if(active?.type!=="DRIVING")return old;
+        active.endedAt=new Date(Math.max(Date.parse(active.startedAt),now.getTime())).toISOString();
+        return {shiftId:old.shiftId,segments};
+      },
       async saveDriverActivities(_user:string,next:any){log.segments=next.segments;},
     },
   };
@@ -57,25 +64,34 @@ async function harness(){
   await module.exports.syncDrivingMonitoring("u1");
   return {log,values,async deliver(fix:any){callback(fix);await new Promise(resolve=>setTimeout(resolve,5));}};
 }
-test("actual GPS runtime starts driving, switches immediately to rest, and resumes without double counting",async()=>{
+test("20-second stop keeps DRIVING active and excludes stationary seconds",async()=>{
   const h=await harness();
   await h.deliver(location(0,20));
   await h.deliver(location(60,20));
   assert.equal(h.log.segments.at(-1).type,"DRIVING");
   await h.deliver(location(61,0));
-  assert.equal(h.log.segments.at(-1).type,"REST");
-  assert.equal(h.log.segments[0].endedAt,new Date(epoch+61000).toISOString());
-  assert.equal(h.log.segments[1].startedAt,new Date(epoch+61000).toISOString());
-  await h.deliver(location(62,0));
-  assert.equal(h.log.segments.length,2);
-  await h.deliver(location(70,20));
-  await h.deliver(location(129,20));
-  assert.equal(h.log.segments.at(-1).type,"REST");
-  await h.deliver(location(130,20));
   assert.equal(h.log.segments.at(-1).type,"DRIVING");
-  assert.equal(h.log.segments[1].endedAt,new Date(epoch+70000).toISOString());
-  assert.equal(h.log.segments[2].startedAt,new Date(epoch+70000).toISOString());
+  await h.deliver(location(81,1.1));
+  assert.equal(h.log.segments.length,2);
+  assert.deepEqual(h.log.segments.map((v:any)=>v.type),["DRIVING","DRIVING"]);
+  assert.equal(h.log.segments[0].endedAt,new Date(epoch+61_000).toISOString());
+  assert.equal(h.log.segments[1].startedAt,new Date(epoch+81_000).toISOString());
+  assert.equal(h.log.segments[1].endedAt,null);
+  assert.equal(h.log.segments.filter((v:any)=>v.type==="REST").length,0);
 });
+
+test("60-second confirmed stop closes DRIVING at the first stationary fix, never invents REST",async()=>{
+  const h=await harness();
+  await h.deliver(location(0,20));
+  await h.deliver(location(60,20));
+  await h.deliver(location(61,0));
+  assert.equal(h.log.segments.at(-1).endedAt,null);
+  await h.deliver(location(121,0));
+  assert.equal(h.log.segments.length,1);
+  assert.equal(h.log.segments[0].endedAt,new Date(epoch+61_000).toISOString());
+  assert.equal(h.log.segments.filter((v:any)=>v.type==="REST").length,0);
+});
+
 test("confirmed movement ends an existing REST and starts driving",async()=>{
   const h=await harness();
   h.log.segments.push({type:"REST",startedAt:new Date(epoch).toISOString(),endedAt:null});

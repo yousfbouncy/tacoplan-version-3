@@ -10,6 +10,7 @@ import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
 const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
+const PENDING_STOP_PREFIX = "@tacoplan/driving-autostart/pending-stop/v1:";
 type Fix = Location.LocationObject;
 type Detection = DrivingDetection & { userId: string; shiftId: string };
 let detection: Detection | null = null;
@@ -19,6 +20,25 @@ let pending = Promise.resolve();
 let syncPending: Promise<void> | null = null;
 
 const prefKey = (userId: string) => PREF_PREFIX + userId;
+const pendingStopKey = (userId: string, shiftId: string) =>
+  PENDING_STOP_PREFIX + userId + ":" + shiftId;
+type PendingStop = { stoppedSince: number; lastFix: number };
+
+export async function readPendingDrivingStop(userId: string, shiftId: string): Promise<PendingStop | null> {
+  try {
+    const raw = await AsyncStorage.getItem(pendingStopKey(userId, shiftId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingStop>;
+    if (!Number.isFinite(value.stoppedSince) || !Number.isFinite(value.lastFix)) return null;
+    const stoppedSince = Number(value.stoppedSince);
+    const lastFix = Number(value.lastFix);
+    if (lastFix < stoppedSince || Date.now() - lastFix > 90_000 || stoppedSince > Date.now()) return null;
+    return { stoppedSince, lastFix };
+  } catch { return null; }
+}
+async function clearPendingDrivingStop(userId: string, shiftId: string): Promise<void> {
+  await AsyncStorage.removeItem(pendingStopKey(userId, shiftId));
+}
 export async function isDrivingAutoStartEnabled(userId: string): Promise<boolean> {
   return (await AsyncStorage.getItem(prefKey(userId))) === "true";
 }
@@ -40,12 +60,25 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
     detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
+    await clearPendingDrivingStop(userId, shiftId).catch(() => {});
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
     const previous: DrivingDetection = detection!;
     const result = updateDrivingDetection(previous, fix);
     if (result.state === previous) continue;
     detection = { ...result.state, userId, shiftId };
+    // Keep driving selected during an unconfirmed GPS stop, but remove all
+    // stationary seconds from the live counter from the first valid fix.
+    const stopStart = result.state.stoppedSince ?? null;
+    if (stopStart !== null && !result.transition && fix.timestamp - stopStart < 60_000) {
+      const log = await loadDriverActivities(userId, shiftId);
+      if (log.segments.findLast(seg => seg.endedAt === null)?.type === "DRIVING") {
+        await AsyncStorage.setItem(pendingStopKey(userId, shiftId),
+          JSON.stringify({ stoppedSince: stopStart, lastFix: fix.timestamp } satisfies PendingStop));
+      }
+    } else {
+      await clearPendingDrivingStop(userId, shiftId).catch(() => {});
+    }
     if (!result.transition) continue;
 
     const log = await loadDriverActivities(userId, shiftId);
@@ -96,6 +129,7 @@ TaskManager.defineTask(DRIVING_TASK, ({ data, error }) => {
 export async function stopDrivingMonitoring(): Promise<void> {
   foreground?.remove();
   foreground = null;
+  if (detection) await clearPendingDrivingStop(detection.userId, detection.shiftId).catch(() => {});
   clearDetection();
   if (Platform.OS !== "web" && await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
     await Location.stopLocationUpdatesAsync(DRIVING_TASK);
