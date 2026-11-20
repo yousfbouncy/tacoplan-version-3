@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import { getDriverActivityTotals, loadDriverActivities, type ActivityLog, type DriverActivity } from "@/lib/driver-activities";
+import { getDriverActivityTotals, loadDriverActivities, loadActivityCorrections, mergeActivityCorrections, type ActivityLog, type DriverActivity } from "@/lib/driver-activities";
 import { useAuth } from "@/lib/auth-context";
 
 const labels: Record<DriverActivity, { name: string; emoji: string }> = {
@@ -44,8 +44,11 @@ export default function JornadaActivityHistory({
       return;
     }
     setLoading(true);
-    void loadDriverActivities(user.id, shiftId).then(result => {
-      if (alive) setLog(result);
+    void Promise.all([
+      loadDriverActivities(user.id, shiftId),
+      loadActivityCorrections(user.id, shiftId),
+    ]).then(([result, corrections]) => {
+      if (alive) setLog(mergeActivityCorrections(result, corrections));
     }).catch(() => {
       if (alive) setLog(null);
     }).finally(() => {
