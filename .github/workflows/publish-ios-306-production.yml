@@ -8,6 +8,7 @@ on:
       - lib/jornada-widget-sync.ts
       - 'app/(tabs)/index.tsx'
       - lib/availability-alarms.ts
+      - lib/alarmkit-bridge.ts
 jobs:
   publish-ios-306:
     runs-on: ubuntu-latest
@@ -34,6 +35,10 @@ jobs:
           const sounds = e.plugins.find(p => Array.isArray(p) && p[0] === 'expo-notifications')?.[1]?.sounds ?? [];
           if (JSON.stringify(sounds) !== JSON.stringify(['./assets/sounds/tacoplan_viaje.wav']))
             throw Error('Native sounds changed');
+          const fs = require('fs');
+          if (fs.readFileSync('lib/availability-alarms.ts','utf8').includes('scheduleAvailabilityAlarm(') ||
+              fs.readFileSync('lib/alarmkit-bridge.ts','utf8').includes('modules/tacoplan-alarmkit'))
+            throw Error('iOS AlarmKit native invocation still present');
           NODE
       - name: Check authentication
         run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN secret" && exit 1)
@@ -46,4 +51,4 @@ jobs:
         run: npx --yes eas-cli whoami
       - name: Publish ONLY iOS on production channel (runtime 3.0.6)
         run: |
-          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - actividades restauradas y alarmas estabilizadas"
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - AlarmKit desactivado, avisos por notificaciones"
