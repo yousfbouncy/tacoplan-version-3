@@ -1,0 +1,43 @@
+name: iOS 3.0.8 corrected rest visibility OTA
+on:
+  push:
+    branches:
+      - fix/show-admin-rest-adjustments-308
+    paths:
+      - .github/workflows/publish-308-rest-correction.yml
+      - lib/driver-activities.ts
+      - components/DriverActivityPanel.tsx
+      - components/JornadaActivityHistory.tsx
+      - tests/driver-activities.test.ts
+  workflow_dispatch:
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify iOS runtime and GPS logic remain unchanged
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),a=require('./app.json').expo,e=require('./eas.json');
+          if(a.version!=='3.0.8' || a.runtimeVersion.policy!=='appVersion' ||
+             !a.updates.enabled || e.build.production.channel!=='production')throw Error('Bad runtime');
+          const h=fs.readFileSync('lib/driver-activities.ts','utf8');
+          if(!h.includes('mergeActivityCorrections') || !h.includes('admin_adjustment'))throw Error('Cloud correction support missing');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: test -n "$EXPO_TOKEN" || (echo "Expo credentials missing" && exit 1)
+      - run: npx --yes eas-cli whoami
+      - name: Publish iOS 3.0.8 correction
+        run: |
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan iOS 3.0.8: historial y contador leen descanso corregido en Supabase"
