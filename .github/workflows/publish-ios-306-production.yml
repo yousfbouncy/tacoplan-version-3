@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/publish-ios-306-production.yml
       - lib/jornada-widget-sync.ts
+      - 'app/(tabs)/index.tsx'
 jobs:
   publish-ios-306:
     runs-on: ubuntu-latest
@@ -43,4 +44,4 @@ jobs:
       - name: Expo account
         run: npx --yes eas-cli whoami
       - name: Publish ONLY iOS on production channel (runtime 3.0.6)
-        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - restricciones de planes y AutoStart"
+        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - prueba de aislamiento: panel actividades desactivado"
