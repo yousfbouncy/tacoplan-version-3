@@ -9,6 +9,7 @@ import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
 const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
+const PENDING_STOP_PREFIX = "@tacoplan/driving-autostart/pending-stop/v1:";
 const MIN_SPEED = 15 / 3.6;
 const STOP_SPEED = 1 / 3.6;
 const CONFIRM_MS = 3 * 60_000;
@@ -23,6 +24,27 @@ let pending = Promise.resolve();
 let syncPending: Promise<void> | null = null;
 
 const prefKey = (userId: string) => PREF_PREFIX + userId;
+const pendingStopKey = (userId: string, shiftId: string) =>
+  PENDING_STOP_PREFIX + userId + ":" + shiftId;
+type PendingStop = { stoppedSince: number; lastFix: number };
+
+// Exclude stationary time from live counters while keeping DRIVING selected
+// until a continuous one-minute stop is confirmed; never invent REST time.
+export async function readPendingDrivingStop(userId: string, shiftId: string): Promise<PendingStop | null> {
+  try {
+    const raw = await AsyncStorage.getItem(pendingStopKey(userId, shiftId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingStop>;
+    if (!Number.isFinite(value.stoppedSince) || !Number.isFinite(value.lastFix)) return null;
+    const stoppedSince = Number(value.stoppedSince);
+    const lastFix = Number(value.lastFix);
+    if (lastFix < stoppedSince || Date.now() - lastFix > MAX_GAP_MS || stoppedSince > Date.now()) return null;
+    return { stoppedSince, lastFix };
+  } catch { return null; }
+}
+async function clearPendingDrivingStop(userId: string, shiftId: string): Promise<void> {
+  await AsyncStorage.removeItem(pendingStopKey(userId, shiftId));
+}
 export async function isDrivingAutoStartEnabled(userId: string): Promise<boolean> {
   return (await AsyncStorage.getItem(prefKey(userId))) === "true";
 }
@@ -44,6 +66,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
     detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
+    await clearPendingDrivingStop(userId, shiftId).catch(() => {});
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
     const ts = fix.timestamp;
@@ -54,6 +77,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       // Do not infer a full minute of stationary time from missing GPS samples.
       detection.movingSince = null;
       detection.stoppedSince = null;
+      await clearPendingDrivingStop(userId, shiftId).catch(() => {});
     }
     const speed = fix.coords.speed;
     const accuracy = fix.coords.accuracy;
@@ -64,11 +88,21 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       // An unreliable fix cannot confirm a stop or a restart.
       detection.movingSince = null;
       detection.stoppedSince = null;
+      await clearPendingDrivingStop(userId, shiftId).catch(() => {});
       continue;
     }
     if (speed < STOP_SPEED) {
       detection.movingSince = null;
       if (detection.stoppedSince === null) detection.stoppedSince = ts;
+      // The counter stops at the first reliable stationary sample, without
+      // closing the driving segment before the full minute is confirmed.
+      if (ts - detection.stoppedSince < STOP_MS) {
+        const log = await loadDriverActivities(userId, shiftId);
+        if (log.segments.findLast(seg => seg.endedAt === null)?.type === "DRIVING") {
+          await AsyncStorage.setItem(pendingStopKey(userId, shiftId),
+            JSON.stringify({ stoppedSince: detection.stoppedSince, lastFix: ts } satisfies PendingStop));
+        }
+      }
       // Keep DRIVING selected during the first minute; only then close the
       // driving segment retroactively at the FIRST stationary GPS fix.
       if (ts - detection.stoppedSince >= STOP_MS) {
@@ -79,6 +113,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
         const pauseAt = new Date(Math.max(detection.stoppedSince, startedAt));
         const next = pauseDriverActivity(log, pauseAt);
         if (next !== log) await saveDriverActivities(userId, next);
+        await clearPendingDrivingStop(userId, shiftId).catch(() => {});
       }
       continue;
     }
@@ -88,6 +123,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     // The gap stays unclassified; it is not a legal REST activity.
     const stoppedSince = detection.stoppedSince;
     detection.stoppedSince = null;
+    if (stoppedSince !== null) await clearPendingDrivingStop(userId, shiftId).catch(() => {});
     if (stoppedSince !== null && ts - stoppedSince >= STOP_MS) {
       // A stationary fix may be followed by the first moving fix after the
       // full minute; honor the original stop timestamp, not the restart time.
@@ -145,6 +181,7 @@ TaskManager.defineTask(DRIVING_TASK, ({ data, error }) => {
 export async function stopDrivingMonitoring(): Promise<void> {
   foreground?.remove();
   foreground = null;
+  if (detection) await clearPendingDrivingStop(detection.userId, detection.shiftId).catch(() => {});
   clearDetection();
   if (Platform.OS !== "web" && await Location.hasStartedLocationUpdatesAsync(DRIVING_TASK)) {
     await Location.stopLocationUpdatesAsync(DRIVING_TASK);
