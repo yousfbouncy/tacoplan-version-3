@@ -115,6 +115,23 @@ serve(async (req: Request) => {
       updated_at: new Date().toISOString(),
     };
 
+    // Never publish a forced update pointing to a placeholder or insecure URL.
+    const destination = platform === "android" ? payload.apk_url : payload.app_store_url;
+    if (payload.enabled && payload.force_update) {
+      let valid = false;
+      try {
+        const url = new URL(destination || "");
+        valid = url.protocol === "https:" &&
+          !url.href.includes("TU_APP_ID") &&
+          !url.href.includes("YOUR_APP_ID") &&
+          !url.hostname.includes("example.");
+      } catch {}
+      if (!valid) return json({ message: "Para una actualización obligatoria introduce primero un enlace HTTPS real de descarga; no se admiten enlaces de ejemplo." }, 400);
+      if (!payload.latest_version || !payload.min_required_version) {
+        return json({ message: "La actualización obligatoria necesita versión objetivo y versión mínima." }, 400);
+      }
+    }
+
     let saved: any = null;
     if (!payload.channel) {
       const { data: existing, error: existingErr } = await admin
@@ -122,6 +139,11 @@ serve(async (req: Request) => {
         .select("id")
         .eq("platform", platform)
         .is("channel", null)
+        // Legacy installations can contain several NULL-channel rows.
+        // Work with one deterministic row instead of throwing PGRST116.
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1)
         .maybeSingle();
       if (existingErr) throw existingErr;
 
