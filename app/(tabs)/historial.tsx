@@ -2641,7 +2641,7 @@ export default function HistorialScreen() {
                 <Text style={{fontSize:14,fontFamily:"Inter_700Bold",color:"#FFFFFF"}}>Ver Plan Pro</Text>
               </Pressable>
             </View>
-          ) : null}
+          ) : undefined}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Ionicons name="document-text-outline" size={48} color={Colors.light.border} />
