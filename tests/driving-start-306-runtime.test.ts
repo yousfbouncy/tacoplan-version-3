@@ -48,6 +48,21 @@ async function harness(){
         segments.push({type,startedAt:now.toISOString(),endedAt:null});
         return {shiftId:old.shiftId,segments};
       },
+      startAutomaticRest(old:any,at:Date){
+        const current=old.segments.findLast((x:any)=>x.endedAt===null);
+        if(current?.type!=="DRIVING")return old;
+        const segments=old.segments.map((x:any)=>({...x}));
+        segments.at(-1).endedAt=at.toISOString();
+        segments.push({type:"REST",startedAt:at.toISOString(),endedAt:null,automaticRest:true});
+        return {shiftId:old.shiftId,segments};
+      },
+      finishAutomaticRest(old:any,nextType:string,at:Date){
+        const segments=old.segments.map((x:any)=>({...x}));
+        const active=segments.findLast((x:any)=>x.endedAt===null);
+        if(active?.type==="REST" && active.automaticRest && at.getTime()-Date.parse(active.startedAt)<15*60_000)
+          active.type="WORK";
+        return mocks["@/lib/driver-activities"].changeDriverActivity({...old,segments},nextType,at);
+      },
       pauseDriverActivity(old:any,now:Date){
         const segments=old.segments.map((seg:any)=>({...seg}));
         const active=segments.findLast((seg:any)=>seg.endedAt===null);
@@ -98,4 +113,17 @@ test("3.0.6: 60-second confirmed traffic stop backdates closure to first stopped
  await h.deliver(location(121,0));
  assert.equal(h.log.segments[0].endedAt,new Date(epoch+61_000).toISOString());
  assert.equal(h.log.segments.filter((x:any)=>x.type==="REST").length,0);
+});
+
+test("3.0.6: GPS short rest under 15m becomes WORK on confirmed movement",async()=>{
+ const h=await harness();
+ await h.deliver(location(0,8));
+ await h.deliver(location(60,8));
+ await h.deliver(location(61,0));
+ await h.deliver(location(121,0));
+ assert.equal(h.log.segments.at(-1).type,"REST");
+ await h.deliver(location(122,8));
+ await h.deliver(location(123,8));
+ await h.deliver(location(183,8));
+ assert.deepEqual(h.log.segments.map((x:any)=>x.type),["DRIVING","WORK","DRIVING"]);
 });
