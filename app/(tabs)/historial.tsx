@@ -11,6 +11,7 @@ import {
   Pressable,
   Alert,
   Platform,
+  Linking,
   ActivityIndicator,
   RefreshControl,
   Modal,
@@ -2636,7 +2637,7 @@ export default function HistorialScreen() {
               <Text style={{fontSize:17,fontFamily:"Inter_700Bold",color:Colors.light.text,textAlign:"center"}}>Has llegado al límite del historial gratuito</Text>
               <Text style={{fontSize:13,fontFamily:"Inter_400Regular",color:Colors.light.textSecondary,textAlign:"center",lineHeight:20}}>El plan Gratis permite consultar los últimos 14 días. Tus registros anteriores siguen guardados y no se eliminan. Para consultar el historial completo necesitas el Plan Pro.</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="Ver Plan Pro para consultar todo el historial"
-                onPress={()=>router.push("/planes" as any)}
+                onPress={()=>void Linking.openURL("https://www.tacoplan.es/planes").catch(error=>console.warn("[PLANES] No se pudo abrir la web",error))}
                 style={{backgroundColor:Colors.light.tint,paddingVertical:13,paddingHorizontal:22,borderRadius:12,minWidth:220,alignItems:"center",marginTop:4}}>
                 <Text style={{fontSize:14,fontFamily:"Inter_700Bold",color:"#FFFFFF"}}>Ver Plan Pro</Text>
               </Pressable>
