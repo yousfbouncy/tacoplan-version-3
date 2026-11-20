@@ -118,6 +118,8 @@ test("slow departure is saved from the first 2 km/h fix after reaching 6 km/h fo
  await h.deliver(location(40,6.5));
  assert.equal(h.log.segments.length,0);
  await h.deliver(location(70,6.5));
+ assert.equal(h.log.segments.length,0);
+ await h.deliver(location(100,6.5));
  assert.equal(h.log.segments.length,1);
  assert.equal(h.log.segments[0].type,"DRIVING");
  assert.equal(h.log.segments[0].startedAt,new Date(epoch+10000).toISOString());
