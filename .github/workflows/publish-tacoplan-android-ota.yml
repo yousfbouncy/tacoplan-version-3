@@ -41,4 +41,5 @@ jobs:
       - name: Verify Expo account
         run: npx eas-cli whoami
       - name: Publish only to Android preview channel (runtime 3.0.8)
-        run: npx eas-cli update --channel preview --platform android --environment preview --non-interactive --message "Tacoplan 3.0.8: restricciones de planes y AutoStart"
+        run: |
+          npx eas-cli update --channel preview --platform android --environment preview --non-interactive --message "Tacoplan 3.0.8: restricciones de planes y AutoStart"
