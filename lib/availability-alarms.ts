@@ -117,32 +117,57 @@ async function reconcileAvailabilityAlarms(
     }
   }
   if (Platform.OS === "ios" && Number(Platform.Version) >= 26) {
-    const oldIds = JSON.parse(await AsyncStorage.getItem(NATIVE_IDS_KEY) || "[]") as string[];
-    for (const id of oldIds) await cancelAvailabilityAlarm(id).catch(() => {});
-    await AsyncStorage.setItem(NATIVE_IDS_KEY, "[]");
-    if (!enabled || !shift || (context?.shiftId === shift.id && !context.aplica13h15h)) {
-      const Notifications = await import("expo-notifications");
-      const legacy = await Notifications.getAllScheduledNotificationsAsync();
-      await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true).map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+    // Re-entering Inicio must not repeatedly cancel, reauthorize and recreate
+    // the same native alarms. Repeated native calls can destabilize iOS beta
+    // and introduce gaps in protection during an active shift.
+    const planKey = "tacoplan_availability_alarmkit_plan_v2";
+    const alerts = planAvailabilityAlarms(shift, context, enabled);
+    const signature = nativeAlarmPlanSignature(alerts);
+    let oldIds: string[] = [];
+    try {
+      const parsed = JSON.parse(await AsyncStorage.getItem(NATIVE_IDS_KEY) || "[]");
+      if (Array.isArray(parsed)) oldIds = parsed.filter((id): id is string => typeof id === "string");
+    } catch {}
+    const desiredIds = alerts.map(alert => nativeAlarmId(alert.id));
+    const previousSignature = await AsyncStorage.getItem(planKey);
+    if (previousSignature === signature &&
+        oldIds.length === desiredIds.length &&
+        oldIds.every((id, index) => id === desiredIds[index])) {
       return;
     }
-    const alerts = planAvailabilityAlarms(shift, context, enabled);
+
+    for (const id of oldIds) await cancelAvailabilityAlarm(id).catch(() => {});
+    await AsyncStorage.removeItem(planKey);
+    if (!enabled || !shift || (context?.shiftId === shift.id && !context.aplica13h15h)) {
+      await AsyncStorage.setItem(NATIVE_IDS_KEY, "[]");
+      const Notifications = await import("expo-notifications");
+      const legacy = await Notifications.getAllScheduledNotificationsAsync();
+      await Promise.all(legacy.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
+        .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+      await AsyncStorage.setItem(planKey, signature);
+      return;
+    }
+
     const ids: string[] = [];
     try {
       for (const alert of alerts) {
         const id = nativeAlarmId(alert.id);
         await scheduleAvailabilityAlarm(id, new Date(alert.fecha), `Tacoplan · límite de ${alert.limite} h`);
         ids.push(id);
-        await AsyncStorage.setItem(NATIVE_IDS_KEY, JSON.stringify(ids));
       }
+      await AsyncStorage.setItem(NATIVE_IDS_KEY, JSON.stringify(ids));
       const Notifications = await import("expo-notifications");
       const previouslyScheduled = await Notifications.getAllScheduledNotificationsAsync();
-      await Promise.all(previouslyScheduled.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true).map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+      await Promise.all(previouslyScheduled.filter(item => item.content.data?.tacoplanAvailabilityAlarm === true)
+        .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+      await AsyncStorage.setItem(planKey, signature);
       return;
     } catch (error) {
       console.warn("AlarmKit no pudo programar avisos, usando notificaciones:", error);
       for (const id of ids) await cancelAvailabilityAlarm(id).catch(() => {});
       await AsyncStorage.setItem(NATIVE_IDS_KEY, "[]");
+      // Never cache a failed plan: the fallback notifications remain available.
+      await AsyncStorage.removeItem(planKey);
     }
   }
   const Notifications = await import("expo-notifications");
