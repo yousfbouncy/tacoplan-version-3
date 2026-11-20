@@ -5,6 +5,7 @@ on:
       - ota-android-3.0.6-free-restrictions
     paths:
       - .github/workflows/publish-ios-306-production.yml
+      - lib/jornada-widget-sync.ts
 jobs:
   publish-ios-306:
     runs-on: ubuntu-latest
