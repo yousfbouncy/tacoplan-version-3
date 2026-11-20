@@ -1,0 +1,59 @@
+name: Publish driving start precision 3.0.6 iOS and Android
+on:
+  push:
+    branches:
+      - fix/autostart-start-accuracy-306
+    paths:
+      - .github/workflows/publish-driving-start-306.yml
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Confirm expected OTA compatibility and unchanged native versions
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(e.version!=='3.0.6' || e.android.versionCode!==20214 ||
+             e.runtimeVersion?.policy!=='appVersion' || !e.updates.enabled ||
+             eas.build.production.channel!=='production') throw Error('Wrong runtime');
+          NODE
+      - name: Verify Expo credentials
+        run: test -n "$EXPO_TOKEN" || (echo "EXPO_TOKEN unavailable" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [android, ios]
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Publish OTA for 3.0.6 on ${{ matrix.platform }} only
+        run: |
+          npx --yes eas-cli update --channel production --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.6 inicio de conducción 6 km/h 60 s y maniobras lentas"
