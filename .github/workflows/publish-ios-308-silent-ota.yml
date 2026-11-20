@@ -1,0 +1,44 @@
+name: Publish iOS 3.0.8 silent OTA update check
+on:
+  push:
+    branches:
+      - fix/ios-308-silent-ota-update-prompt
+    paths:
+      - .github/workflows/publish-ios-308-silent-ota.yml
+  workflow_dispatch:
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify iOS 3.0.8 runtime compatibility
+        run: |
+          node - <<'NODE'
+          const app=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(app.version!=='3.0.8' || app.ios.bundleIdentifier!=='com.tacoplan' ||
+             app.runtimeVersion?.policy!=='appVersion' || app.updates?.enabled!==true ||
+             eas.build.production.channel!=='production') throw Error('Unexpected native/runtime version');
+          const fs=require('fs');
+          const gate=fs.readFileSync('components/UpdateGate.tsx','utf8');
+          if(!gate.includes('silentIosOtaAttemptedRef') || !gate.includes('await Updates.fetchUpdateAsync()'))
+            throw Error('Silent iOS OTA behavior absent');
+          NODE
+      - name: Expo token required
+        run: test -n "$EXPO_TOKEN" || (echo "EXPO_TOKEN not configured" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+      - name: Publish iOS 3.0.8 only
+        run: |
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan iOS 3.0.8: OTA silenciosa, sin aviso repetitivo"
