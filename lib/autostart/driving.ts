@@ -3,7 +3,7 @@ import { AppState, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { getJornadaAbierta } from "@/lib/local-storage";
-import { changeDriverActivity, loadDriverActivities, saveDriverActivities } from "@/lib/driver-activities";
+import { changeDriverActivity, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
 import { updateDrivingDetection, type DrivingDetection } from "./driving-activity-engine";
 import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 
@@ -39,7 +39,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   const userId = owner;
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
-    detection = { userId, shiftId, movingSince: null, lastFix: 0 };
+    detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
     const previous: DrivingDetection = detection!;
@@ -50,17 +50,30 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
 
     const log = await loadDriverActivities(userId, shiftId);
     const active = log.segments.findLast(s => s.endedAt === null);
-    if (result.transition === "REST") {
-      // Immediately turn a running drive into REST at the first accurate fix
-      // below 6 km/h. Do not change manually selected WORK or AVAILABLE.
+    if (result.transition === "STOP") {
+      // A full minute at <1 km/h. Close the driving segment at the FIRST
+      // stationary GPS fix, not after the confirmation delay. A stop never
+      // creates a legal REST activity on its own.
       if (active?.type !== "DRIVING") continue;
-      const effectiveTime = new Date(Math.max(fix.timestamp, Date.parse(active.startedAt)));
-      const next = changeDriverActivity(log, "REST", effectiveTime);
+      const effectiveTime = new Date(Math.max(result.stopStart ?? fix.timestamp, Date.parse(active.startedAt)));
+      const next = pauseDriverActivity(log, effectiveTime);
       if (next !== log) await saveDriverActivities(userId, next);
       continue;
     }
 
-    // After 60 seconds at >=15 km/h end the current activity (including REST).
+    if (result.transition === "RESUME") {
+      // The vehicle moved again in <60 s. Keep DRIVING active, but exclude
+      // every stationary second by splitting the DRIVING segment around it.
+      if (active?.type !== "DRIVING") continue;
+      const stopTime = Math.max(result.stopStart ?? fix.timestamp, Date.parse(active.startedAt));
+      if (fix.timestamp <= stopTime) continue;
+      const paused = pauseDriverActivity(log, new Date(stopTime));
+      const resumed = changeDriverActivity(paused, "DRIVING", new Date(fix.timestamp));
+      if (resumed !== log) await saveDriverActivities(userId, resumed);
+      continue;
+    }
+
+    // After 60 seconds at >=15 km/h, start driving from the first moving fix.
     // Backdate the activity switch to the first confirmed moving fix so a
     // short GPS confirmation delay does not falsely count as a rest.
     if (active?.type === "DRIVING") continue;
