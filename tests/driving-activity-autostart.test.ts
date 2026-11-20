@@ -92,29 +92,30 @@ test("out-of-order and duplicate fixes are ignored",()=>{
   assert.equal(updateDrivingDetection(r.state,fix(9,0)).transition,null);
 });
 
-test("slow departure 2 km/h then 6 km/h keeps the earliest moving fix",()=>{
+test("slow departure at 2 km/h then 6 km/h uses first movement only after 60s threshold",()=>{
  let r=updateDrivingDetection(init,fix(0,0));
  r=updateDrivingDetection(r.state,fix(10,2));
- assert.equal(r.transition,null);
+ assert.equal(r.transition,"RESUME");
  r=updateDrivingDetection(r.state,fix(25,4));
  assert.equal(r.transition,null);
  r=updateDrivingDetection(r.state,fix(40,6.1));
  assert.equal(r.transition,null);
  r=updateDrivingDetection(r.state,fix(70,6.1));
+ assert.equal(r.transition,null);
+ r=updateDrivingDetection(r.state,fix(100,6.1));
  assert.equal(r.transition,"DRIVING");
  assert.equal(r.movementStart,fix(10,2).timestamp);
 });
-test("below 6 km/h forever does not authorize a new DRIVING segment",()=>{
+test("never confirm below 6 km/h, even after a full minute of maneuvers",()=>{
  let r=updateDrivingDetection(init,fix(0,2));
- r=updateDrivingDetection(r.state,fix(90,4));
+ r=updateDrivingDetection(r.state,fix(30,4));
+ r=updateDrivingDetection(r.state,fix(60,4.5));
  assert.equal(r.transition,null);
- // A fresh reliable 6 km/h sample starts the confirmation against itself
- // after a gap, never backdates through unobserved GPS intervals.
- r=updateDrivingDetection(r.state,fix(91,6));
+ r=updateDrivingDetection(r.state,fix(61,6));
  assert.equal(r.transition,null);
- r=updateDrivingDetection(r.state,fix(151,6));
+ r=updateDrivingDetection(r.state,fix(121,6));
  assert.equal(r.transition,"DRIVING");
- assert.equal(r.movementStart,fix(90,4).timestamp);
+ assert.equal(r.movementStart,fix(0,2).timestamp);
 });
 test("short stop and resume at 1 km/h remain unchanged",()=>{
  let r=updateDrivingDetection(init,fix(0,10));
