@@ -1,0 +1,40 @@
+name: Build Tacoplan iOS 3.0.9 for TestFlight
+on:
+  push:
+    branches:
+      - fix/ios-expo-updates-startup-309
+    paths:
+      - .github/workflows/build-ios-309-testflight.yml
+  workflow_dispatch:
+jobs:
+  build-ios:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify isolated native runtime
+        run: |
+          node - <<'NODE'
+          const e = require('./app.json').expo;
+          if (e.version !== '3.0.9' || e.ios.buildNumber !== '15' ||
+              e.runtimeVersion?.policy !== 'appVersion' ||
+              e.updates.checkAutomatically !== 'NEVER' ||
+              e.ios.bundleIdentifier !== 'com.tacoplan')
+            throw Error('iOS 3.0.9 native startup config differs');
+          NODE
+      - name: Verify Expo access
+        run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: Authenticate EAS
+        run: npx --yes eas-cli whoami
+      - name: Queue new iOS TestFlight build (do not release automatically)
+        run: npx --yes eas-cli build --platform ios --profile production --non-interactive --no-wait
