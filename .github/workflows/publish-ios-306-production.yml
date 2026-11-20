@@ -1,0 +1,45 @@
+name: Publish Tacoplan iOS 3.0.6 OTA to production
+on:
+  push:
+    branches:
+      - ota-android-3.0.6-free-restrictions
+    paths:
+      - .github/workflows/publish-ios-306-production.yml
+jobs:
+  publish-ios-306:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check iOS runtime, update service and unchanged native configuration
+        run: |
+          node - <<'NODE'
+          const e = require('./app.json').expo;
+          const eas = require('./eas.json');
+          if (e.version !== '3.0.6' || e.runtimeVersion?.policy !== 'appVersion' ||
+              e.ios?.bundleIdentifier !== 'com.tacoplan' ||
+              e.updates?.url !== 'https://u.expo.dev/e8c809db-2b37-4d49-88aa-1e8b49a3ef6d' ||
+              !e.updates?.enabled || eas.build?.production?.channel !== 'production')
+            throw Error('iOS 3.0.6 OTA runtime/channel mismatch');
+          const sounds = e.plugins.find(p => Array.isArray(p) && p[0] === 'expo-notifications')?.[1]?.sounds ?? [];
+          if (JSON.stringify(sounds) !== JSON.stringify(['./assets/sounds/tacoplan_viaje.wav']))
+            throw Error('Native sounds changed');
+          NODE
+      - name: Check authentication
+        run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN secret" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Expo account
+        run: npx --yes eas-cli whoami
+      - name: Publish ONLY iOS on production channel (runtime 3.0.6)
+        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - restricciones de planes y AutoStart"
