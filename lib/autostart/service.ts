@@ -3,6 +3,7 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
 import { supabase } from "@/lib/supabase";
+import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 import { getJornadaAbierta } from "@/lib/local-storage";
 import { AUTOSTART_TASK, deliverAutoStartLocations, readAutoStartState, setAutoStartState } from "./task";
 
@@ -60,7 +61,7 @@ export async function syncAutoStartMonitoring(userId: string): Promise<void> {
     if (Platform.OS === "web") return;
     const state = await readAutoStartState();
     const open = await getJornadaAbierta();
-    if (!state.enabled || state.userId !== userId || !!open?.id) {
+    if (!state.enabled || state.userId !== userId || !!open?.id || !(await canRunPaidAutomation(userId))) {
       await clearForeground();
       await clearBackground();
       currentMode = "off";
@@ -106,6 +107,7 @@ export async function syncAutoStartMonitoring(userId: string): Promise<void> {
 }
 export async function enableAutoStart(userId: string): Promise<void> {
   if (Platform.OS === "web") throw new Error("AutoStart solo está disponible en Android e iOS");
+  if (!(await canRunPaidAutomation(userId))) throw new Error("AutoStart requiere Plus o Pro y conexión para verificar el plan.");
   if (!(await TaskManager.isAvailableAsync())) throw new Error("Hace falta una compilación nativa");
   const foregroundPermission = await Location.requestForegroundPermissionsAsync();
   if (foregroundPermission.status !== "granted") throw new Error("Autoriza ubicación precisa");
