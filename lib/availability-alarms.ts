@@ -7,8 +7,8 @@ export const AVAILABILITY_ALARMS_KEY = "tacoplan_availability_alarms_enabled";
 
 let pendingSync: Promise<void> = Promise.resolve();
 
-const NATIVE_IDS_KEY = "tacoplan_availability_alarmkit_ids";
-function nativeAlarmId(valulosedShiftIds = new Set<string>();
+// Prevent earlier alarm sync tasks from reactivating closed shifts.
+const closedShiftIds = new Set<string>();
 
 /**
  * Se llama solo después de guardar correctamente el cierre de una jornada.
