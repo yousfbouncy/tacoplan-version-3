@@ -1173,7 +1173,7 @@ export default function HistorialScreen() {
     [periodAuditQuery.data?.issues],
   );
 
-  const {access: planAccess,loading:planLoading}=useSubscriptionAccess();
+  const {access: planAccess}=useSubscriptionAccess();
   const historyLimited=planAccess.restrictions_enabled&&!planAccess.plus_access;
   // 14 calendar days including today; compute on render so the boundary advances.
   const freeHistoryFrom=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-13);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;},[periodo.from,periodo.to]);
@@ -1184,8 +1184,8 @@ export default function HistorialScreen() {
   });
 
   const calendarJourneysQuery = useQuery<Jornada[]>({
-    queryKey: ["calendar-jornadas-all", syncVersion],
-    queryFn: () => listarJornadas(),
+    queryKey: ["calendar-jornadas-all", syncVersion, historyLimited, freeHistoryFrom],
+    queryFn: () => historyLimited ? listarJornadas(freeHistoryFrom) : listarJornadas(),
     enabled: calendarVisible,
   });
 
@@ -2414,6 +2414,11 @@ export default function HistorialScreen() {
         </View>
       )}
 
+      {historyLimited ? (
+        <Text style={{color:"#B8CEE4",paddingHorizontal:16,paddingVertical:8}}>
+          Plan Gratis: se muestran únicamente los últimos 14 días. Tus registros anteriores siguen guardados.
+        </Text>
+      ) : null}
       {jornadasQuery.isLoading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={Colors.light.tint} />
