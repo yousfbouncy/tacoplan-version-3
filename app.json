@@ -15,8 +15,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para autocompletar el lugar de fin de jornada (provincia y país).",
         "NSBluetoothAlwaysUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2 y registrar automáticamente conducciones, pausas y países.",
-        "NSBluetoothPeripheralUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2.",
-        "NSAlarmKitUsageDescription": "Tacoplan utiliza alarmas del sistema para avisarte antes de alcanzar los límites de tu jornada."
+        "NSBluetoothPeripheralUsageDescription": "Tacoplan necesita acceso a Bluetooth para conectarse a tu tacógrafo Smart 2."
       }
     },
     "android": {
