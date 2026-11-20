@@ -44,4 +44,5 @@ jobs:
       - run: npm test
       - run: npx --yes eas-cli whoami
       - name: Publish production OTA, iOS 3.0.8 only
-        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan iOS 3.0.8: AlarmKit desactivado, notificaciones normales"
+        run: |
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan iOS 3.0.8: AlarmKit desactivado, notificaciones normales"
