@@ -10,9 +10,9 @@ export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
 const OWNER_KEY = "@tacoplan/driving-autostart/active-owner";
 const PENDING_STOP_PREFIX = "@tacoplan/driving-autostart/pending-stop/v1:";
-const MIN_SPEED = 15 / 3.6;
+const MIN_SPEED = 6 / 3.6;
 const STOP_SPEED = 1 / 3.6;
-const CONFIRM_MS = 3 * 60_000;
+const CONFIRM_MS = 60_000;
 const STOP_MS = 60_000;
 const MAX_GAP_MS = 90_000;
 type Fix = Location.LocationObject;
@@ -149,11 +149,11 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       }
     }
 
-    // An already confirmed stop follows the normal (existing) 15 km/h
-    // movement confirmation. Merely reaching 1 km/h is not a new driving
-    // authorization after a confirmed stop.
+    // Record the first reliable slow movement above 1 km/h (maneuvering).
+    // Only authorize a new DRIVING after one minute of movement with a fix
+    // reaching at least 6 km/h. Never add unobserved seconds through GPS gaps.
+    if (detection.movingSince === null) detection.movingSince = ts;
     if (speed >= MIN_SPEED) {
-      if (detection.movingSince === null) detection.movingSince = ts;
       if (ts - detection.movingSince >= CONFIRM_MS) {
         const log = await loadDriverActivities(userId, shiftId);
         if (log.segments.findLast(seg => seg.endedAt === null)?.type !== "DRIVING") {
@@ -163,8 +163,6 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
           if (next !== log) await saveDriverActivities(userId, next);
         }
       }
-    } else {
-      detection.movingSince = null;
     }
   }
 }
