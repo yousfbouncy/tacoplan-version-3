@@ -1,0 +1,58 @@
+name: Publish AutoStart rest and driving totals 3.0.6
+on:
+  push:
+    branches:
+      - feature/auto-rest-break-and-driving-totals-306
+    paths:
+      - .github/workflows/publish-auto-rest-306.yml
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Confirm unchanged 3.0.6 native runtime
+        run: |
+          node - <<'NODE'
+          const a=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(a.version!=='3.0.6' || a.android.versionCode!==20214 ||
+             a.runtimeVersion?.policy!=='appVersion' || a.updates?.enabled!==true ||
+             eas.build.preview.channel!=='preview' || eas.build.production.channel!=='production') throw Error('Wrong runtime; refusing OTA');
+          NODE
+      - run: test -n "$EXPO_TOKEN" || (echo "No Expo token" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, android]
+        channel: [production, preview]
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Publish 3.0.6 ${{ matrix.platform }} ${{ matrix.channel }}
+        run: |
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.6: descanso GPS y contador conducción 45 o 15+30"
