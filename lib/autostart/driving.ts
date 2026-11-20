@@ -88,6 +88,16 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     // The gap stays unclassified; it is not a legal REST activity.
     const stoppedSince = detection.stoppedSince;
     detection.stoppedSince = null;
+    if (stoppedSince !== null && ts - stoppedSince >= STOP_MS) {
+      // A stationary fix may be followed by the first moving fix after the
+      // full minute; honor the original stop timestamp, not the restart time.
+      const log = await loadDriverActivities(userId, shiftId);
+      const active = log.segments.findLast(seg => seg.endedAt === null);
+      if (active?.type === "DRIVING") {
+        const next = pauseDriverActivity(log, new Date(Math.max(stoppedSince, Date.parse(active.startedAt))));
+        if (next !== log) await saveDriverActivities(userId, next);
+      }
+    }
     if (stoppedSince !== null && ts - stoppedSince < STOP_MS) {
       const log = await loadDriverActivities(userId, shiftId);
       const active = log.segments.findLast(seg => seg.endedAt === null);
