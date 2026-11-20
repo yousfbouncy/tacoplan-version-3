@@ -1,6 +1,6 @@
+import "react-native-url-polyfill/auto";
 import "@/lib/autostart/task";
 import "@/lib/autostart/driving";
-import "react-native-url-polyfill/auto";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -43,7 +43,9 @@ import {
   Inter_700Bold,
 } from "@expo-google-fonts/inter";
 
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync().catch(error =>
+  console.warn("[SPLASH] Could not retain splash screen", error),
+);
 
 const ONBOARDING_KEY = "tacoplan_onboarding_completed";
 const BASE_LOCATION_SKIP_KEY = "tacoplan_base_location_skip_once";
@@ -76,8 +78,15 @@ function AuthGate() {
     const flush = async () => {
       if (busy) return;
       busy = true;
-      try { await flushPendingDriverActivities(user.id); }
-      finally { busy = false; }
+      try {
+        await flushPendingDriverActivities(user.id);
+      } catch (error) {
+        // This is optional background replay. A rejected promise must never
+        // become an unhandled JS exception during an iOS cold start.
+        console.warn("[ACTIVITIES] Startup replay unavailable", error);
+      } finally {
+        busy = false;
+      }
     };
     void flush();
     const app = AppState.addEventListener("change", state => {
