@@ -168,7 +168,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     <View style={{borderRadius:12,padding:12,backgroundColor:"#0B2139",gap:5}}>
       <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>Resumen de actividades de esta jornada</Text>
       <Text style={{color:colors.sub,fontSize:12}}>
-        Conducción {format(totals.totals.DRIVING)} · Disponibilidad {format(totals.totals.AVAILABLE)}
+        Conducción actual {format(totals.continuousDrivingMs)} · Disponibilidad {format(totals.totals.AVAILABLE)}
       </Text>
       <Text style={{color:colors.sub,fontSize:12}}>
         Otros trabajos {format(totals.totals.WORK)} · Pausas totales {format(totals.totals.REST)}
