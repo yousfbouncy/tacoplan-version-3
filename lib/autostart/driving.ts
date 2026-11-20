@@ -16,7 +16,7 @@ const CONFIRM_MS = 60_000;
 const STOP_MS = 60_000;
 const MAX_GAP_MS = 90_000;
 type Fix = Location.LocationObject;
-type Detection = { userId: string; shiftId: string; movingSince: number | null; stoppedSince: number | null; lastFix: number };
+type Detection = { userId: string; shiftId: string; movingSince: number | null; slowSince: number | null; stoppedSince: number | null; lastFix: number };
 let detection: Detection | null = null;
 let foreground: Location.LocationSubscription | null = null;
 let activeUser: string | null = null;
@@ -65,7 +65,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
   const userId = owner;
   const shiftId = String(shift.id);
   if (!detection || detection.userId !== userId || detection.shiftId !== shiftId) {
-    detection = { userId, shiftId, movingSince: null, stoppedSince: null, lastFix: 0 };
+    detection = { userId, shiftId, movingSince: null, slowSince: null, stoppedSince: null, lastFix: 0 };
     await clearPendingDrivingStop(userId, shiftId).catch(() => {});
   }
   for (const fix of fixes.slice().sort((a, b) => a.timestamp - b.timestamp)) {
@@ -76,6 +76,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     if (previousFix && ts - previousFix > MAX_GAP_MS) {
       // Do not infer a full minute of stationary time from missing GPS samples.
       detection.movingSince = null;
+      detection.slowSince = null;
       detection.stoppedSince = null;
       await clearPendingDrivingStop(userId, shiftId).catch(() => {});
     }
@@ -87,12 +88,14 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
     if (!good) {
       // An unreliable fix cannot confirm a stop or a restart.
       detection.movingSince = null;
+      detection.slowSince = null;
       detection.stoppedSince = null;
       await clearPendingDrivingStop(userId, shiftId).catch(() => {});
       continue;
     }
     if (speed < STOP_SPEED) {
       detection.movingSince = null;
+      detection.slowSince = null;
       if (detection.stoppedSince === null) detection.stoppedSince = ts;
       // The counter stops at the first reliable stationary sample, without
       // closing the driving segment before the full minute is confirmed.
@@ -145,20 +148,22 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
           if (resumed !== log) await saveDriverActivities(userId, resumed);
         }
         detection.movingSince = null;
+        detection.slowSince = null;
         continue;
       }
     }
 
-    // Record the first reliable slow movement above 1 km/h (maneuvering).
-    // Only authorize a new DRIVING after one minute of movement with a fix
-    // reaching at least 6 km/h. Never add unobserved seconds through GPS gaps.
-    if (detection.movingSince === null) detection.movingSince = ts;
+    // Keep the earliest reliable low-speed maneuver (above 1 km/h).
+    // The 60-second confirmation starts only after first reaching 6 km/h.
+    // STOP and short-stop RESUME handling above must remain unchanged.
+    if (detection.slowSince === null) detection.slowSince = ts;
     if (speed >= MIN_SPEED) {
+      if (detection.movingSince === null) detection.movingSince = ts;
       if (ts - detection.movingSince >= CONFIRM_MS) {
         const log = await loadDriverActivities(userId, shiftId);
         if (log.segments.findLast(seg => seg.endedAt === null)?.type !== "DRIVING") {
           const currentStart = log.segments.findLast(seg => seg.endedAt === null)?.startedAt;
-          const effectiveStart = Math.max(detection.movingSince, currentStart ? Date.parse(currentStart) : 0);
+          const effectiveStart = Math.max(detection.slowSince ?? detection.movingSince, currentStart ? Date.parse(currentStart) : 0);
           const next = changeDriverActivity(log, "DRIVING", new Date(effectiveStart));
           if (next !== log) await saveDriverActivities(userId, next);
         }
