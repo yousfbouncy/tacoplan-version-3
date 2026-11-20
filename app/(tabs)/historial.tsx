@@ -1,4 +1,5 @@
 import { useWindowDimensions } from "react-native";
+import {useSubscriptionAccess} from "@/lib/subscription-access";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import JornadaActivityHistory from "@/components/JornadaActivityHistory";
 import { useState, useMemo, useEffect, useCallback } from "react";
@@ -1157,14 +1158,18 @@ export default function HistorialScreen() {
     }, [user?.id])
   );
 
+  const {access:planAccess}=useSubscriptionAccess();
+  const historyLimited=planAccess.restrictions_enabled&&!planAccess.plus_access;
+  const freeHistoryFrom=(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-13);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  const visibleHistoryFrom=historyLimited&&periodo.from<freeHistoryFrom?freeHistoryFrom:periodo.from;
   const jornadasQuery = useQuery<Jornada[]>({
-    queryKey: ["jornadas", periodo.from, periodo.to, syncVersion],
-    queryFn: () => listarJornadas(periodo.from, periodo.to),
+    queryKey: ["jornadas", visibleHistoryFrom, periodo.to, syncVersion,historyLimited],
+    queryFn: () => historyLimited&&periodo.to<freeHistoryFrom?Promise.resolve([]):listarJornadas(visibleHistoryFrom,periodo.to),
   });
 
   const calendarJourneysQuery = useQuery<Jornada[]>({
-    queryKey: ["calendar-jornadas-all", syncVersion],
-    queryFn: () => listarJornadas(),
+    queryKey: ["calendar-jornadas-all", syncVersion,historyLimited,freeHistoryFrom],
+    queryFn: () => historyLimited?listarJornadas(freeHistoryFrom):listarJornadas(),
     enabled: calendarVisible,
   });
 
@@ -1361,7 +1366,7 @@ export default function HistorialScreen() {
   const [historySearch, setHistorySearch] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const [showHistoryTools, setShowHistoryTools] = useState(false);
-  const jornadasData = jornadasQuery.data || [];
+  const jornadasData = (jornadasQuery.data || []).filter(j=>!historyLimited||j.fechaInicio>=freeHistoryFrom);
 
   type ListItem =
     | { type: "jornada"; jornada: Jornada }
@@ -2374,6 +2379,15 @@ export default function HistorialScreen() {
       ) : (
         <FlatList
           data={listItems.filter(item => {
+            if(historyLimited){
+              const eventDate=item.type==="jornada"?item.jornada.fechaInicio
+                :item.type==="natural_day_diet"?item.naturalDayDiet.date
+                :item.type==="offsite-weekly-rest"?item.entry.date
+                :item.type==="ferry-rest"?item.ferryRest.fecha
+                :item.type==="active-ferry"?item.activeFerry.startTime.slice(0,10)
+                :item.restJornada?.fechaInicio;
+              if(!eventDate||eventDate<freeHistoryFrom)return false;
+            }
             const matchesType = historyFilter === "all" || (historyFilter === "jornada" ? item.type === "jornada" : ["rest-gap", "ferry-rest", "active-ferry", "offsite-weekly-rest"].includes(item.type));
             if (!matchesType || !historySearch.trim()) return matchesType;
             const text = item.type === "jornada" ? `${item.jornada.fechaInicio} ${formatFecha(item.jornada.fechaInicio)} ${item.jornada.lugarInicio} ${item.jornada.lugarFin || ""}` : JSON.stringify(item);
