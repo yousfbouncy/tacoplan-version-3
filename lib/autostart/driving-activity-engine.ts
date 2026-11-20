@@ -52,14 +52,14 @@ export function updateDrivingDetection(state: DrivingDetection, fix: DrivingFix)
     const elapsed = ts - stoppedSince;
     if (elapsed < STOP_CONFIRM_MS) {
       return {
-        state: { lastFix: ts, movingSince: null, stoppedSince: null },
+        state: { lastFix: ts, movingSince: ts, stoppedSince: null },
         transition: "RESUME", stopStart: stoppedSince,
       };
     }
     // A moving fix after a minute of stationary samples is also enough
     // to close DRIVING at the timestamp where the stop was first observed.
     return {
-      state: { lastFix: ts, movingSince: speed >= START_SPEED_MPS ? ts : null, stoppedSince: null },
+      state: { lastFix: ts, movingSince: ts, stoppedSince: null },
       transition: "STOP", stopStart: stoppedSince,
     };
   }
