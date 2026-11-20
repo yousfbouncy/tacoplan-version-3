@@ -2,10 +2,12 @@
  * A reliable fix below 1 km/h begins a candidate stop. Stop is confirmed
  * after >=60 seconds, backdated to that first fix. A shorter stop is removed
  * from driving totals without losing the active DRIVING selection.
- * As before, new DRIVING requires 60 seconds >=15 km/h.
+ * New DRIVING requires 60 seconds of reliable movement and a fix >=6 km/h.
+ * Slow movement above 1 km/h preceding confirmation is retained, so short
+ * low-speed maneuvers are not discarded from the start of driving.
  */
 export const STOP_SPEED_MPS = 1 / 3.6;
-export const START_SPEED_MPS = 15 / 3.6;
+export const START_SPEED_MPS = 6 / 3.6;
 export const START_CONFIRM_MS = 60_000;
 export const STOP_CONFIRM_MS = 60_000;
 export const MAX_FIX_GAP_MS = 90_000;
@@ -61,12 +63,12 @@ export function updateDrivingDetection(state: DrivingDetection, fix: DrivingFix)
       transition: "STOP", stopStart: stoppedSince,
     };
   }
-  if (speed < START_SPEED_MPS) {
-    return { state: { lastFix: ts, movingSince: null, stoppedSince: null }, transition: null };
-  }
+  // Remember initial slow movement (1–6 km/h) and only commit a new
+  // DRIVING segment after one minute of reliable movement reaching 6 km/h.
+  // The <1 km/h stop branch above and all RESUME handling remain unchanged.
   const movingSince = state.movingSince !== null &&
       !interrupted ? state.movingSince : ts;
-  const confirmed = ts - movingSince >= START_CONFIRM_MS;
+  const confirmed = speed >= START_SPEED_MPS && ts - movingSince >= START_CONFIRM_MS;
   return {
     state: { lastFix: ts, movingSince, stoppedSince: null },
     transition: confirmed ? "DRIVING" : null,
