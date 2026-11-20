@@ -197,18 +197,15 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
           <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:6,fontSize:16,fontWeight:"700",fontVariant:["tabular-nums"]}}>
             {format(item.type==="REST"?totals.restButtonMs:item.type==="DRIVING"?totals.continuousDrivingMs:totals.totals[item.type])}
           </Text>
+          {item.type==="DRIVING" && totals.hasCompletedDrivingBreak ? (
+            <Text style={{color:selected?"#FFFFFF":colors.sub,marginTop:5,fontSize:13,fontWeight:"700",fontVariant:["tabular-nums"]}}>
+              Total {format(totals.totals.DRIVING)}
+            </Text>
+          ) : null}
         </Pressable>;
       })}
     </View>
-    {totals.hasCompletedDrivingBreak ? (
-      <View style={{backgroundColor:"#163C57",borderRadius:12,padding:12,borderWidth:1,borderColor:"#376B89",gap:5}}>
-        <Text style={{color:colors.sub,fontSize:12,fontWeight:"600"}}>Conducción total acumulada de la jornada</Text>
-        <Text style={{color:"#FFFFFF",fontSize:21,fontWeight:"700",fontVariant:["tabular-nums"]}}>
-          {format(totals.totals.DRIVING)}
-        </Text>
-        <Text style={{color:colors.sub,fontSize:11}}>El contador de conducción se reinicia tras 45 min o una pausa válida de 15 + 30 min. El total se conserva para el cierre de jornada.</Text>
-      </View>
-    ) : null}
+
 
   </View>;
 }

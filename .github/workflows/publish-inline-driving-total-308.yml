@@ -1,0 +1,60 @@
+name: Inline driving total 3.0.8 on iOS and Android
+on:
+  push:
+    branches:
+      - fix/driving-total-inline-308
+    paths:
+      - .github/workflows/publish-inline-driving-total-308.yml
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Confirm app runtime and UI-only changes
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),a=require('./app.json').expo,e=require('./eas.json');
+          if(a.version!=='3.0.8' || a.android.versionCode!==20215 ||
+             a.runtimeVersion?.policy!=='appVersion' || !a.updates?.enabled ||
+             e.build.production.channel!=='production') throw Error('OTA runtime mismatch');
+          const panel=fs.readFileSync('components/DriverActivityPanel.tsx','utf8');
+          if(!panel.includes('Total {format(totals.totals.DRIVING)}') ||
+             panel.includes('Conducción total acumulada de la jornada')) throw Error('Inline display incorrect');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: test -n "$EXPO_TOKEN"
+      - run: npx --yes eas-cli whoami
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, android]
+        channel: [production, preview]
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Publish inline driving total 3.0.8 ${{ matrix.platform }} ${{ matrix.channel }}
+        run: |
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: contador total dentro de Conducción, sin tarjeta extra"
