@@ -128,7 +128,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       {activityTypes.map(item=>{
         const selected=totals.current===item.type;
         return <Pressable key={item.type} onPress={()=>choose(item.type)} disabled={!log||saving||closed||planLoading||!canManageActivities}
-          accessibilityRole="button" accessibilityState={{selected,disabled:!log||saving||closed||planLoading||!canManageActivities}}}
+          accessibilityRole="button" accessibilityState={{selected,disabled:!log||saving||closed||planLoading||!canManageActivities}}
           style={{width:"48%",backgroundColor:selected?colors.active:colors.card,
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {item.label}</Text>
