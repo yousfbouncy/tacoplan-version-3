@@ -5,6 +5,10 @@ on:
       - feature/android-308-free-limits-driving-stop
     paths:
       - .github/workflows/publish-android-308-plans-driving.yml
+      - tests/driving-auto-runtime.test.ts
+      - lib/autostart/driving.ts
+      - components/DriverActivityPanel.tsx
+      - 'app/(tabs)/historial.tsx'
   workflow_dispatch:
 jobs:
   verify-and-publish:
