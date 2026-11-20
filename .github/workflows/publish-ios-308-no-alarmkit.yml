@@ -1,0 +1,47 @@
+name: Publish Tacoplan iOS 3.0.8 without AlarmKit
+on:
+  push:
+    branches:
+      - fix/ios-308-disable-alarmkit-ota
+    paths:
+      - .github/workflows/publish-ios-308-no-alarmkit.yml
+  workflow_dispatch:
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify iOS 3.0.8 OTA isolation and removal of AlarmKit
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const a = require('./app.json').expo;
+          const eas = require('./eas.json');
+          if(a.version!=='3.0.8' || a.runtimeVersion?.policy!=='appVersion' ||
+             a.updates?.enabled!==true || a.ios?.bundleIdentifier!=='com.tacoplan' ||
+             eas.build.production.channel!=='production') {
+            throw Error('Refusing OTA: wrong iOS runtime or channel');
+          }
+          if(fs.existsSync('modules/tacoplan-alarmkit/expo-module.config.json') ||
+             fs.readFileSync('lib/availability-alarms.ts','utf8').includes('scheduleAvailabilityAlarm(') ||
+             fs.readFileSync('lib/alarmkit-bridge.ts','utf8').includes('requireNativeModule')) {
+            throw Error('AlarmKit call still present');
+          }
+          NODE
+      - name: Confirm Expo authentication is configured
+        run: test -n "$EXPO_TOKEN" || (echo "EXPO_TOKEN missing" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+      - name: Publish production OTA, iOS 3.0.8 only
+        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan iOS 3.0.8: AlarmKit desactivado, notificaciones normales"
