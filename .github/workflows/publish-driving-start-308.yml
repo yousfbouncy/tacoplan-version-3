@@ -5,6 +5,9 @@ on:
       - fix/autostart-start-accuracy-308
     paths:
       - .github/workflows/publish-driving-start-308.yml
+      - tests/driving-activity-autostart.test.ts
+      - tests/driving-auto-runtime.test.ts
+      - lib/autostart/driving-activity-engine.ts
   workflow_dispatch:
 jobs:
   verify:
