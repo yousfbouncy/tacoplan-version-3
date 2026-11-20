@@ -265,12 +265,12 @@ test("independent 47-minute rest correction resets driving counter without mutat
  let log={shiftId:"mwp65qi93j52kiufu",segments:[] as Array<{type:"DRIVING"|"REST"|"AVAILABLE"|"WORK";startedAt:string;endedAt:string|null}>};
  log=changeDriverActivity(log,"DRIVING",t(0));
  log=changeDriverActivity(log,"DRIVING",t(1)); // repeated tap is ignored
- log=changeDriverActivity(log,"WORK",t(240));
+ log=pauseDriverActivity(log,t(240));
  log=changeDriverActivity(log,"DRIVING",t(290));
  const correction={type:"REST" as const,startedAt:t(241).toISOString(),endedAt:t(288).toISOString()};
  const combined=mergeActivityCorrections(log,[correction]);
- assert.equal(log.segments.length,3);
- assert.equal(combined.segments.length,4);
+ assert.equal(log.segments.length,2);
+ assert.equal(combined.segments.length,3);
  const state=getDriverActivityTotals(combined,t(305));
  assert.equal(state.hasCompletedDrivingBreak,true);
  assert.equal(state.continuousDrivingMs,15*60000);
