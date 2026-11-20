@@ -5,6 +5,7 @@ import { build } from "esbuild";
 const mocksList=[
   "@react-native-async-storage/async-storage","react-native","expo-location",
   "expo-task-manager","@/lib/local-storage","@/lib/driver-activities",
+  "@/lib/paid-automation-access",
 ];
 const bundle=build({entryPoints:["lib/autostart/driving.ts"],bundle:true,write:false,platform:"node",format:"cjs",
   plugins:[{name:"mock-native",setup(b){
@@ -36,6 +37,7 @@ async function harness(){
       async watchPositionAsync(_options:any,fn:any){callback=fn;return {remove(){}};},
     },
     "@/lib/local-storage":{async getJornadaAbierta(){return {id:"shift1"};}},
+    "@/lib/paid-automation-access":{async canRunPaidAutomation(){return true;}},
     "@/lib/driver-activities":{
       async loadDriverActivities(){return JSON.parse(JSON.stringify(log));},
       changeDriverActivity(old:any,type:string,now:Date){
