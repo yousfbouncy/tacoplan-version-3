@@ -9,6 +9,7 @@ import { crearJornadaInicio, getEstadoLegal, getJornadaAbierta, getLastLugarFin 
 import { userScopedKey } from "@/lib/user-scope";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { syncJornadaWidget } from "@/lib/jornada-widget-sync";
+import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 export const AUTOSTART_TASK = "tacoplan-autostart-location-v1";
 const KEY = "@tacoplan/autostart/v1";
 const COOLDOWN_MS = 8 * 60 * 60 * 1000;
@@ -42,6 +43,11 @@ async function processLocations(data: unknown, error: unknown) {
   if (!fixes.length) return;
   const state = await readAutoStartState();
   if (!state.enabled || !state.userId) return;
+  if (!(await canRunPaidAutomation(state.userId))) {
+    const LocationModule=await import("expo-location");
+    if (await LocationModule.hasStartedLocationUpdatesAsync(AUTOSTART_TASK))await LocationModule.stopLocationUpdatesAsync(AUTOSTART_TASK);
+    return;
+  }
   // Old 2 km/h candidates must not count toward the new 15 km/h threshold.
   if (state.detectionMinSpeedMps !== MIN_SPEED_MPS) {
     state.candidate = null;
