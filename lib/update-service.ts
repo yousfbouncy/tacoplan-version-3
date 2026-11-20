@@ -114,6 +114,11 @@ export async function fetchRemoteUpdateConfig(): Promise<RemoteUpdateConfig | nu
 }
 
 export async function checkOtaUpdateAvailable(): Promise<boolean> {
+  // iOS crash-recovery safeguard: avoid JS-triggered OTA checks while the
+  // installed Expo binary also manages startup. Until the next native release
+  // is verified, iOS updates are distributed through TestFlight/App Store.
+  // Android retains its existing over-the-air update behavior.
+  if (Platform.OS === "ios") return false;
   if (!Updates.isEnabled) {
     return false;
   }
@@ -144,7 +149,9 @@ export async function decideUpdateAction(): Promise<{
   const force = !!remote?.force_update;
   const minReq = remote?.min_required_version ?? remote?.minimum_version ?? null;
   const latest = remote?.latest_version ?? null;
-  const url = remote?.apk_url ?? remote?.app_store_url ?? null;
+  const url = Platform.OS === "ios"
+    ? (remote?.app_store_url ?? null)
+    : (remote?.apk_url ?? null);
 
   if (remote && remote.enabled === false) {
     return { currentVersion, remote, otaAvailable: false, decision: { kind: "none" } };
