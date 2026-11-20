@@ -1,5 +1,6 @@
 import { enableAutoStart, disableAutoStart } from "@/lib/autostart/service";
 import { readAutoStartState } from "@/lib/autostart/task";
+import { useSubscriptionAccess, readSubscriptionAccess } from "@/lib/subscription-access";
 import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
@@ -743,6 +744,8 @@ export default function UsuarioScreen() {
   const { user, logout, deleteAccount, isAdmin } = useAuth();
   const { triggerSync, startRestore, syncStatus, lastSyncTime, syncVersion } = useSync();
   const userId = user?.id ?? null;
+  const { access: planAccess, loading: planLoading } = useSubscriptionAccess();
+  const autoStartAllowed = !planAccess.restrictions_enabled || planAccess.plus_access;
   const { getPeriod, config: periodConfig } = usePeriod();
 
   const scrollRef = useRef<ScrollViewInstance | null>(null);
@@ -931,6 +934,18 @@ export default function UsuarioScreen() {
   }, [userId]));
   const toggleAutoStart = async () => {
     if (!userId || autoStartBusy) return;
+    if (!autoStartEnabled) {
+      try {
+        const latestAccess = await readSubscriptionAccess();
+        if (latestAccess.restrictions_enabled && !latestAccess.plus_access) {
+          Alert.alert("AutoStart", "AutoStart está disponible con Plus o Pro.");
+          return;
+        }
+      } catch {
+        Alert.alert("AutoStart", "No se han podido verificar tus permisos. Inténtalo de nuevo con conexión.");
+        return;
+      }
+    }
     setAutoStartBusy(true);
     try {
       if (autoStartEnabled) await disableAutoStart(); else await enableAutoStart(userId);
@@ -1981,9 +1996,9 @@ export default function UsuarioScreen() {
               <View style={styles.quickActionIcon}><Ionicons name="play-circle" size={24} color={Colors.light.tint} /></View>
               <Pressable accessibilityRole="button" onPress={() => router.push("/autostart" as any)} style={{ flex: 1 }}>
                 <Text style={styles.quickActionTitle}>AutoStart (inicio automático)</Text>
-                <Text style={styles.quickActionSubtitle}>{Platform.OS === "web" ? "Disponible en la aplicación Android / iOS" : "Detecta el movimiento y propone el inicio de jornada"}</Text>
+                <Text style={styles.quickActionSubtitle}>{!autoStartAllowed ? "Disponible con Plus o Pro" : Platform.OS === "web" ? "Disponible en la aplicación Android / iOS" : "Detecta el movimiento y propone el inicio de jornada"}</Text>
               </Pressable>
-              <Switch accessibilityLabel="AutoStart" value={autoStartEnabled} onValueChange={toggleAutoStart} disabled={autoStartBusy || Platform.OS === "web" || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
+              <Switch accessibilityLabel="AutoStart" value={autoStartEnabled} onValueChange={toggleAutoStart} disabled={autoStartBusy || planLoading || (!autoStartAllowed && !autoStartEnabled) || Platform.OS === "web" || !userId} trackColor={{false:"#CCD5E1",true:Colors.light.tint}} />
             </View>
             <View style={styles.preferenceDivider} />
             <View style={styles.quickActionRow}>
