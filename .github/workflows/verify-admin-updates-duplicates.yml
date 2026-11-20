@@ -1,0 +1,25 @@
+name: Verify admin update duplicate-row fix
+on:
+  push:
+    branches:
+      - fix/admin-update-config-duplicate-rows-mobile
+    paths:
+      - .github/workflows/verify-admin-updates-duplicates.yml
+      - lib/update-service.ts
+      - components/admin/AdminPanelScreen.tsx
+      - supabase/functions/admin-update-config/index.ts
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test

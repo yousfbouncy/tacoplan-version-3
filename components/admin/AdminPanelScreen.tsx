@@ -926,18 +926,26 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     try {
       const { data, error } = await supabase
         .from("app_update_config")
-        .select("platform,channel,latest_version,min_required_version,minimum_version,force_update,apk_url,app_store_url,enabled,message")
+        .select("id,platform,channel,latest_version,min_required_version,minimum_version,force_update,apk_url,app_store_url,enabled,message,updated_at")
         .in("platform", ["ios", "android", "web"] as any)
         .limit(20);
       if (error) throw error;
 
       setUpdateConfig((prev) => {
+        // Prefer the newest NULL-channel admin row, then production, then
+        // preview. Duplicates must not silently overwrite the visible form.
+        const sortedRows = [...((data || []) as any[])].sort((a,b) => {
+          const rank = (v:any) => v.channel == null ? 0 : v.channel === "production" ? 1 : v.channel === "preview" ? 2 : 3;
+          return rank(b) - rank(a) ||
+            String(a.updated_at||"").localeCompare(String(b.updated_at||"")) ||
+            Number(a.id||0)-Number(b.id||0);
+        });
         const next = {
           ios: { ...prev.ios },
           android: { ...prev.android },
           web: { ...prev.web },
         };
-        for (const row of (data || []) as any[]) {
+        for (const row of sortedRows) {
           const p = row.platform === "ios" || row.platform === "android" || row.platform === "web"
             ? (row.platform as "ios" | "android" | "web")
             : null;
@@ -970,6 +978,21 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
     if (updateSaving) return;
     setUpdateSaving(true);
     try {
+      const selected = updateConfig[platform];
+      const destination = platform === "android" ? selected.apk_url : selected.app_store_url;
+      if (selected.enabled !== false && selected.force_update) {
+        let valid = false;
+        try {
+          const url = new URL(destination || "");
+          valid = url.protocol === "https:" &&
+            !url.href.includes("TU_APP_ID") && !url.href.includes("YOUR_APP_ID") &&
+            !url.hostname.includes("example.");
+        } catch {}
+        if (!valid) throw new Error("Antes de publicar una actualización obligatoria, introduce un enlace HTTPS real. El enlace de ejemplo no funciona.");
+        if (!selected.latest_version || !(selected.min_required_version || selected.minimum_version)) {
+          throw new Error("Rellena la versión objetivo y la versión mínima antes de publicar.");
+        }
+      }
       const token = await getAccessToken();
       if (!token) throw new Error("No autenticado");
       const cur = updateConfig[platform];
@@ -2136,7 +2159,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
                 </Field>
 
                 <View style={styles.rowButtons}>
-                  <InlineButton label="Publicar actualización" onPress={() => saveUpdateConfig(platform)} icon={ArrowUpCircle} tone="primary" loading={updateSaving} style={{ flex: 1 }} />
+                  <InlineButton label="Publicar actualización" onPress={() => saveUpdateConfig(platform)} icon={ArrowUpCircle} tone="primary" loading={updateSaving} style={{ flex: 1, minWidth: isCompact ? 245 : 160 }} />
                   <InlineButton
                     label="Avisar a versión antigua"
                     onPress={() => {
@@ -2151,7 +2174,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
                     }}
                     icon={MessageSquareShare}
                     tone="secondary"
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, minWidth: isCompact ? 245 : 160 }}
                   />
                 </View>
               </View>
@@ -2251,7 +2274,7 @@ export default function AdminPanelScreen({ screen }: { screen: AdminTab }) {
       </AdminShell>
 
       {toast ? (
-        <View pointerEvents="none" style={styles.toastWrap}>
+        <View pointerEvents="none" style={[styles.toastWrap, { top: Math.max(insets.top + 70, Platform.OS === "web" ? 70 : 110) }]}>
           <ToastBanner tone={toast.tone} message={toast.message} />
         </View>
       ) : null}

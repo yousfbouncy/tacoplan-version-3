@@ -66,11 +66,16 @@ export async function fetchRemoteUpdateConfig(): Promise<RemoteUpdateConfig | nu
   const platform = Platform.OS;
   const channel = getUpdateChannel();
   try {
-    const base = supabase.from("app_update_config").select("*").eq("platform", platform);
+    // Use independent queries: reusing one PostgREST builder adds conflicting
+    // channel filters. Legacy NULL-channel rows can also be duplicated.
+    const lookup = () => supabase.from("app_update_config").select("*").eq("platform", platform);
 
     let data: any = null;
     if (channel) {
-      const first = await base.eq("channel", channel).maybeSingle();
+      const first = await lookup().eq("channel", channel)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1).maybeSingle();
       if (first.error) {
         devLog("[UPDATES] Remote config error:", first.error);
       } else {
@@ -79,7 +84,10 @@ export async function fetchRemoteUpdateConfig(): Promise<RemoteUpdateConfig | nu
     }
 
     if (!data) {
-      const fallback = await base.is("channel", null).maybeSingle();
+      const fallback = await lookup().is("channel", null)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1).maybeSingle();
       if (fallback.error) {
         devLog("[UPDATES] Remote config error:", fallback.error);
         return null;
@@ -88,7 +96,8 @@ export async function fetchRemoteUpdateConfig(): Promise<RemoteUpdateConfig | nu
     }
 
     if (!data) {
-      const anyRow = await supabase.from("app_update_config").select("*").eq("platform", platform).limit(1).maybeSingle();
+      const anyRow = await lookup().order("updated_at", { ascending: false })
+        .order("id", { ascending: false }).limit(1).maybeSingle();
       if (anyRow.error) {
         devLog("[UPDATES] Remote config error:", anyRow.error);
         return null;
