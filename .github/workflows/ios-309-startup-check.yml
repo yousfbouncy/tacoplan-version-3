@@ -20,7 +20,7 @@ jobs:
           node - <<'NODE'
           const e = require('./app.json').expo;
           const eas = require('./eas.json');
-          if (e.version !== '3.0.9' || e.ios.buildNumber !== '15' ||
+          if (e.version !== '3.0.9' || e.ios.buildNumber !== '16' ||
               e.runtimeVersion?.policy !== 'appVersion' ||
               e.ios.bundleIdentifier !== 'com.tacoplan' ||
               e.updates.checkAutomatically !== 'NEVER' ||
