@@ -3,7 +3,7 @@ import { AppState, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { getJornadaAbierta } from "@/lib/local-storage";
-import { changeDriverActivity, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
+import { changeDriverActivity, finishAutomaticRest, startAutomaticRest, loadDriverActivities, pauseDriverActivity, saveDriverActivities } from "@/lib/driver-activities";
 import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
@@ -114,7 +114,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
         if (active?.type !== "DRIVING") continue;
         const startedAt = Date.parse(active.startedAt);
         const pauseAt = new Date(Math.max(detection.stoppedSince, startedAt));
-        const next = pauseDriverActivity(log, pauseAt);
+        const next = startAutomaticRest(log, pauseAt);
         if (next !== log) await saveDriverActivities(userId, next);
         await clearPendingDrivingStop(userId, shiftId).catch(() => {});
       }
@@ -133,7 +133,7 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
       const log = await loadDriverActivities(userId, shiftId);
       const active = log.segments.findLast(seg => seg.endedAt === null);
       if (active?.type === "DRIVING") {
-        const next = pauseDriverActivity(log, new Date(Math.max(stoppedSince, Date.parse(active.startedAt))));
+        const next = startAutomaticRest(log, new Date(Math.max(stoppedSince, Date.parse(active.startedAt))));
         if (next !== log) await saveDriverActivities(userId, next);
       }
     }
@@ -164,7 +164,10 @@ async function handleFixes(fixes: Fix[]): Promise<void> {
         if (log.segments.findLast(seg => seg.endedAt === null)?.type !== "DRIVING") {
           const currentStart = log.segments.findLast(seg => seg.endedAt === null)?.startedAt;
           const effectiveStart = Math.max(detection.slowSince ?? detection.movingSince, currentStart ? Date.parse(currentStart) : 0);
-          const next = changeDriverActivity(log, "DRIVING", new Date(effectiveStart));
+          const current = log.segments.findLast(seg=>seg.endedAt===null);
+          const next = current?.type === "REST"
+            ? finishAutomaticRest(log,"DRIVING",new Date(effectiveStart))
+            : changeDriverActivity(log,"DRIVING",new Date(effectiveStart));
           if (next !== log) await saveDriverActivities(userId, next);
         }
       }
