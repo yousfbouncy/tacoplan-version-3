@@ -44,4 +44,5 @@ jobs:
       - name: Expo account
         run: npx --yes eas-cli whoami
       - name: Publish ONLY iOS on production channel (runtime 3.0.6)
-        run: npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - prueba de aislamiento: panel actividades desactivado"
+        run: |
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS - prueba de aislamiento: panel actividades desactivado"
