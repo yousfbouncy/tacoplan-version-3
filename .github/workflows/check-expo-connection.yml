@@ -1,0 +1,26 @@
+name: Verify GitHub connection to Expo (no publish)
+on:
+  workflow_dispatch:
+jobs:
+  check-expo-connection:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check token presence without exposing it
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN is missing in repository Actions secrets."
+            exit 1
+          fi
+      - name: Check Expo project configured for Tacoplan
+        run: |
+          node -e "const e=require('./app.json').expo; if(e.extra?.eas?.projectId!=='e8c809db-2b37-4d49-88aa-1e8b49a3ef6d') process.exit(1)"
+      - name: Verify authenticated Expo account (no OTA publication)
+        run: npx --yes eas-cli@latest whoami
