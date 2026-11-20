@@ -1,0 +1,41 @@
+name: Publish Android 3.0.8 plan limits and GPS stop OTA
+on:
+  push:
+    branches:
+      - feature/android-308-free-limits-driving-stop
+    paths:
+      - .github/workflows/publish-android-308-plans-driving.yml
+  workflow_dispatch:
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify Android 3.0.8 native runtime is unchanged
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(e.version!=='3.0.8' || e.android?.versionCode!==20215 ||
+             e.runtimeVersion?.policy!=='appVersion' || !e.updates?.enabled ||
+             eas.build.preview.channel!=='preview' || eas.build.production.channel!=='production')
+            throw Error('Android 3.0.8 native/runtime mismatch');
+          NODE
+      - name: Verify EAS credentials
+        run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN" && exit 1)
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx --yes eas-cli whoami
+      - name: Publish Android 3.0.8 preview OTA
+        run: npx --yes eas-cli update --channel preview --platform android --non-interactive --message "Tacoplan Android 3.0.8 - Gratis 14 dias, AutoStart paradas, web planes"
+      - name: Publish Android 3.0.8 production OTA
+        run: npx --yes eas-cli update --channel production --platform android --non-interactive --message "Tacoplan Android 3.0.8 - Gratis 14 dias, AutoStart paradas, web planes"
