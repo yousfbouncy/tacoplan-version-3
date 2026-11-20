@@ -7,6 +7,7 @@ import {
 
 import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring} from "@/lib/autostart/driving";
 import {useI18n} from "@/lib/i18n-context";
+import {useSubscriptionAccess,readSubscriptionAccess} from "@/lib/subscription-access";
 
 const activityTypes: Array<{type:DriverActivity,label:string,icon:string}> = [
   {type:"DRIVING",label:"activities.driving",icon:"🚛"},
@@ -26,6 +27,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   userId:string;shiftId:string;closed?:boolean
 }) {
   const {t}=useI18n();
+  const {access,loading:planLoading}=useSubscriptionAccess();
+  const canManageActivities=!access.restrictions_enabled || access.plus_access;
   const [log,setLog]=useState<ActivityLog|null>(null);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
@@ -95,10 +98,12 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   },[log?.shiftId,closed]);
   const totals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
   const choose=useCallback(async(type:DriverActivity)=>{
-    if(!log||closed||lock.current)return;
+    if(!log||closed||lock.current||planLoading||!canManageActivities)return;
     lock.current=true;
     setSaving(true);
     try{
+      const latestPlan=await readSubscriptionAccess();
+      if(latestPlan.restrictions_enabled&&!latestPlan.plus_access)return;
       // Use the latest persisted log: the GPS task can write while this screen is open.
       const latest=await loadDriverActivities(userId,shiftId);
       const next=changeDriverActivity(latest,type);
@@ -108,16 +113,17 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       setLog(next);
     }catch(e){console.warn("[ACTIVITIES] Failed to save",e)}
     finally{lock.current=false;setSaving(false)}
-  },[userId,shiftId,log,closed]);
+  },[userId,shiftId,log,closed,planLoading,canManageActivities]);
   const toggleAuto=useCallback(async()=>{
-    if(autoBusy||closed)return;
+    if(autoBusy||closed||planLoading||(!canManageActivities&&!autoDriving))return;
     setAutoBusy(true);
     try{
+      if(!autoDriving){const current=await readSubscriptionAccess();if(current.restrictions_enabled&&!current.plus_access)return;}
       await setDrivingAutoStartEnabled(userId,!autoDriving);
       setAutoDriving(!autoDriving);
     }catch(e){console.warn("[DRIVING-AUTO] toggle failed",e)}
     finally{setAutoBusy(false)}
-  },[userId,autoDriving,autoBusy,closed]);
+  },[userId,autoDriving,autoBusy,closed,canManageActivities,planLoading]);
   useEffect(()=>{
     if(closed)return;
     const timer=setInterval(async()=>{
@@ -134,7 +140,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
       <Text style={{color:colors.text,fontWeight:"700",fontSize:17}}>{t("activities.title")}</Text>
       {saving?<ActivityIndicator size="small" color={colors.sub}/>:null}
     </View>
-    <Pressable onPress={toggleAuto} disabled={autoBusy||closed} accessibilityRole="switch"
+    {!canManageActivities?<Text style={{color:colors.sub}}>La selección de actividades y AutoStart requieren Plus o Pro. Tus registros anteriores se conservan.</Text>:null}
+    <Pressable onPress={toggleAuto} disabled={autoBusy||closed||planLoading||(!canManageActivities&&!autoDriving)} accessibilityRole="switch"
       accessibilityState={{checked:autoDriving,disabled:autoBusy||closed}}
       style={{padding:12,borderRadius:10,backgroundColor:autoDriving?"#145B46":"#22435E"}}>
       <Text style={{color:"#FFFFFF",fontWeight:"700"}}>{t("activities.autoTitle")}: {autoDriving?t("activities.enabled"):t("activities.disabled")}</Text>
@@ -144,8 +151,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     <View style={{flexDirection:"row",flexWrap:"wrap",gap:9}}>
       {activityTypes.map(item=>{
         const selected=totals.current===item.type;
-        return <Pressable key={item.type} onPress={()=>choose(item.type)} disabled={!log||saving||closed}
-          accessibilityRole="button" accessibilityState={{selected,disabled:!log||saving||closed}}
+        return <Pressable key={item.type} onPress={()=>choose(item.type)} disabled={!log||saving||closed||planLoading||!canManageActivities}
+          accessibilityRole="button" accessibilityState={{selected,disabled:!log||saving||closed||planLoading||!canManageActivities}}
           style={{width:"48%",backgroundColor:selected?colors.active:colors.card,
             borderRadius:13,borderWidth:selected?2:1,borderColor:selected?"#71B6FF":"#2D5171",padding:12,opacity:closed?0.6:1}}>
           <Text style={{color:colors.text,fontWeight:"700",fontSize:13}}>{item.icon} {t(item.label)}</Text>
