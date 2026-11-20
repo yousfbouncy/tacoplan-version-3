@@ -15,6 +15,7 @@ export const MAX_GPS_ACCURACY_METERS = 75;
 
 export type DrivingDetection = {
   movingSince: number | null;
+  slowSince?: number | null;
   stoppedSince?: number | null;
   lastFix: number;
 };
@@ -37,13 +38,13 @@ export function updateDrivingDetection(state: DrivingDetection, fix: DrivingFix)
       typeof accuracy !== "number" || !Number.isFinite(accuracy) ||
       accuracy < 0 || accuracy > MAX_GPS_ACCURACY_METERS) {
     // Invalid/old GPS must never create a fictitious stop.
-    return { state: { lastFix: ts, movingSince: null, stoppedSince: null }, transition: null };
+    return { state: { lastFix: ts, movingSince: null, slowSince: null, stoppedSince: null }, transition: null };
   }
   if (speed < STOP_SPEED_MPS) {
     const first = stoppedSince ?? ts;
     const confirmed = ts - first >= STOP_CONFIRM_MS;
     return {
-      state: { lastFix: ts, movingSince: null, stoppedSince: first },
+      state: { lastFix: ts, movingSince: null, slowSince: null, stoppedSince: first },
       transition: confirmed && stoppedSince !== null ? "STOP" : null,
       ...(confirmed && stoppedSince !== null ? { stopStart: first } : {}),
     };
@@ -52,26 +53,28 @@ export function updateDrivingDetection(state: DrivingDetection, fix: DrivingFix)
     const elapsed = ts - stoppedSince;
     if (elapsed < STOP_CONFIRM_MS) {
       return {
-        state: { lastFix: ts, movingSince: ts, stoppedSince: null },
+        state: { lastFix: ts, movingSince: speed >= START_SPEED_MPS ? ts : null, slowSince: ts, stoppedSince: null },
         transition: "RESUME", stopStart: stoppedSince,
       };
     }
     // A moving fix after a minute of stationary samples is also enough
     // to close DRIVING at the timestamp where the stop was first observed.
     return {
-      state: { lastFix: ts, movingSince: ts, stoppedSince: null },
+      state: { lastFix: ts, movingSince: speed >= START_SPEED_MPS ? ts : null, slowSince: ts, stoppedSince: null },
       transition: "STOP", stopStart: stoppedSince,
     };
   }
-  // Remember initial slow movement (1–6 km/h) and only commit a new
-  // DRIVING segment after one minute of reliable movement reaching 6 km/h.
-  // The <1 km/h stop branch above and all RESUME handling remain unchanged.
-  const movingSince = state.movingSince !== null &&
-      !interrupted ? state.movingSince : ts;
-  const confirmed = speed >= START_SPEED_MPS && ts - movingSince >= START_CONFIRM_MS;
+  // Capture reliable low-speed maneuvers separately from the 6 km/h gate.
+  // Require 60 seconds since the first >=6 km/h fix; any preceding 1–6 km/h
+  // movement is then included, without changing STOP/RESUME transitions.
+  const slowSince = !interrupted && state.slowSince != null ? state.slowSince : ts;
+  const movingSince = !interrupted && state.movingSince !== null
+    ? state.movingSince : speed >= START_SPEED_MPS ? ts : null;
+  const confirmed = movingSince !== null &&
+    speed >= START_SPEED_MPS && ts - movingSince >= START_CONFIRM_MS;
   return {
-    state: { lastFix: ts, movingSince, stoppedSince: null },
+    state: { lastFix: ts, movingSince, slowSince, stoppedSince: null },
     transition: confirmed ? "DRIVING" : null,
-    ...(confirmed ? { movementStart: movingSince } : {}),
+    ...(confirmed ? { movementStart: slowSince } : {}),
   };
 }
