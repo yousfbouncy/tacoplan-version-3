@@ -1159,7 +1159,7 @@ export default function HistorialScreen() {
   );
 
   const {access:planAccess}=useSubscriptionAccess();
-  const historyLimited=planAccess.restrictions_enabled&&!planAccess.plus_access;
+  const historyLimited=planAccess.restrictions_enabled&&!planAccess.pro_access;
   const freeHistoryFrom=(()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-13);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
   const visibleHistoryFrom=historyLimited&&periodo.from<freeHistoryFrom?freeHistoryFrom:periodo.from;
   const jornadasQuery = useQuery<Jornada[]>({
