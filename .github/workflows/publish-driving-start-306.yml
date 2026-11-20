@@ -5,6 +5,8 @@ on:
       - fix/autostart-start-accuracy-306
     paths:
       - .github/workflows/publish-driving-start-306.yml
+      - tests/driving-start-306-runtime.test.ts
+      - lib/autostart/driving.ts
   workflow_dispatch:
 jobs:
   verify:
