@@ -16,15 +16,15 @@ export type PlanAccess={
  audience:string;
 };
 const FREE_MODE:PlanAccess={
- restrictions_enabled:false,all_features_unlocked:true,effective_plan:'free',
- plus_access:true,pro_access:true,complimentary_plan:null,billing_enabled:false,
+ restrictions_enabled:true,all_features_unlocked:false,effective_plan:'free',
+ plus_access:false,pro_access:false,complimentary_plan:null,billing_enabled:false,
  subscription:null,plans:[],audience:'standard'
 };
 const API='https://www.tacoplan.es/api/driver/subscription';
 
 // The server is authoritative for permissions and applies the global admin switch.
-// Fail-safe for unavailable API: never lock drivers out of their existing data while
-// plans are not confirmed enabled. Cloud features must still authorize on the server.
+// The unverified initial state exposes basic features only. Keep successful plan
+// permissions in memory if a subsequent refresh fails; never delete driver records.
 export async function readSubscriptionAccess():Promise<PlanAccess>{
  const {data,error}=await supabase.auth.getSession();
  if(error||!data.session?.access_token)return FREE_MODE;
