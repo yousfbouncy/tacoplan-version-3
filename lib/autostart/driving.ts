@@ -5,6 +5,7 @@ import * as TaskManager from "expo-task-manager";
 import { getJornadaAbierta } from "@/lib/local-storage";
 import { changeDriverActivity, loadDriverActivities, saveDriverActivities } from "@/lib/driver-activities";
 import { updateDrivingDetection, type DrivingDetection } from "./driving-activity-engine";
+import {canRunPaidAutomation} from "@/lib/paid-automation-access";
 
 export const DRIVING_TASK = "tacoplan-driving-activity-v1";
 const PREF_PREFIX = "@tacoplan/driving-autostart/v1:";
@@ -22,6 +23,7 @@ export async function isDrivingAutoStartEnabled(userId: string): Promise<boolean
   return (await AsyncStorage.getItem(prefKey(userId))) === "true";
 }
 export async function setDrivingAutoStartEnabled(userId: string, enabled: boolean): Promise<void> {
+  if(enabled && !(await canRunPaidAutomation(userId)))throw new Error("Conducción automática requiere Plus o Pro.");
   await AsyncStorage.setItem(prefKey(userId), String(enabled));
   if (enabled) await AsyncStorage.setItem(OWNER_KEY, userId);
   else if ((await AsyncStorage.getItem(OWNER_KEY)) === userId) await AsyncStorage.removeItem(OWNER_KEY);
@@ -31,6 +33,7 @@ function clearDetection() { detection = null; }
 async function handleFixes(fixes: Fix[]): Promise<void> {
   const owner = activeUser || await AsyncStorage.getItem(OWNER_KEY);
   if (!owner || !await isDrivingAutoStartEnabled(owner)) return;
+  if (!(await canRunPaidAutomation(owner))) { await stopDrivingMonitoring(); return; }
   const shift = await getJornadaAbierta();
   if (!shift?.id) { clearDetection(); return; }
   const userId = owner;
@@ -91,6 +94,7 @@ export async function syncDrivingMonitoring(userId: string): Promise<void> {
   const previous = syncPending || Promise.resolve();
   const run = previous.catch(() => {}).then(async () => {
     if (Platform.OS === "web" || !userId || !await isDrivingAutoStartEnabled(userId) ||
+        !(await canRunPaidAutomation(userId)) ||
         !(await getJornadaAbierta())?.id) {
       await stopDrivingMonitoring();
       return;
