@@ -2,7 +2,7 @@ import React, {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {ActivityIndicator,AppState,Pressable,Text,View} from "react-native";
 import {
   type ActivityLog,type DriverActivity,changeDriverActivity,finishAutomaticRest,closeDriverActivities,
-  getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,saveDriverActivities,syncDriverActivities
+  getDriverActivityTotals,loadDriverActivities,loadLocalDriverActivities,loadActivityCorrections,mergeActivityCorrections,saveDriverActivities,syncDriverActivities
 } from "@/lib/driver-activities";
 
 import {isDrivingAutoStartEnabled,setDrivingAutoStartEnabled,syncDrivingMonitoring,readPendingDrivingStop} from "@/lib/autostart/driving";
@@ -31,6 +31,7 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   const canManageActivities=!access.restrictions_enabled || (access.features.manual&&!access.free_plan_expired);
   const canUseAuto=!access.restrictions_enabled || (access.features.auto&&!access.free_plan_expired);
   const [log,setLog]=useState<ActivityLog|null>(null);
+  const [corrections,setCorrections]=useState<ActivityLog["segments"]>([]);
   const [now,setNow]=useState(Date.now());
   const [saving,setSaving]=useState(false);
   const [autoDriving,setAutoDriving]=useState(false);
@@ -51,6 +52,21 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
     setLog(null);
     loadDriverActivities(userId,shiftId).then(v=>{if(valid)setLog(v)}).catch(()=>{if(valid)setLog({shiftId,segments:[]})});
     return ()=>{valid=false};
+  },[userId,shiftId]);
+  // Load remote historical corrections separately. Never save them inside
+  // the local-first GPS activity log, whose indices are used for syncing.
+  useEffect(()=>{
+    let alive=true;
+    const refresh=async()=>{
+      const rows=await loadActivityCorrections(userId,shiftId);
+      if(alive)setCorrections(rows);
+    };
+    setCorrections([]);
+    void refresh();
+    const app=AppState.addEventListener("change",state=>{
+      if(state==="active")void refresh();
+    });
+    return ()=>{alive=false;app.remove()};
   },[userId,shiftId]);
   // GPS AutoStart writes activities independently of this React screen.
   // Refresh the displayed current activity so the driving/rest timers reflect
@@ -112,7 +128,8 @@ export default function DriverActivityPanel({userId,shiftId,closed=false}:{
   const currentDrivingSegment=log?.segments.findLast(s=>s.endedAt===null);
   const liveStoppedMs=currentDrivingSegment?.type==="DRIVING" && pendingStopSince!==null
     ?Math.max(0,now-Math.max(pendingStopSince,Date.parse(currentDrivingSegment.startedAt))):0;
-  const baseTotals=useMemo(()=>getDriverActivityTotals(log??{shiftId,segments:[]},new Date(now)),[log,shiftId,now]);
+  const viewLog=useMemo(()=>mergeActivityCorrections(log??{shiftId,segments:[]},corrections),[log,shiftId,corrections]);
+  const baseTotals=useMemo(()=>getDriverActivityTotals(viewLog,new Date(now)),[viewLog,now]);
   const totals={
     ...baseTotals,
     totals:{...baseTotals.totals,DRIVING:Math.max(0,baseTotals.totals.DRIVING-liveStoppedMs)},
