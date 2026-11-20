@@ -1,0 +1,50 @@
+name: Prepare isolated iOS 3.0.6 OTA candidate (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Enter PREPARAR-IOS-306 to upload to an UNLINKED candidate branch, never a shared channel"
+        required: true
+        type: string
+jobs:
+  candidate-ios-306:
+    if: ${{ inputs.confirm == 'PREPARAR-IOS-306' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout validated 3.0.6 backport
+        uses: actions/checkout@v4
+        with:
+          ref: ota-android-3.0.6-free-restrictions
+          persist-credentials: false
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Ensure iOS 3.0.6 runtime and original sounds
+        run: |
+          node - <<'NODE'
+          const e=require('./app.json').expo;
+          const sounds=e.plugins.find(p=>Array.isArray(p)&&p[0]==='expo-notifications')?.[1]?.sounds??[];
+          if(e.version!=='3.0.6'||e.runtimeVersion?.policy!=='appVersion'||!e.updates?.enabled||
+             e.ios?.bundleIdentifier!=='com.tacoplan'||
+             JSON.stringify(sounds)!==JSON.stringify(['./assets/sounds/tacoplan_viaje.wav']))
+            throw Error('iOS 3.0.6 compatibility check failed');
+          NODE
+      - name: Check Expo token
+        run: test -n "$EXPO_TOKEN" || (echo "Missing EXPO_TOKEN" && exit 1)
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify types
+        run: npm run typecheck
+      - name: Run automated tests
+        run: npm test
+      - name: Verify Expo authentication
+        run: npx --yes eas-cli whoami
+      - name: Upload iOS-only candidate to unlinked branch (NOT preview/production)
+        run: |
+          npx --yes eas-cli update --branch ios-306-private-candidate-20261120 --platform ios --non-interactive --message "Tacoplan 3.0.6 iOS private candidate - no channel linked"
