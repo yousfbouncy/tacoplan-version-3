@@ -5,6 +5,9 @@ on:
       - feature/auto-rest-break-and-driving-totals-306
     paths:
       - .github/workflows/publish-auto-rest-306.yml
+      - components/DriverActivityPanel.tsx
+      - lib/driver-activities.ts
+      - tests/driver-activities.test.ts
   workflow_dispatch:
 jobs:
   check:
