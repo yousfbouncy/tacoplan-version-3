@@ -3,6 +3,7 @@ import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWhole
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
+import { legalPeriodStartAt, overlappingShiftPairs } from "./shift-periods";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
@@ -304,6 +305,10 @@ export interface CompensacionAgregada {
 
 export interface EstadoLegal {
   availabilityContext?: AvailabilityContext;
+  /** Original start of consecutive working segments without completed daily rest. */
+  legalPeriodStartAt?: string | null;
+  /** Suspected overlapping records in the local rolling 56-day history. */
+  overlappingPairs?: number;
   conduccionSemanalMin: number;
   conduccionBisemanalMin: number;
   maxSemanalMin: number;
@@ -3742,6 +3747,8 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   const abierta = all.find((j) => !j.fechaFin);
+  const currentLegalPeriodStartAt = abierta ? legalPeriodStartAt(all, abierta.id) : null;
+  const overlappingPairs = overlappingShiftPairs(all).length;
   const availabilityContext = getAvailabilityContext(all);
   const descansosReducidos = availabilityContext.reducidosUsados;
 
@@ -3882,6 +3889,8 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   return {
+    legalPeriodStartAt: currentLegalPeriodStartAt,
+    overlappingPairs,
     conduccionSemanalMin,
     conduccionBisemanalMin,
     maxSemanalMin,
