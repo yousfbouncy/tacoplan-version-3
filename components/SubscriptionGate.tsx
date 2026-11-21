@@ -7,6 +7,7 @@ export default function SubscriptionGate({tier,feature,children}:{tier:'plus'|'p
  const allowed=!access.restrictions_enabled||(feature?access.features[feature]===true:(tier==='plus'?access.plus_access:access.pro_access));
  const limit=feature?access.feature_status[feature]:null;
  if(allowed)return <>{children}</>;
+ if(loading&&!error)return <View style={styles.wrap}><ActivityIndicator size="large" color="#60A5FA"/><Text style={styles.desc}>Comprobando acceso a esta función…</Text></View>;
  return <View style={styles.wrap}>
   <Text style={styles.icon}>🔒</Text>
   <Text style={styles.title}>{limit?.expired?'Periodo gratis finalizado':`Función incluida en ${tier==='plus'?'Plus o Pro':'Pro'}`}</Text>
