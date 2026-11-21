@@ -40,6 +40,7 @@ import { supabase } from "@/lib/supabase";
 import TrafficLocationConsent from "@/components/TrafficLocationConsent";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
+import { loadNightPeriodReport } from "@/lib/night-work-data";
 
 function safeHaptic() {
   if (Platform.OS !== "web") {
@@ -987,6 +988,10 @@ export default function UsuarioScreen() {
     extras_cotizan: boolean;
     descanso_fuera_base_cotiza: boolean;
     pluses_cotizan: boolean;
+    night_enabled: boolean;
+    night_rate_pct: string;
+    night_salary_base_monthly: string;
+    night_timezone: string;
   };
 
   const DEFAULT_PAYROLL_CONFIG: PayrollConfig = {
@@ -1008,6 +1013,10 @@ export default function UsuarioScreen() {
     extras_cotizan: true,
     descanso_fuera_base_cotiza: true,
     pluses_cotizan: true,
+    night_enabled: false,
+    night_rate_pct: "7",
+    night_salary_base_monthly: "",
+    night_timezone: "Europe/Madrid",
   };
 
   const [payrollConfig, setPayrollConfig] = useState<PayrollConfig>(DEFAULT_PAYROLL_CONFIG);
@@ -1218,6 +1227,10 @@ export default function UsuarioScreen() {
           extras_cotizan: loaded.extras_cotizan !== false,
           descanso_fuera_base_cotiza: loaded.descanso_fuera_base_cotiza !== false,
           pluses_cotizan: loaded.pluses_cotizan !== false,
+          night_enabled: loaded.night_enabled === true,
+          night_rate_pct: String(loaded.night_rate_pct ?? "7"),
+          night_salary_base_monthly: String(loaded.night_salary_base_monthly ?? ""),
+          night_timezone: String(loaded.night_timezone ?? "Europe/Madrid"),
         }));
       } else {
         setPayrollConfig(DEFAULT_PAYROLL_CONFIG);
@@ -1336,6 +1349,13 @@ export default function UsuarioScreen() {
         };
       })
       .filter(Boolean) as any[];
+    if (Number(e.nocturnidad || 0) > 0) fixedRows.push({
+      concepto: "Plus nocturnidad (León 7 % mensual)",
+      cantidad: String((e.nightMonths || []).length) + " mes(es)",
+      precio: formatEUR(Number(e.nightMonthly || 0)) + "/mes",
+      total: formatEUR(Number(e.nocturnidad || 0)),
+      secondary: Number(e.nightEstimatedMinutes || 0) > 0 ? "Hay horas nocturnas estimadas sin actividad detallada" : null,
+    });
 
     const mapExtraLabel = (k: string) => {
       if (k === "SABADO") return "Sábado";
@@ -1580,6 +1600,8 @@ export default function UsuarioScreen() {
         const daysWorked = uniqueWorked.size;
 
         const fixedTotal = getPayrollFixedTotal(payrollConfig as unknown as Record<string, unknown>, daysComputed, daysWorked, baseDays);
+        const night = userId ? await loadNightPeriodReport(userId,jornadas,payrollConfig,from,to) : null;
+        const nocturnidad = night?.total || 0;
 
         let baseVariable = 0;
         let dietasTotal = 0;
@@ -1647,7 +1669,7 @@ export default function UsuarioScreen() {
         if (pluses > 0) (payrollConfig.pluses_cotizan ? (varCotizable += pluses) : (varNoCotizable += pluses));
         if (descansoFueraBase > 0) (payrollConfig.descanso_fuera_base_cotiza ? (varCotizable += descansoFueraBase) : (varNoCotizable += descansoFueraBase));
 
-        const brutoCotizable = round2(fixedTotal + varCotizable);
+        const brutoCotizable = round2(fixedTotal + nocturnidad + varCotizable);
         const totalNoCotizable = round2(varNoCotizable);
         const brutoTotal = round2(brutoCotizable + totalNoCotizable);
 
@@ -1681,7 +1703,12 @@ export default function UsuarioScreen() {
           baseDays,
           fixedUnit,
           fixedPerUnit: round2(fixedPerUnit),
-          fixedTotal: round2(fixedTotal),
+          fixedTotal: round2(fixedTotal + nocturnidad),
+          nocturnidad: round2(nocturnidad),
+          nightMonthly: night?.monthly || 0,
+          nightMonths: night?.months || [],
+          nightMinutes: night?.minutes || 0,
+          nightEstimatedMinutes: night?.estimatedMinutes || 0,
           baseVariable: round2(baseVariable),
           dietas: round2(dietasTotal),
           extras: round2(extras),
@@ -2621,6 +2648,18 @@ export default function UsuarioScreen() {
                     </Text>
 
                     <ValueField label="Salario base bruto" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.salario_base_bruto} onChange={(v) => setPayrollConfig((p) => ({ ...p, salario_base_bruto: v }))} />
+                    <View style={styles.subsectionDivider} />
+                    <Text style={styles.subsectionLabel}>Plus de nocturnidad</Text>
+                    <Pressable style={styles.ferryToggleRow} onPress={() => setPayrollConfig(p => ({...p, night_enabled: !p.night_enabled}))}>
+                      <Text style={styles.ferryToggleText}>Aplicar nocturnidad (convenio León 2026–2028)</Text>
+                      <Switch value={payrollConfig.night_enabled} onValueChange={v=>setPayrollConfig(p=>({...p,night_enabled:v}))}/>
+                    </Pressable>
+                    {payrollConfig.night_enabled && <>
+                      <Text style={{fontSize:12,color:Colors.light.textSecondary}}>León, artículo 25: plus mensual del 7 % del salario base, en 12 mensualidades, si trabajas total o parcialmente de 22:00 a 06:00. Las horas se registran por separado y no multiplican el plus.</Text>
+                      <ValueField label="Porcentaje mensual del salario base" unit="%" value={payrollConfig.night_rate_pct} onChange={v=>setPayrollConfig(p=>({...p,night_rate_pct:v}))}/>
+                      <ValueField label="Salario base mensual para nocturnidad (opcional)" unit="EUR/mes" value={payrollConfig.night_salary_base_monthly} onChange={v=>setPayrollConfig(p=>({...p,night_salary_base_monthly:v}))}/>
+                    </>}
+
                     <ValueField label="Plus convenio" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.plus_convenio} onChange={(v) => setPayrollConfig((p) => ({ ...p, plus_convenio: v }))} />
                     <ValueField label="Complemento" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.complemento} onChange={(v) => setPayrollConfig((p) => ({ ...p, complemento: v }))} />
                     <ValueField label="Pagas prorrateadas" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.pagas_prorrateadas} onChange={(v) => setPayrollConfig((p) => ({ ...p, pagas_prorrateadas: v }))} />
