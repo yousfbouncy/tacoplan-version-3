@@ -1040,7 +1040,7 @@ function DietasFeatureContent() {
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
                     <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
-                      {((kmData.extras?.totalExtras || 0) + (kmData.plus?.totalPlus || 0)).toFixed(2)} EUR
+                      {((kmData.extras?.totalExtras || 0) + (kmData.plus?.totalPlus || 0) + nightPremium).toFixed(2)} EUR
                     </Text>
                   </View>
                   {kmData.extras && kmData.extras.desglose.map((e: any) => (
@@ -1058,7 +1058,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
@@ -1158,7 +1158,7 @@ function DietasFeatureContent() {
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
                     <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
-                      {((viajeData.extras?.totalExtras || 0) + (viajeData.plus?.totalPlus || 0)).toFixed(2)} EUR
+                      {((viajeData.extras?.totalExtras || 0) + (viajeData.plus?.totalPlus || 0) + nightPremium).toFixed(2)} EUR
                     </Text>
                   </View>
                   {viajeData.extras && viajeData.extras.desglose.map((e: any) => (
@@ -1176,7 +1176,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
@@ -1228,7 +1228,7 @@ function DietasFeatureContent() {
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
                     <Text style={styles.extrasTitle}>Extras y pluses</Text>
                     <Text style={styles.extrasTotal}>
-                      {((data.extras?.totalExtras || 0) + (data.plus?.totalPlus || 0)).toFixed(2)} EUR
+                      {((data.extras?.totalExtras || 0) + (data.plus?.totalPlus || 0) + nightPremium).toFixed(2)} EUR
                     </Text>
                   </View>
                   {data.extras && data.extras.desglose.map((e) => (
@@ -1246,7 +1246,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
