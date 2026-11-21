@@ -5504,6 +5504,13 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
   const dismissed = await getAllDismissedNaturalDayDates();
   if (dismissed.has(date)) return null;
   const { customRates } = await loadDietDerivationContext();
+  let isFestivo = false;
+  try {
+    const rawHolidays = await getItemScoped("tacoplan_user_holidays_cache");
+    const dates = rawHolidays ? JSON.parse(rawHolidays) : [];
+    isFestivo = Array.isArray(dates) && dates.some((d: any) =>
+      (typeof d === "string" ? d : d?.date) === date);
+  } catch {}
   const now = new Date().toISOString();
   const entry: NaturalDayDietEntry = {
     id: `${CROSSDAY_AUTO_DIET_PREFIX}${date}_${j.id}`,
@@ -5522,7 +5529,7 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
     syncStatus: "pending",
     plusItems: null,
     isDomingo: new Date(date + "T12:00:00").getDay() === 0,
-    isFestivo: false,
+    isFestivo,
   };
   await upsertNaturalDayDiets([entry]);
   return entry;
