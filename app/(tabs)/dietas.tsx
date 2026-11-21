@@ -859,11 +859,6 @@ function DietasFeatureContent() {
         )}
 
 
-        <NightBonusCard report={nightQuery.data} userId={user?.id}
-          onUpdated={()=>{
-            void qc.invalidateQueries({queryKey:["night-dietas"]});
-            void qc.invalidateQueries({queryKey:["night-history"]});
-          }}/> 
         {hasPayrollSetup && (
           <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any)}
             style={{ borderRadius: 18, overflow: "hidden", marginBottom: 12 }}>
@@ -1039,7 +1034,7 @@ function DietasFeatureContent() {
                 </View>
               )}
 
-              {((kmData.extras && kmData.extras.totalExtras > 0) || (kmData.plus && kmData.plus.totalPlus > 0)) && (
+              {((kmData.extras && kmData.extras.totalExtras > 0) || (kmData.plus && kmData.plus.totalPlus > 0) || !!user?.id) && (
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
@@ -1062,6 +1057,12 @@ function DietasFeatureContent() {
                       <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
+                  <NightBonusCard report={nightQuery.data} userId={user?.id}
+                    compact
+                    onUpdated={()=>{
+                      void qc.invalidateQueries({queryKey:["night-dietas"]});
+                    }}/>
+
                 </View>
               )}
             </>
@@ -1151,7 +1152,7 @@ function DietasFeatureContent() {
                 </View>
               )}
 
-              {((viajeData.extras && viajeData.extras.totalExtras > 0) || (viajeData.plus && viajeData.plus.totalPlus > 0)) && (
+              {((viajeData.extras && viajeData.extras.totalExtras > 0) || (viajeData.plus && viajeData.plus.totalPlus > 0) || !!user?.id) && (
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
@@ -1174,6 +1175,12 @@ function DietasFeatureContent() {
                       <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
+                  <NightBonusCard report={nightQuery.data} userId={user?.id}
+                    compact
+                    onUpdated={()=>{
+                      void qc.invalidateQueries({queryKey:["night-dietas"]});
+                    }}/>
+
                 </View>
               )}
             </>
@@ -1215,7 +1222,7 @@ function DietasFeatureContent() {
                 )
               )}
 
-              {paymentMode === "dietas" && ((data.extras && data.extras.totalExtras > 0) || (data.plus && data.plus.totalPlus > 0)) && (
+              {paymentMode === "dietas" && ((data.extras && data.extras.totalExtras > 0) || (data.plus && data.plus.totalPlus > 0) || !!user?.id) && (
                 <View style={styles.extrasCard}>
                   <View style={styles.extrasHeader}>
                     <Ionicons name="add-circle" size={18} color={Colors.light.warning} />
@@ -1238,6 +1245,12 @@ function DietasFeatureContent() {
                       <Text style={styles.extrasAmount}>{euro(e.total)}</Text>
                     </View>
                   ))}
+                  <NightBonusCard report={nightQuery.data} userId={user?.id}
+                    compact
+                    onUpdated={()=>{
+                      void qc.invalidateQueries({queryKey:["night-dietas"]});
+                    }}/>
+
                 </View>
               )}
             </>
