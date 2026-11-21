@@ -21,6 +21,9 @@ export type PlanAccess={
  complimentary_plan:PlanTier|null;
  billing_enabled:boolean;
  subscription:{status:string;trial_ends_at?:string|null;current_period_end?:string|null}|null;
+ trial_used:boolean;
+ trial_available:boolean;
+ feature_status:Partial<Record<FeatureKey,LimitedFeatureStatus>>;
  plans:Array<{slug:string;monthly_cents:number;annual_cents:number|null;trial_days:number}>;
  audience:string;
 };
