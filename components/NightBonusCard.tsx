@@ -9,13 +9,15 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
  const [opened,setOpened]=useState(false);
  const [unit,setUnit]=useState<"hourly"|"monthly">("hourly");
  const [value,setValue]=useState("");
+ const [contractProvince,setContractProvince]=useState("");
  const [busy,setBusy]=useState(false);
  useEffect(()=>{
+  setContractProvince(report?.preference.contract_province||"");
   if(report?.preference.estimation_mode==="manual"){
    setUnit(report.preference.manual_unit||"hourly");
    setValue(String(report.preference.manual_amount??""));
   }
- },[report?.preference.estimation_mode,report?.preference.manual_amount,report?.preference.manual_unit]);
+ },[report?.preference.estimation_mode,report?.preference.manual_amount,report?.preference.manual_unit,report?.preference.contract_province]);
  const save=async(reset:boolean)=>{
   if(!userId||busy)return;
   const n=Number(value.replace(",","."));
@@ -25,8 +27,8 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
   setBusy(true);
   try{
    await saveNightPreference(userId,reset?
-    {estimation_mode:"automatic",manual_unit:null,manual_amount:null}:
-    {estimation_mode:"manual",manual_unit:unit,manual_amount:n});
+    {estimation_mode:"automatic",manual_unit:null,manual_amount:null,contract_province:contractProvince.trim()||null}:
+    {estimation_mode:"manual",manual_unit:unit,manual_amount:n,contract_province:contractProvince.trim()||null});
    setOpened(false);onUpdated?.();
   }catch(e){Alert.alert("No se pudo guardar",e instanceof Error?e.message:"Inténtalo de nuevo");}
   finally{setBusy(false);}
@@ -79,6 +81,10 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
         <Text style={{color:"#FFFFFF",fontSize:13,textAlign:"center"}}>{u==="hourly"?"€/hora":"€/mes"}</Text>
        </Pressable>)}
       </View>
+      <Text style={{color:"#C5D7EF",fontSize:12}}>Provincia del convenio (si es distinta de la base)</Text>
+      <TextInput accessibilityLabel="Provincia del convenio" value={contractProvince} onChangeText={setContractProvince}
+       placeholder="Ej. León, Barcelona" placeholderTextColor="#849CB5"
+       style={{borderWidth:1,borderColor:"#49698F",borderRadius:9,padding:12,color:"white",fontSize:14}}/>
       <TextInput accessibilityLabel="Importe de nocturnidad"
        placeholder={unit==="hourly"?"Precio por hora nocturna":"Importe mensual"} placeholderTextColor="#849CB5"
        keyboardType="decimal-pad" value={value} onChangeText={setValue}
