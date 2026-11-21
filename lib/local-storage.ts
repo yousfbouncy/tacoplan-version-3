@@ -5490,7 +5490,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
 }
 
 /**
- * Creates exactly one provisional 100% international diet on the calendar day
+ * Creates exactly one provisional international diet (60% when arriving at base) on the calendar day
  * a cross-midnight journey is closed with daily/weekly rest selected.
  * A later same-day journey start revokes this provisional record. No other
  * manually saved or historical diet is overwritten.
@@ -5504,6 +5504,14 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
   const dismissed = await getAllDismissedNaturalDayDates();
   if (dismissed.has(date)) return null;
   const { customRates } = await loadDietDerivationContext();
+  // The return-to-base rule is product-configurable via existing 60% diet rate.
+  // A crossed-midnight journey must not become a second 100% day by default.
+  const baseConfig = await loadBaseLocationConfigFromSettings();
+  const baseCity = normalizeLocationForCompare(baseConfig.baseCity || "");
+  const finalLocation = normalizeLocationForCompare(j.lugarFin || "");
+  const arrivesAtBase = Boolean(baseCity && finalLocation &&
+    (finalLocation === baseCity || finalLocation.includes(baseCity)));
+  const autoPct: 100 | 60 = arrivesAtBase ? 60 : 100;
   let isFestivo = false;
   try {
     const rawHolidays = await getItemScoped("tacoplan_user_holidays_cache");
@@ -5516,8 +5524,8 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
     id: `${CROSSDAY_AUTO_DIET_PREFIX}${date}_${j.id}`,
     date,
     type: "INTERNACIONAL",
-    percentage: 100,
-    amount: findRate(customRates, "INTERNACIONAL", 100),
+    percentage: autoPct,
+    amount: findRate(customRates, "INTERNACIONAL", autoPct),
     location: j.lugarFin || j.lugarInicio || null,
     source: "NATURAL_DAY_OUT_OF_BASE",
     previousJourneyId: j.id,
