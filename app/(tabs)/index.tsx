@@ -1044,19 +1044,25 @@ export default function DashboardScreen() {
         if (cancelled) return;
         if (abiertaQuery.isLoading || estadoQuery.isLoading) return;
         const shift = abiertaQuery.data;
+        const legalStartForAlarm = estadoQuery.data?.legalPeriodStartAt || shift?.startAt || null;
         await syncAvailabilityAlarms(
-          shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio, startAt: shift.startAt } : null,
+          shift ? {
+            id: String(shift.id),
+            fechaInicio: legalStartForAlarm?.slice(0,10) || shift.fechaInicio,
+            horaInicio: legalStartForAlarm?.slice(11,16) || shift.horaInicio,
+            startAt: legalStartForAlarm || shift.startAt,
+          } : null,
           estadoQuery.isError ? undefined : estadoQuery.data?.availabilityContext,
           localEnabled && masterEnabled,
         );
-        await syncJornadaWidget(shift ? { id: String(shift.id), fechaInicio: shift.fechaInicio, horaInicio: shift.horaInicio } : null, estadoQuery.data?.disponibilidadMin);
+        await syncJornadaWidget(shift ? { id: String(shift.id), fechaInicio: legalStartForAlarm?.slice(0,10) || shift.fechaInicio, horaInicio: legalStartForAlarm?.slice(11,16) || shift.horaInicio } : null, estadoQuery.data?.disponibilidadMin);
       } catch (error) {
         console.warn("[AVAILABILITY-ALARMS] No se pudieron sincronizar los avisos", error);
       }
     };
     syncAlarms();
     return () => { cancelled = true; };
-  }, [abiertaQuery.data?.startAt, abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.isLoading, estadoQuery.isError, estadoQuery.data?.availabilityContext, user?.id]));
+  }, [abiertaQuery.data?.startAt, abiertaQuery.data?.id, abiertaQuery.data?.fechaInicio, abiertaQuery.data?.horaInicio, abiertaQuery.isLoading, estadoQuery.data?.disponibilidadMin, estadoQuery.data?.legalPeriodStartAt, estadoQuery.isLoading, estadoQuery.isError, estadoQuery.data?.availabilityContext, user?.id]));
 
   const legalPreviewQuery = useQuery<LegalPreview>({
     queryKey: dashboardQueryKey("legal-preview", user?.id),
@@ -1077,6 +1083,10 @@ export default function DashboardScreen() {
     confirmedStart && (!resolvedAbierta || resolvedAbierta.id !== confirmedStart.id)
       ? confirmedStart : resolvedAbierta;
   const estado = estadoQuery.data;
+  const legalStart = estado?.legalPeriodStartAt || abierta?.startAt || null;
+  const isResumedLegalPeriod = !!(abierta && legalStart && Date.parse(legalStart) < Date.parse(abierta.startAt));
+  const legalStartDate = legalStart?.slice(0, 10) || abierta?.fechaInicio || "";
+  const legalStartHour = legalStart?.slice(11, 16) || abierta?.horaInicio || "00:00";
   // Operational/legal warnings are shown in the notification center, not as
   // intrusive banners above the driver's active shift.
   const currentLegalAlerts = estado?.alertas ?? [];
@@ -1189,19 +1199,24 @@ export default function DashboardScreen() {
       ? (conduccionDomingoParsed.minutes || 0) + (conduccionLunesParsed.minutes || 0)
       : conduccionParsed.minutes;
     if (totalMin == null || totalMin === 0) return null;
+    const earlierDriving = estado.legalPeriodPreviousDrivingMin;
+    const dailyTotalMin = totalMin + (earlierDriving ?? 0);
     const extensionsAvailable = estado.maxExtensiones - estado.extensiones10h;
     const weeklyRemainMin = estado.restanteSemanalMin;
     const biweeklyRemainMin = estado.restanteBisemanalMin;
     const maxDailyMin = extensionsAvailable > 0 ? 600 : 540;
     const maxDailyLabel = extensionsAvailable > 0 ? "10h" : "9h";
     const warnings: Array<{ type: "infraction" | "warning"; message: string }> = [];
-    if (totalMin > maxDailyMin) {
-      const excessMin = totalMin - maxDailyMin;
+    if (isResumedLegalPeriod && earlierDriving === null) {
+      warnings.push({ type: "warning", message: "Conducción diaria acumulada sin verificar: revisa los tramos anteriores o solapados." });
+    }
+    if (dailyTotalMin > maxDailyMin && earlierDriving !== null) {
+      const excessMin = dailyTotalMin - maxDailyMin;
       const msg = t("dashboard.drivingInfraction")
         .replace("{max}", maxDailyLabel)
         .replace("{excess}", formatMinutosHoras(excessMin));
       warnings.push({ type: "infraction", message: msg });
-    } else if (totalMin > 540 && extensionsAvailable > 0) {
+    } else if (dailyTotalMin > 540 && extensionsAvailable > 0 && earlierDriving !== null) {
       const msg = t("dashboard.drivingWarning")
         .replace("{used}", String(estado.extensiones10h + 1));
       warnings.push({ type: "warning", message: msg });
@@ -1219,7 +1234,7 @@ export default function DashboardScreen() {
       warnings.push({ type: "infraction", message: `${t("dashboard.biweekly")}: +${formatMinutosHoras(excessMin)} (${formatMinutosHoras(biweeklyRemainMin)} ${t("dashboard.remaining").toLowerCase()})` });
     }
     return warnings.length > 0 ? warnings : null;
-  }, [conduccionParsed.minutes, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, isCrossSundayMonday, estado, t]);
+  }, [conduccionParsed.minutes, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, isCrossSundayMonday, estado, isResumedLegalPeriod, t]);
 
   const lastClosedQuery = useQuery<Jornada | null>({
     queryKey: dashboardQueryKey("last-closed", user?.id),
@@ -1285,7 +1300,7 @@ export default function DashboardScreen() {
 
   const activeShiftMetrics = useMemo(() => {
     if (!abierta) return null;
-    const start = new Date(`${abierta.fechaInicio}T${String(abierta.horaInicio || "00:00").slice(0, 5)}:00`).getTime();
+    const start = new Date(legalStart || `${abierta.fechaInicio}T${String(abierta.horaInicio || "00:00").slice(0, 5)}:00`).getTime();
     const elapsedMin = Number.isFinite(start) ? Math.max(0, Math.floor((countdownNow - start) / 60000)) : 0;
     const limitMin = estado?.disponibilidadMin ?? 13 * 60;
     const remainingMin = Math.max(0, limitMin - elapsedMin);
@@ -1299,7 +1314,7 @@ export default function DashboardScreen() {
       remaining15Min: Math.max(0, 15 * 60 - elapsedMin),
       progress: Math.min(elapsedMin / limitMin, 1),
     };
-  }, [abierta?.fechaInicio, abierta?.horaInicio, countdownNow, estado?.disponibilidadMin]);
+  }, [abierta?.fechaInicio, abierta?.horaInicio, legalStart, countdownNow, estado?.disponibilidadMin]);
 
   // El tiempo restante de 15h se muestra aunque el historial no permita confirmar su uso.
   // El estado legal sigue decidiendo si la ampliación está disponible o agotada.
@@ -2763,7 +2778,21 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        {/* Current legal alerts live in the notification bell, not above the shift. */}
+        {/* Compact overlap warning, without changing or deleting any stored shift. */}
+        {(estado?.overlappingPairs ?? 0) > 0 && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Posibles jornadas duplicadas: abrir historial"
+            onPress={() => router.push("/(tabs)/historial")}
+            style={{ marginHorizontal: 14, marginTop: 4, marginBottom: 2, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: "#3D3021", flexDirection: "row", alignItems: "center", gap: 7 }}
+          >
+            <Ionicons name="warning-outline" size={14} color="#F7BD69" />
+            <Text numberOfLines={1} style={{ flex: 1, color: "#FFE0AC", fontSize: 11, fontFamily: "Inter_600SemiBold" }}>
+              Posibles jornadas solapadas ({estado?.overlappingPairs})
+            </Text>
+            <Ionicons name="chevron-forward" size={13} color="#FFE0AC" />
+          </Pressable>
+        )}
 
         {isMoroccoMode && ferryConfig.paymentMode === "morocco_trip" && (
           <Pressable
@@ -3354,10 +3383,15 @@ export default function DashboardScreen() {
 
               </View>
               <Text style={styles.activeShiftPlace} numberOfLines={1}>{abierta.lugarInicio || "Ubicación sin indicar"}</Text>
-              <Text style={styles.activeShiftStarted}>Inicio · {formatFecha(abierta.fechaInicio)} · {abierta.horaInicio}</Text>
+              <Text style={styles.activeShiftStarted}>Inicio del tramo · {formatFecha(abierta.fechaInicio)} · {abierta.horaInicio}</Text>
+              {isResumedLegalPeriod && (
+                <Text style={[styles.activeShiftStarted, { color: "#FFE0AC" }]}>
+                  Período legal en curso desde {formatFecha(legalStartDate)} · {legalStartHour}
+                </Text>
+              )}
 
               <View style={styles.activeShiftTimerBlock}>
-                <Text style={styles.activeShiftTimerLabel}>TIEMPO DE JORNADA</Text>
+                <Text style={styles.activeShiftTimerLabel}>{isResumedLegalPeriod ? "TIEMPO DESDE EL PRIMER INICIO" : "TIEMPO DE JORNADA"}</Text>
                 <Text adjustsFontSizeToFit numberOfLines={1} style={styles.activeShiftTimerValue}>{activeShiftMetrics ? formatElapsedClock(activeShiftMetrics.elapsedSeconds) : "—"}</Text>
                 <Text style={styles.activeShiftRemaining}>
                   {activeShiftMetrics ? `${formatMinutosHoras(activeShiftMetrics.remainingMin)} hasta el límite de ${activeShiftMetrics.limitMin / 60} h` : "Calculando límite de jornada"}
@@ -3372,7 +3406,7 @@ export default function DashboardScreen() {
 
                   </View>
                   <Text style={styles.shiftLimitDetail}>Quedan {formatMinutosHoras(activeShiftMetrics?.remaining13Min || 0)}</Text>
-                  <Text style={styles.shiftLimitDeadline}>{formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 13)}</Text>
+                  <Text style={styles.shiftLimitDeadline}>{formatShiftDeadline(legalStartDate, legalStartHour, 13)}</Text>
                 </View>
                 <View style={styles.shiftLimitDivider} />
                 <View style={styles.shiftLimitItem}>
@@ -3383,7 +3417,7 @@ export default function DashboardScreen() {
                   <Text style={styles.shiftLimitDetail}>{show15hCountdown
                     ? `Quedan ${formatMinutosHoras(activeShiftMetrics?.remaining15Min || 0)}`
                     : estado?.availabilityContext?.aplica13h15h === false ? "No aplica en doble conducción" : "No disponible hoy"}</Text>
-                  <Text style={styles.shiftLimitDeadline}>{show15hCountdown ? formatShiftDeadline(abierta.fechaInicio, abierta.horaInicio, 15) : ""}</Text>
+                  <Text style={styles.shiftLimitDeadline}>{show15hCountdown ? formatShiftDeadline(legalStartDate, legalStartHour, 15) : ""}</Text>
                   {show15hCountdown && verify15hConditions && (
                     <Text style={[styles.shiftLimitDeadline, { color: "#FFC966" }]}>Disponibilidad por confirmar</Text>
                   )}
@@ -3420,15 +3454,15 @@ export default function DashboardScreen() {
 
             {abierta.descansoAnteriorMin != null && (
               <View style={{
-                backgroundColor: abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#3C2331" :
+                backgroundColor: abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "#153655" : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#3C2331" :
                   abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? "#352B19" : "#15372F",
                 padding: 10, borderRadius: 8, marginBottom: 8,
               }}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                   <Ionicons
-                    name={abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "alert-circle" : "moon-outline"}
+                    name={abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "time-outline" : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "alert-circle" : "moon-outline"}
                     size={16}
-                    color={abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? Colors.light.danger :
+                    color={abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? Colors.light.tint : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? Colors.light.danger :
                       abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? Colors.light.warning : Colors.light.success}
                   />
                   <Text style={{ marginLeft: 6, fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>
@@ -3436,7 +3470,7 @@ export default function DashboardScreen() {
                   </Text>
                   {!showPreviousSplitRestSummary && (
                     <Text style={{ marginLeft: 6, fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
-                      ({t(`common.restType.${abierta.tipoDescansoAnterior}`)})
+                      ({abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "Pausa intermedia · continúa el período legal" : t(`common.restType.${abierta.tipoDescansoAnterior}`)})
                     </Text>
                   )}
                 </View>

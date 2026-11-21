@@ -1,0 +1,61 @@
+name: Publish legal-period continuation 3.0.8 OTA
+on:
+  push:
+    branches:
+      - fix/legal-period-continuation-duplicate-alert
+    paths:
+      - .github/workflows/publish-legal-period-308.yml
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Verify OTA runtime compatibility
+        run: |
+          node - <<'NODE'
+          const app=require('./app.json').expo,eas=require('./eas.json');
+          if(app.version!=='3.0.8' || !app.updates?.enabled ||
+             app.runtimeVersion?.policy!=='appVersion' ||
+             eas.build?.production?.channel!=='production' ||
+             eas.build?.preview?.channel!=='preview')
+            throw Error('OTA runtime/channel mismatch');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: Verify Expo credentials
+        run: |
+          test -n "$EXPO_TOKEN" || (echo "Expo credentials missing" && exit 1)
+          npx --yes eas-cli whoami
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, android]
+        channel: [production, preview]
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Publish 3.0.8 legal period ${{ matrix.platform }} ${{ matrix.channel }}
+        run: |
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: continuidad del período legal, pausas y aviso compacto de duplicados"

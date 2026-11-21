@@ -3,6 +3,7 @@ import { automaticCompensationCapacityMin, weeklyReductionDebtMin, allocateWhole
 import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
+import { legalPeriodStartAt, overlappingShiftPairs } from "./shift-periods";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
@@ -304,6 +305,13 @@ export interface CompensacionAgregada {
 
 export interface EstadoLegal {
   availabilityContext?: AvailabilityContext;
+  /** Original start of consecutive working segments without completed daily rest. */
+  legalPeriodStartAt?: string | null;
+  /** Driving recorded in earlier segments of the current legal period.
+   * null means the history is incomplete/overlapping and must not be trusted. */
+  legalPeriodPreviousDrivingMin?: number | null;
+  /** Suspected overlapping records in the local rolling 56-day history. */
+  overlappingPairs?: number;
   conduccionSemanalMin: number;
   conduccionBisemanalMin: number;
   maxSemanalMin: number;
@@ -485,7 +493,9 @@ function calcMinutesBetween(isoStart: string, isoEnd: string): number {
 
 function clasificarDescanso(minutos: number, plannedType?: "daily" | "weekly" | null): string {
   if (minutos >= 11 * 60 && minutos < 45 * 60 && plannedType === "daily") return "DESCANSO_DIARIO_COMPLETO";
-  if (minutos < 9 * 60) return "INFRACCION_DESCANSO";
+  // A short interruption is not yet a daily rest; its legal validity is
+  // decided from the full 24-hour cycle, not from this interval alone.
+  if (minutos < 9 * 60) return "PAUSA_INTERMEDIA";
   if (minutos < 11 * 60) return "DESCANSO_DIARIO_REDUCIDO";
   if (minutos < 24 * 60) return "DESCANSO_DIARIO_COMPLETO";
   if (minutos < 45 * 60) return "DESCANSO_SEMANAL_REDUCIDO";
@@ -3742,6 +3752,29 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   const abierta = all.find((j) => !j.fechaFin);
+  const currentLegalPeriodStartAt = abierta ? legalPeriodStartAt(all, abierta.id) : null;
+  const recentOverlaps = overlappingShiftPairs(all);
+  const overlappingPairs = recentOverlaps.length;
+  let legalPeriodPreviousDrivingMin: number | null = 0;
+  if (abierta && currentLegalPeriodStartAt && currentLegalPeriodStartAt !== abierta.startAt) {
+    const first = Date.parse(currentLegalPeriodStartAt);
+    const currentStart = Date.parse(abierta.startAt);
+    const previousSegments = all.filter(j => j.id !== abierta.id &&
+      Number.isFinite(Date.parse(j.startAt)) &&
+      Date.parse(j.startAt) >= first && Date.parse(j.startAt) < currentStart);
+    const incomplete = previousSegments.some(j =>
+      !j.endAt || !Number.isFinite(Date.parse(j.endAt)) ||
+      Date.parse(j.endAt) > currentStart ||
+      (j.conduccionMin == null && j.conduccionDomingoMin == null && j.conduccionLunesMin == null));
+    const conflicts = recentOverlaps.some(([a,b]) =>
+      previousSegments.some(j => j.id === a || j.id === b));
+    if (incomplete || conflicts) {
+      legalPeriodPreviousDrivingMin = null;
+    } else {
+      legalPeriodPreviousDrivingMin = previousSegments.reduce((total,j) =>
+        total + (j.conduccionMin ?? ((j.conduccionDomingoMin ?? 0) + (j.conduccionLunesMin ?? 0))), 0);
+    }
+  }
   const availabilityContext = getAvailabilityContext(all);
   const descansosReducidos = availabilityContext.reducidosUsados;
 
@@ -3882,6 +3915,9 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   }
 
   return {
+    legalPeriodStartAt: currentLegalPeriodStartAt,
+    legalPeriodPreviousDrivingMin,
+    overlappingPairs,
     conduccionSemanalMin,
     conduccionBisemanalMin,
     maxSemanalMin,

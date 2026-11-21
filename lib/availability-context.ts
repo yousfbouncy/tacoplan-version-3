@@ -30,7 +30,12 @@ export function getAvailabilityContext(jornadas: Jornada[]): AvailabilityContext
     seen.add(j.id);
     if (previous) {
       const gap = (Date.parse(j.startAt) - Date.parse(previous.endAt || "")) / 60000;
-      if (!Number.isFinite(gap) || gap < 9 * 60) { known = false; break; }
+      // A short interruption resumes the same legal period; it is not
+      // a completed daily rest and must not reset or consume an extension.
+      if (!Number.isFinite(gap) || gap < 0) { known = false; break; }
+      // Continue the same legal period, but do not certify extension eligibility
+      // until a later qualifying daily/weekly rest establishes a safe boundary.
+      if (gap < 9 * 60) known = false;
       if (gap >= 24 * 60) { known = true; used = 0; }
       else if (gap >= 9 * 60 && gap < 11 * 60 && !isSplitDailyRestGapComplete(gap, previous)) used++;
     }
