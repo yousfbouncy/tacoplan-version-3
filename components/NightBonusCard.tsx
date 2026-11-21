@@ -97,7 +97,8 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false,in
      <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
     </Pressable>
    </View>
-   )}
+  </View>
+  )}
   <Modal visible={opened} transparent animationType="fade" onRequestClose={()=>setOpened(false)}>
     <View style={{flex:1,justifyContent:"center",padding:20,backgroundColor:"#0009"}}>
      <View style={{backgroundColor:"#102641",borderRadius:18,padding:20,borderColor:"#44638B",borderWidth:1,gap:12}}>
