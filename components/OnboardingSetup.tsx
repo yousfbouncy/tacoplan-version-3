@@ -486,6 +486,12 @@ export default function OnboardingSetup({ onComplete }: Props) {
       await AsyncStorage.setItem(payrollKey,JSON.stringify(payroll));
       const {error:payrollError}=await supabase.from("profiles").update({payroll_config:payroll,payroll_config_updated_at:new Date().toISOString()} as any).eq("id",userId);
       if(payrollError)throw new Error("No se pudo guardar la nocturnidad en Supabase: "+payrollError.message);
+      const {error:nightError}=await supabase.from("user_night_work_settings").upsert({
+        user_id:userId,enabled:nightEnabled,calculation_mode:"leon_monthly",
+        rate_percent:7,base_salary_monthly:Number(nightSalaryBase.replace(",","."))||null,
+        work_timezone:"Europe/Madrid",updated_at:new Date().toISOString(),
+      },{onConflict:"user_id"});
+      if(nightError)throw new Error("No se pudo guardar la configuración de nocturnidad: "+nightError.message);
       const { error: nameError } = await supabase.from("profiles").upsert({ id:userId, display_name:driverName.trim(), name:driverName.trim(), updated_at:new Date().toISOString() } as any,{onConflict:"id"});
       if (nameError) throw new Error(t("wizard.nameSaveError"));
 
