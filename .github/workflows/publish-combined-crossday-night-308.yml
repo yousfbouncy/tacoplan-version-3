@@ -1,0 +1,52 @@
+name: Publish combined cross-day title and inline night OTA 3.0.8
+on:
+  push:
+    branches: [fix/combined-night-inline-crossday-title-308]
+    paths:
+      - .github/workflows/publish-combined-crossday-night-308.yml
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.14.0', cache: npm}
+      - name: Check OTA compatibility
+        run: |
+          node - <<'NODE'
+          const a=require('./app.json').expo,e=require('./eas.json');
+          if(a.version!=='3.0.8'||a.runtimeVersion?.policy!=='appVersion'||!a.updates?.enabled||
+             e.build?.preview?.channel!=='preview'||e.build?.production?.channel!=='production')
+            throw Error('OTA runtime/channel incompatibility');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: Verify Expo authentication
+        run: |
+          test -n "$EXPO_TOKEN" || (echo 'EXPO_TOKEN missing' && exit 1)
+          npx --yes eas-cli whoami
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [android, ios]
+        channel: [production, preview]
+    permissions: {contents: read}
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.14.0', cache: npm}
+      - run: npm ci --no-audit --no-fund
+      - name: Publish night estimator
+        run: |
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: dieta continuidad confirmada y plus nocturnidad inline en Dietas"
