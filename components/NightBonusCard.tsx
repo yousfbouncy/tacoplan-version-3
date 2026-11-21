@@ -3,8 +3,8 @@ import {Alert,Modal,Pressable,Text,TextInput,View} from "react-native";
 import {saveNightPreference} from "@/lib/night-estimator";
 import type {NightPeriodReport} from "@/lib/night-work-data";
 const eur=(n:number)=>n.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
-export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
- report:NightPeriodReport|null|undefined;userId:string|undefined;onUpdated?:()=>void;compact?:boolean;
+export default function NightBonusCard({report,userId,onUpdated,compact=false,inline=false}:{
+ report:NightPeriodReport|null|undefined;userId:string|undefined;onUpdated?:()=>void;compact?:boolean;inline?:boolean;
 }){
  const [opened,setOpened]=useState(false);
  const [unit,setUnit]=useState<"hourly"|"monthly">("hourly");
@@ -34,7 +34,35 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
   }catch(e){Alert.alert("No se pudo guardar",e instanceof Error?e.message:"Inténtalo de nuevo");}
   finally{setBusy(false);}
  };
- return <View style={{borderRadius:14,borderWidth:1,borderColor:"#2C5184",backgroundColor:"#112D4C",
+ return <React.Fragment>
+  {inline ? (
+   <View style={{marginTop:5,paddingVertical:10,borderTopWidth:1,borderTopColor:"#304866",gap:6}}>
+    <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center",gap:8}}>
+      <Text style={{fontSize:14,fontWeight:"700",color:"#EDF5FF",flex:1}}>🌙 Nocturnidad estimada</Text>
+      <Text style={{fontSize:16,fontWeight:"700",color:"#F7C66F"}}>
+       {report?(report.amountKnown?eur(report.total):"Sin referencia"):"Calculando…"}
+      </Text>
+    </View>
+    <Text style={{fontSize:11,color:"#B7D0E9"}} numberOfLines={2}>
+     {report?.ruleName||"Consultando convenio"} · {report?.estimateLabel||"Automático"}
+    </Text>
+    <View style={{flexDirection:"row",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+     <Text style={{fontSize:12,color:"#CDE0F5"}}>
+      {report?`${Math.floor((report.minutes+report.estimatedMinutes)/60)}h ${String((report.minutes+report.estimatedMinutes)%60).padStart(2,"0")}min · ${report.nightDays} jornadas`:"Horas pendientes"}
+     </Text>
+     <Pressable accessibilityRole="button" accessibilityLabel={needsSetup?"Configurar plus nocturnidad":"Editar plus nocturnidad"}
+      onPress={()=>setOpened(true)} disabled={!userId}
+      style={{marginLeft:"auto",borderColor:"#5B9EFF",borderWidth:1,borderRadius:7,paddingHorizontal:10,paddingVertical:6}}>
+      <Text style={{fontSize:12,color:"#C8E4FF",fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
+     </Pressable>
+    </View>
+    {!!report?.estimatedMinutes && <Text style={{fontSize:10,color:"#FFDBAA"}}>Incluye horas calculadas de forma aproximada.</Text>}
+    {needsSetup && <Text style={{fontSize:11,color:"#FFDBAA"}}>Falta una referencia salarial: configura €/hora o €/mes.</Text>}
+    <Text style={{fontSize:10,color:"#9DB3CE"}}>Plus salarial estimado, separado de dietas. Prevalece la nómina oficial.</Text>
+   </View>
+  ) : (
+  <View style={{borderRadius:14,borderWidth:1,borderColor:"#2C5184",backgroundColor:"#112D4C",
+
   padding:compact?10:14,marginVertical:5}}>
    <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
     <Text style={{fontSize:compact?13:16,fontWeight:"700",color:"#F2F7FF"}}>🌙 Nocturnidad estimada</Text>
@@ -69,7 +97,8 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
      <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
     </Pressable>
    </View>
-   <Modal visible={opened} transparent animationType="fade" onRequestClose={()=>setOpened(false)}>
+   )}
+  <Modal visible={opened} transparent animationType="fade" onRequestClose={()=>setOpened(false)}>
     <View style={{flex:1,justifyContent:"center",padding:20,backgroundColor:"#0009"}}>
      <View style={{backgroundColor:"#102641",borderRadius:18,padding:20,borderColor:"#44638B",borderWidth:1,gap:12}}>
       <Text style={{color:"#FFFFFF",fontSize:18,fontWeight:"700"}}>Editar plus de nocturnidad</Text>
@@ -103,5 +132,5 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
      </View>
     </View>
    </Modal>
-  </View>;
+  </React.Fragment>;
 }
