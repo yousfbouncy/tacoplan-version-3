@@ -2534,7 +2534,7 @@ export default function HistorialScreen() {
                 >
                   <View style={{ flex: 1, flexDirection: "column", gap: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>Jornada fuera de base</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>{ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"}</Text>
                       <View
                         style={{
                           backgroundColor: pillBg,
@@ -2578,7 +2578,7 @@ export default function HistorialScreen() {
                       <Text style={{ fontSize: 12, color: Colors.light.text, opacity: 0.6 }}>📍 {ndd.location}</Text>
                     ) : null}
                     <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.5 }}>
-                      Jornada fuera de base · {ndd.percentage}%
+                      {ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"} · {ndd.percentage}%
                     </Text>
                     {displayPluses.length > 0 && (() => {
                       const plusTotal = resolvedNdd.plusTotal;
