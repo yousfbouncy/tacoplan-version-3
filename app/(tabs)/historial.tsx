@@ -34,6 +34,7 @@ import {
   parseDisplayDateToISO,
 } from "@/lib/utils";
 import { getPeriodAuditActions } from "@/lib/period-audit-actions";
+import { isCrossDayContinuationDiet } from "@/lib/crossday-diet";
 import { usePeriod } from "@/lib/period-context";
 import { useI18n } from "@/lib/i18n-context";
 import { useFerry } from "@/lib/ferry-context";
@@ -1384,6 +1385,26 @@ export default function HistorialScreen() {
   const [historySearch, setHistorySearch] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const jornadasData = (jornadasQuery.data || []).filter(j=>!historyLimited||j.fechaInicio>=freeHistoryFrom);
+  const previousPeriodDay=useMemo(()=>{
+    const d=new Date(`${visibleHistoryFrom}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate()-1);
+    return d.toISOString().slice(0,10);
+  },[visibleHistoryFrom]);
+  // Confirmed natural-day diets may link to a previous jornada that began
+  // outside the currently visible payroll period. Fetch that boundary day
+  // to identify cross-midnight continuity without relying on generated IDs.
+  const linkedDietSourcesQuery=useQuery<Jornada[]>({
+    queryKey:["cross-day-diet-journeys",previousPeriodDay,periodo.to,syncVersion],
+    queryFn:()=>listarJornadas(previousPeriodDay,periodo.to),
+    enabled:naturalDayDiets.some(ndd=>!!ndd.previousJourneyId&&ndd.date>=periodo.from&&ndd.date<=periodo.to),
+  });
+  const previousJornadaById=useMemo(()=>{
+    const map=new Map<string,Jornada>();
+    for(const j of linkedDietSourcesQuery.data||[])map.set(j.id,j);
+    for(const j of jornadasData)map.set(j.id,j);
+    return map;
+  },[linkedDietSourcesQuery.data,jornadasData]);
+
   type ListItem =
     | { type: "jornada"; jornada: Jornada }
     | { type: "rest-gap"; restMin: number; afterJornadaId: string; compensacion?: Compensacion; isFerryRest?: boolean; ferryJornada?: Jornada; restJornada?: Jornada; previousRestSourceJornada?: Jornada }
@@ -2506,6 +2527,9 @@ export default function HistorialScreen() {
             }
             if (listItem.type === "natural_day_diet") {
               const ndd = listItem.naturalDayDiet;
+              const sourceJornada=ndd.previousJourneyId?previousJornadaById.get(ndd.previousJourneyId):undefined;
+              const isContinuationDiet=isCrossDayContinuationDiet(ndd,sourceJornada);
+              const nddTitle=isContinuationDiet?"Dieta por continuidad de viaje":"Jornada fuera de base";
               const resolvedNdd = resolveNaturalDayDietFinancials(ndd, jornadasData, customRates, dayExtrasCfg);
               const displayPluses = resolvedNdd.plusItems;
               const pillBg = ndd.type === "INTERNACIONAL" ? "#FEF3C7" : "#EEF2FF";
@@ -2534,7 +2558,7 @@ export default function HistorialScreen() {
                 >
                   <View style={{ flex: 1, flexDirection: "column", gap: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>{ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"}</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>{nddTitle}</Text>
                       <View
                         style={{
                           backgroundColor: pillBg,
@@ -2574,11 +2598,16 @@ export default function HistorialScreen() {
                       )}
                     </View>
                     <Text style={{ fontSize: 13, color: Colors.light.text, opacity: 0.7 }}>{formatDateDDMM(ndd.date)}</Text>
+                    {isContinuationDiet && sourceJornada && (
+                      <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.7 }}>
+                        Jornada iniciada el {formatFecha(sourceJornada.fechaInicio)} · llegada el {formatFecha(ndd.date)}
+                      </Text>
+                    )}
                     {ndd.location ? (
                       <Text style={{ fontSize: 12, color: Colors.light.text, opacity: 0.6 }}>📍 {ndd.location}</Text>
                     ) : null}
                     <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.5 }}>
-                      {ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"} · {ndd.percentage}%
+                      {nddTitle} · {ndd.percentage}%
                     </Text>
                     {displayPluses.length > 0 && (() => {
                       const plusTotal = resolvedNdd.plusTotal;
