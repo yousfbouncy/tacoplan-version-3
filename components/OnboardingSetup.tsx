@@ -146,7 +146,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [manualFrom, setManualFrom] = useState("1");
   const [manualTo, setManualTo] = useState("30");
   const [userPaymentMode, setUserPaymentMode] = useState<"dietas" | "viaje" | "km">("dietas");
-  const [nightEnabled, setNightEnabled] = useState(false);
+  const [nightEnabled, setNightEnabled] = useState(true);
+  const [nightProvince,setNightProvince] = useState("");
   const [nightSalaryBase, setNightSalaryBase] = useState("");
   const [pricePerKmNac, setPricePerKmNac] = useState("0");
   const [pricePerKmIntl, setPricePerKmIntl] = useState("0");
@@ -481,13 +482,13 @@ export default function OnboardingSetup({ onComplete }: Props) {
       await saveUserConfig(userId, { settings: userSettings, period: periodConfig, ferry: ferryConfig });
       // Initial nocturnity setup belongs to payroll (salary), not diet rates.
       const {data:existingPayroll} = await supabase.from("profiles").select("payroll_config").eq("id",userId).maybeSingle();
-      const payroll = {...((existingPayroll as any)?.payroll_config || {}),night_enabled:nightEnabled,night_rate_pct:"7",night_salary_base_monthly:nightSalaryBase.trim(),night_timezone:"Europe/Madrid"};
+      const payroll = {...((existingPayroll as any)?.payroll_config || {}),night_enabled:true,night_rate_pct:"7",night_salary_base_monthly:nightSalaryBase.trim(),night_timezone:"Europe/Madrid"};
       const payrollKey=await userScopedKey("tacoplan_payroll_config",userId);
       await AsyncStorage.setItem(payrollKey,JSON.stringify(payroll));
       const {error:payrollError}=await supabase.from("profiles").update({payroll_config:payroll,payroll_config_updated_at:new Date().toISOString()} as any).eq("id",userId);
       if(payrollError)throw new Error("No se pudo guardar la nocturnidad en Supabase: "+payrollError.message);
       const {error:nightError}=await supabase.from("user_night_work_settings").upsert({
-        user_id:userId,enabled:nightEnabled,calculation_mode:"leon_monthly",
+        user_id:userId,enabled:true,estimation_mode:"automatic",contract_province:nightProvince.trim()||null,calculation_mode:"leon_monthly",
         rate_percent:7,base_salary_monthly:Number(nightSalaryBase.replace(",","."))||null,
         work_timezone:"Europe/Madrid",updated_at:new Date().toISOString(),
       },{onConflict:"user_id"});
@@ -865,16 +866,24 @@ export default function OnboardingSetup({ onComplete }: Props) {
             </View>
 
             <View style={s.subsectionDivider} />
-            <SectionHeader title="Plus nocturnidad (opcional)" icon="moon-outline" />
-            <Pressable style={s.chip} onPress={()=>setNightEnabled(v=>!v)}>
-              <Text style={s.chipText}>{nightEnabled?"✓ ":"○ "}Convenio León: 7 % mensual por trabajo de 22:00 a 06:00</Text>
-            </Pressable>
-            {nightEnabled && <View style={s.manualRow}>
+            <SectionHeader title="Nocturnidad estimada" icon="moon-outline" />
+            <Text style={{color:Colors.light.textSecondary,fontSize:12,marginTop:6,marginBottom:8}}>
+              Se calcula automáticamente según el convenio provincial registrado.
+              Puedes cambiar el precio en Dietas y volver al automático en cualquier momento.
+              El convenio aplicable y la nómina oficial prevalecen.
+            </Text>
+            <View style={s.manualRow}>
               <View style={s.manualField}>
-                <Text style={s.inputLabel}>Salario base mensual (€), opcional</Text>
-                <TextInput style={s.input} value={nightSalaryBase} onChangeText={setNightSalaryBase} keyboardType="decimal-pad" placeholder="Se puede configurar más adelante" placeholderTextColor={Colors.light.textSecondary}/>
+                <Text style={s.inputLabel}>Salario base mensual de referencia (opcional)</Text>
+                <TextInput style={s.input} value={nightSalaryBase} onChangeText={setNightSalaryBase}
+                  keyboardType="decimal-pad" placeholder="€ / mes" placeholderTextColor={Colors.light.textSecondary}/>
               </View>
-            </View>}
+              <View style={s.manualField}>
+                <Text style={s.inputLabel}>Provincia de tu convenio, si distinta de la base</Text>
+                <TextInput style={s.input} value={nightProvince} onChangeText={setNightProvince}
+                  placeholder="Ej. León" placeholderTextColor={Colors.light.textSecondary}/>
+              </View>
+            </View>
             {userPaymentMode === "km" && (
               <>
                 <View style={[s.gridContainer, { marginTop: 10 }]}>

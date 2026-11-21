@@ -94,6 +94,7 @@ import { supabase } from "@/lib/supabase";
 import { getCalendarDietLabel, journeyTouchesCalendarDate } from "@/lib/history-calendar";
 import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
 import type { NightDetail } from "@/lib/night-work";
+import NightBonusCard from "@/components/NightBonusCard";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import {
@@ -2450,17 +2451,10 @@ export default function HistorialScreen() {
           Plan Gratis: se muestran únicamente los últimos 14 días. Tus registros anteriores siguen guardados.
         </Text>
       ) : null}
-      {nightReport && (nightReport.minutes>0 || nightReport.estimatedMinutes>0) && (
-        <View style={{marginHorizontal:16,marginBottom:8,padding:10,borderRadius:10,backgroundColor:"#143254"}}>
-          <Text style={{color:"#D6E8FF",fontSize:12,fontWeight:"600"}}>
-            🌙 Nocturnidad · {Math.floor(nightReport.minutes/60)}h {String(nightReport.minutes%60).padStart(2,"0")}min registradas
-            {nightReport.estimatedMinutes>0?" · hay tramos sin verificar":""}
-          </Text>
-          <Text style={{color:"#D6E8FF",fontSize:11}}>
-            Plus salarial mensual estimado: {nightReport.total.toFixed(2)} € (se cuenta una vez por mes, no por jornada)
-          </Text>
-        </View>
-      )}
+      <View style={{marginHorizontal:16,marginBottom:8}}>
+        <NightBonusCard report={nightReport} userId={user?.id} compact
+          onUpdated={()=>{void qc.invalidateQueries({queryKey:["night-history"]});void qc.invalidateQueries({queryKey:["night-dietas"]});}}/>
+      </View>
       {jornadasQuery.isLoading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={Colors.light.tint} />

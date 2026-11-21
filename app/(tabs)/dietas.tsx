@@ -34,6 +34,7 @@ import { supabase } from "@/lib/supabase";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
 import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
 import EnterpriseDietReviews from "@/components/EnterpriseDietReviews";
+import NightBonusCard from "@/components/NightBonusCard";
 
 type ResumenDietas = {
   total: number;
@@ -261,11 +262,11 @@ function DietasFeatureContent() {
 
   const nightQuery = useQuery<NightPeriodReport | null>({
     queryKey:["night-dietas",user?.id,periodo.from,periodo.to,syncVersion,JSON.stringify(payrollConfig||{})],
-    enabled:!!user?.id && typeof payrollConfig==="object" && payrollConfig?.night_enabled===true,
+    enabled:!!user?.id,
     queryFn:async()=> {
       if(!user?.id)return null;
       const jornadas=await listarJornadas(periodo.from,periodo.to);
-      return loadNightPeriodReport(user.id,jornadas,payrollConfig||{},periodo.from,periodo.to);
+      return loadNightPeriodReport(user.id,jornadas,(payrollConfig&&typeof payrollConfig==="object"?payrollConfig:{}) as any,periodo.from,periodo.to);
     },
   });
   const nightPremium = nightQuery.data?.total || 0;
@@ -858,15 +859,11 @@ function DietasFeatureContent() {
         )}
 
 
-        {typeof payrollConfig==="object" && payrollConfig?.night_enabled === true && (
-          <View style={{backgroundColor:"#122E50",borderRadius:12,padding:12,marginBottom:10}}>
-            <Text style={{color:"#E3F0FF",fontWeight:"700"}}>🌙 Plus nocturnidad · salario, no dieta</Text>
-            <Text style={{color:"#E3F0FF",fontSize:12}}>
-              {nightQuery.data ? `${Math.floor(nightQuery.data.minutes/60)}h ${String(nightQuery.data.minutes%60).padStart(2,"0")}min trabajadas · ${euro(nightPremium)} mensual estimado`:"Calculando nocturnidad…"}
-            </Text>
-            {(nightQuery.data?.estimatedMinutes||0)>0 && <Text style={{color:"#FFD39B",fontSize:11}}>Hay tramos de noche sin actividades verificadas; revisa las horas.</Text>}
-          </View>
-        )}
+        <NightBonusCard report={nightQuery.data} userId={user?.id}
+          onUpdated={()=>{
+            void qc.invalidateQueries({queryKey:["night-dietas"]});
+            void qc.invalidateQueries({queryKey:["night-history"]});
+          }}/> 
         {hasPayrollSetup && (
           <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any)}
             style={{ borderRadius: 18, overflow: "hidden", marginBottom: 12 }}>
