@@ -11,6 +11,7 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
  const [value,setValue]=useState("");
  const [contractProvince,setContractProvince]=useState("");
  const [busy,setBusy]=useState(false);
+ const needsSetup=!!report && (!report.amountKnown || (report.conventionStatus!=="verified" && report.mode!=="manual"));
  useEffect(()=>{
   setContractProvince(report?.preference.contract_province||"");
   if(report?.preference.estimation_mode==="manual"){
@@ -42,7 +43,7 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
     </Text>
    </View>
    <Text style={{fontSize:12,color:"#D0E1F5",marginTop:5}}>
-    {report?.ruleName||"Consultando convenio…"}
+    {report?.mode==="manual" ? `Precio manual · ${report?.ruleName||"Convenio por verificar"}` : (report?.ruleName||"Consultando convenio…")}
    </Text>
    <View style={{flexDirection:"row",flexWrap:"wrap",gap:12,marginTop:8}}>
     <Text style={{fontSize:12,color:"#E8F1FE"}}>
@@ -56,8 +57,8 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
    {!!report?.estimatedMinutes&&<Text style={{fontSize:11,color:"#FFDBAA",marginTop:5}}>
      Incluye {Math.floor(report.estimatedMinutes/60)}h {String(report.estimatedMinutes%60).padStart(2,"0")}min aproximados sin actividades completas.
    </Text>}
-   {report?.conventionStatus==="pending"&&<Text style={{fontSize:11,color:"#FFDBAA",marginTop:5}}>
-     Convenio provincial pendiente de verificar. Puedes introducir un precio manual.
+   {needsSetup&&<Text style={{fontSize:11,color:"#FFDBAA",marginTop:5}}>
+     No hay una referencia económica aplicable: configura €/hora o €/mes para estimar el plus.
    </Text>}
    <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginTop:9,gap:8}}>
     <Text style={{fontSize:10,color:"#A6BBD5",flex:1}}>
@@ -65,7 +66,7 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
     </Text>
     <Pressable onPress={()=>setOpened(true)} disabled={!userId}
      style={{borderWidth:1,borderColor:"#5E9CF1",borderRadius:9,paddingVertical:7,paddingHorizontal:11}}>
-     <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>Editar plus</Text>
+     <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
     </Pressable>
    </View>
    <Modal visible={opened} transparent animationType="fade" onRequestClose={()=>setOpened(false)}>
@@ -82,8 +83,9 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
        </Pressable>)}
       </View>
       <Text style={{color:"#C5D7EF",fontSize:12}}>Provincia del convenio (si es distinta de la base)</Text>
+      <Text style={{color:"#A9BBD3",fontSize:11}}>Introduce una única provincia (no varias separadas por comas). El importe manual tiene prioridad sobre la referencia automática.</Text>
       <TextInput accessibilityLabel="Provincia del convenio" value={contractProvince} onChangeText={setContractProvince}
-       placeholder="Ej. León, Barcelona" placeholderTextColor="#849CB5"
+       placeholder="Una provincia: León" placeholderTextColor="#849CB5"
        style={{borderWidth:1,borderColor:"#49698F",borderRadius:9,padding:12,color:"white",fontSize:14}}/>
       <TextInput accessibilityLabel="Importe de nocturnidad"
        placeholder={unit==="hourly"?"Precio por hora nocturna":"Importe mensual"} placeholderTextColor="#849CB5"
