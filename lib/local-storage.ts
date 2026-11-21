@@ -5542,7 +5542,20 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
  */
 export async function revokeCrossDayAutoDietsForNewStart(j: Jornada): Promise<string[]> {
   const all = await getAllNaturalDayDiets();
-  const revoked = all.filter(e => isProvisionalCrossDayDietForNewStart(e, j));
+  const previousJornadas = new Map((await getAllJornadas()).map(previous => [previous.id, previous]));
+  const revoked = all.filter(e => {
+    if (isProvisionalCrossDayDietForNewStart(e, j)) return true;
+    // Compatibility with earlier automatic out-of-base records: only remove
+    // an old auto_oob_ entry if its source journey actually crossed midnight
+    // and finished on the same date as the new shift. Never remove manually
+    // created entries or auto gap-day diets unrelated to this closing shift.
+    if (!e.id.startsWith("auto_oob_") || e.date !== j.fechaInicio || !e.previousJourneyId) return false;
+    const previous = previousJornadas.get(e.previousJourneyId);
+    return Boolean(previous && previous.id !== j.id &&
+      previous.fechaInicio < e.date && previous.fechaFin === e.date &&
+      previous.endAt && Date.parse(previous.endAt) <= Date.parse(j.startAt) &&
+      ["INTERNACIONAL", "REGIONAL_INTL", "NAC_INTL"].includes(previous.tipoRuta || ""));
+  });
   for (const entry of revoked) await deleteNaturalDayDiet(entry.id);
   return revoked.map(e => e.id);
 }
