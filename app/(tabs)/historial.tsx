@@ -90,6 +90,7 @@ import {
 } from "@/lib/legalEngine";
 import { useSync } from "@/lib/sync-context";
 import { userScopedKey } from "@/lib/user-scope";
+import { supabase } from "@/lib/supabase";
 import { getCalendarDietLabel, journeyTouchesCalendarDate } from "@/lib/history-calendar";
 import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
 import type { NightDetail } from "@/lib/night-work";
