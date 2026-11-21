@@ -2204,5 +2204,5 @@ const styles = StyleSheet.create({
 });
 
 export default function ExportarScreen(){
- return <SubscriptionGate tier="pro"><ExportarReportContent/></SubscriptionGate>;
+ return <SubscriptionGate tier="pro" feature="reports"><ExportarReportContent/></SubscriptionGate>;
 }
