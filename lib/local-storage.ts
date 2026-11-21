@@ -4,7 +4,7 @@ import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import { legalPeriodStartAt, overlappingShiftPairs } from "./shift-periods";
-import { crossDayAutoDietDate, isProvisionalCrossDayDietForNewStart, CROSSDAY_AUTO_DIET_PREFIX } from "./crossday-diet";
+import { crossDayAutoDietDate, crossDayAutoDietPercentage, isProvisionalCrossDayDietForNewStart, CROSSDAY_AUTO_DIET_PREFIX } from "./crossday-diet";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
@@ -5437,7 +5437,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
       let rtype: NaturalDayDietType = "NACIONAL";
       if (tipo === "INTERNACIONAL" || tipo === "REGIONAL_INTL" || tipo === "NAC_INTL") rtype = "INTERNACIONAL";
       else if (tipo === "REGIONAL") rtype = "REGIONAL";
-      const pct: 100 | 60 | 30 = 100;
+      const pct: 100 | 60 | 30 = rtype === "INTERNACIONAL" ? 60 : 100;
       const amt = findRateSafe(rtype, pct);
       const loc = j.lugarFin || j.lugarInicio || null;
       let arrivalHHMM: string | null = null;
@@ -5490,7 +5490,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
 }
 
 /**
- * Creates exactly one provisional 100% international diet on the calendar day
+ * Creates exactly one provisional international diet (60% when arriving at base) on the calendar day
  * a cross-midnight journey is closed with daily/weekly rest selected.
  * A later same-day journey start revokes this provisional record. No other
  * manually saved or historical diet is overwritten.
@@ -5504,6 +5504,10 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
   const dismissed = await getAllDismissedNaturalDayDates();
   if (dismissed.has(date)) return null;
   const { customRates } = await loadDietDerivationContext();
+  // The return-to-base rule is product-configurable via existing 60% diet rate.
+  // A crossed-midnight journey must not become a second 100% day by default.
+  const baseConfig = await loadBaseLocationConfigFromSettings();
+  const autoPct: 100 | 60 = crossDayAutoDietPercentage(j.lugarFin,baseConfig.baseCity);
   let isFestivo = false;
   try {
     const rawHolidays = await getItemScoped("tacoplan_user_holidays_cache");
@@ -5516,8 +5520,8 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
     id: `${CROSSDAY_AUTO_DIET_PREFIX}${date}_${j.id}`,
     date,
     type: "INTERNACIONAL",
-    percentage: 100,
-    amount: findRate(customRates, "INTERNACIONAL", 100),
+    percentage: autoPct,
+    amount: findRate(customRates, "INTERNACIONAL", autoPct),
     location: j.lugarFin || j.lugarInicio || null,
     source: "NATURAL_DAY_OUT_OF_BASE",
     previousJourneyId: j.id,

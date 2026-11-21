@@ -1,0 +1,27 @@
+name: Verify overnight diets and monthly nocturnity
+on:
+  push:
+    branches:
+      - feature/crossday-60-night-premium-308
+    paths:
+      - .github/workflows/verify-night-work-308.yml
+      - 'app/(tabs)/dietas.tsx'
+      - 'app/(tabs)/historial.tsx'
+      - 'app/(tabs)/usuario.tsx'
+      - 'lib/night-work.ts'
+      - 'tests/night-work.test.ts'
+  workflow_dispatch:
+jobs:
+  typecheck-and-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test

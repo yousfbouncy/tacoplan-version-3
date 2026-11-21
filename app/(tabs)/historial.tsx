@@ -90,7 +90,10 @@ import {
 } from "@/lib/legalEngine";
 import { useSync } from "@/lib/sync-context";
 import { userScopedKey } from "@/lib/user-scope";
+import { supabase } from "@/lib/supabase";
 import { getCalendarDietLabel, journeyTouchesCalendarDate } from "@/lib/history-calendar";
+import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
+import type { NightDetail } from "@/lib/night-work";
 import PendingNaturalDietsModal, { type DetectedDiet } from "@/components/PendingNaturalDietsModal";
 import ArrivalDayDietSelectorModal from "@/components/ArrivalDayDietSelectorModal";
 import {
@@ -737,8 +740,10 @@ function JornadaItem({
   onEdit,
   viajes,
   billingMode,
+  nightDetail,
 }: {
   item: Jornada;
+  nightDetail?: NightDetail;
   onDelete: (id: string) => void;
   onEdit: (id: string) => void;
   viajes: Viaje[];
@@ -1024,6 +1029,15 @@ function JornadaItem({
               })()}
             </View>
           </View>
+          {nightDetail?.hasNightWork && (
+            <View style={{paddingHorizontal:12,paddingVertical:6}}>
+              <Text style={{fontSize:12,color:Colors.light.textSecondary}}>
+                🌙 Nocturnidad: {nightDetail.estimated
+                  ? `hasta ${Math.floor(nightDetail.potentialMinutes/60)}h ${String(nightDetail.potentialMinutes%60).padStart(2,"0")}min (franja estimada, sin actividades verificadas)`
+                  : `${Math.floor(nightDetail.minutes/60)}h ${String(nightDetail.minutes%60).padStart(2,"0")}min trabajadas`}
+              </Text>
+            </View>
+          )}
           {expanded && item.plusItems && item.plusItems.length > 0 && (
             <View style={styles.plusSection}>
               {item.plusItems.map((pi, idx) => (
@@ -1383,6 +1397,22 @@ export default function HistorialScreen() {
   const [historySearch, setHistorySearch] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
   const jornadasData = (jornadasQuery.data || []).filter(j=>!historyLimited||j.fechaInicio>=freeHistoryFrom);
+  const nightReportQuery = useQuery<NightPeriodReport | null>({
+    queryKey:["night-history",user?.id,visibleHistoryFrom,periodo.to,syncVersion,jornadasData.map(j=>j.id+j.updatedAt).join(",")],
+    enabled:!!user?.id && jornadasQuery.isSuccess,
+    queryFn:async()=>{
+      if(!user?.id)return null;
+      const key=await userScopedKey("tacoplan_payroll_config",user.id);
+      let config:Record<string,unknown>={};
+      try{config=JSON.parse((await AsyncStorage.getItem(key))||"{}");}catch{}
+      try{
+        const {data,error}=await supabase.from("profiles").select("payroll_config").eq("id",user.id).maybeSingle();
+        if(!error && (data as any)?.payroll_config)config=(data as any).payroll_config;
+      }catch{}
+      return loadNightPeriodReport(user.id,jornadasData,config,visibleHistoryFrom,periodo.to);
+    },
+  });
+  const nightReport=nightReportQuery.data;
 
   type ListItem =
     | { type: "jornada"; jornada: Jornada }
@@ -2420,6 +2450,17 @@ export default function HistorialScreen() {
           Plan Gratis: se muestran únicamente los últimos 14 días. Tus registros anteriores siguen guardados.
         </Text>
       ) : null}
+      {nightReport && (nightReport.minutes>0 || nightReport.estimatedMinutes>0) && (
+        <View style={{marginHorizontal:16,marginBottom:8,padding:10,borderRadius:10,backgroundColor:"#143254"}}>
+          <Text style={{color:"#D6E8FF",fontSize:12,fontWeight:"600"}}>
+            🌙 Nocturnidad · {Math.floor(nightReport.minutes/60)}h {String(nightReport.minutes%60).padStart(2,"0")}min registradas
+            {nightReport.estimatedMinutes>0?" · hay tramos sin verificar":""}
+          </Text>
+          <Text style={{color:"#D6E8FF",fontSize:11}}>
+            Plus salarial mensual estimado: {nightReport.total.toFixed(2)} € (se cuenta una vez por mes, no por jornada)
+          </Text>
+        </View>
+      )}
       {jornadasQuery.isLoading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={Colors.light.tint} />
@@ -2534,7 +2575,7 @@ export default function HistorialScreen() {
                 >
                   <View style={{ flex: 1, flexDirection: "column", gap: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>Jornada fuera de base</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "bold", color: Colors.light.text }}>{ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"}</Text>
                       <View
                         style={{
                           backgroundColor: pillBg,
@@ -2578,7 +2619,7 @@ export default function HistorialScreen() {
                       <Text style={{ fontSize: 12, color: Colors.light.text, opacity: 0.6 }}>📍 {ndd.location}</Text>
                     ) : null}
                     <Text style={{ fontSize: 11, color: Colors.light.text, opacity: 0.5 }}>
-                      Jornada fuera de base · {ndd.percentage}%
+                      {ndd.id.startsWith("auto_oob_crossday_") ? "Dieta por continuidad de viaje" : "Jornada fuera de base"} · {ndd.percentage}%
                     </Text>
                     {displayPluses.length > 0 && (() => {
                       const plusTotal = resolvedNdd.plusTotal;
@@ -2659,6 +2700,7 @@ export default function HistorialScreen() {
                 onEdit={(id) => router.push({ pathname: "/editar-jornada", params: { id } })}
                 viajes={allViajes}
                 billingMode={billingMode}
+                nightDetail={nightReport?.byShift[listItem.jornada.id]}
               />
             );
           }}

@@ -38,3 +38,12 @@ export function isProvisionalCrossDayDietForNewStart(
     diet.date === newShift.fechaInicio &&
     diet.previousJourneyId !== newShift.id;
 }
+
+/** Configured product rule for an international crossing ending at the home base. */
+export function crossDayAutoDietPercentage(endLocation:string|null|undefined,baseCity:string|null|undefined):100|60 {
+  const norm=(v:string|null|undefined)=>String(v||"").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase().trim();
+  const end=norm(endLocation),city=norm(baseCity);
+  if(!city||!end)return 100;
+  const tokens=end.split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.includes(city)||end===city||end.startsWith(city+",")?60:100;
+}

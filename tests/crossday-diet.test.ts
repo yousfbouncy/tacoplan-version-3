@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   crossDayAutoDietDate,
+  crossDayAutoDietPercentage,
   isProvisionalCrossDayDietForNewStart,
   CROSSDAY_AUTO_DIET_PREFIX,
 } from "../lib/crossday-diet";
@@ -43,4 +44,11 @@ test("same-day start revokes only the provisional generated diet, never a manual
   assert.equal(isProvisionalCrossDayDietForNewStart({id:`${CROSSDAY_AUTO_DIET_PREFIX}2026-11-21_journey20`,date:"2026-11-21",previousJourneyId:"journey20"},start),true);
   assert.equal(isProvisionalCrossDayDietForNewStart({id:"user_confirmed",date:"2026-11-21",previousJourneyId:"journey20"},start),false);
   assert.equal(isProvisionalCrossDayDietForNewStart({id:`${CROSSDAY_AUTO_DIET_PREFIX}2026-11-20_journey19`,date:"2026-11-20",previousJourneyId:"journey19"},start),false);
+});
+
+test("return to configured base gets international 60%, outside base remains 100%",()=>{
+  assert.equal(crossDayAutoDietPercentage("Abrera, España","Abrera"),60);
+  assert.equal(crossDayAutoDietPercentage("Abrera, Spain","Abrera"),60);
+  assert.equal(crossDayAutoDietPercentage("Lyon, Francia","Abrera"),100);
+  assert.equal(crossDayAutoDietPercentage("Abrera, España",null),100);
 });
