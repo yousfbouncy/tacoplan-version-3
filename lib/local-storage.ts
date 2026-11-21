@@ -493,7 +493,9 @@ function calcMinutesBetween(isoStart: string, isoEnd: string): number {
 
 function clasificarDescanso(minutos: number, plannedType?: "daily" | "weekly" | null): string {
   if (minutos >= 11 * 60 && minutos < 45 * 60 && plannedType === "daily") return "DESCANSO_DIARIO_COMPLETO";
-  if (minutos < 9 * 60) return "INFRACCION_DESCANSO";
+  // A short interruption is not yet a daily rest; its legal validity is
+  // decided from the full 24-hour cycle, not from this interval alone.
+  if (minutos < 9 * 60) return "PAUSA_INTERMEDIA";
   if (minutos < 11 * 60) return "DESCANSO_DIARIO_REDUCIDO";
   if (minutos < 24 * 60) return "DESCANSO_DIARIO_COMPLETO";
   if (minutos < 45 * 60) return "DESCANSO_SEMANAL_REDUCIDO";
