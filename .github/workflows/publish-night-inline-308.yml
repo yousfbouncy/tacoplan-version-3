@@ -49,4 +49,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Publish night estimator
         run: |
-          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: nocturnidad en linea dentro de Extras y pluses, total y editor"
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: nocturnidad integrada en Extras y pluses, subtotal y editor"
