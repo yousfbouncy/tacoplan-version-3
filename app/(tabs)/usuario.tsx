@@ -1361,13 +1361,22 @@ export default function UsuarioScreen() {
         };
       })
       .filter(Boolean) as any[];
-    if (Number(e.nocturnidad || 0) > 0) fixedRows.push({
-      concepto: (e.nightRuleName||"Plus nocturnidad") + " · estimado",
-      cantidad: String((e.nightMonths || []).length) + " mes(es)",
-      precio: formatEUR(Number(e.nightMonthly || 0)) + "/mes",
-      total: formatEUR(Number(e.nocturnidad || 0)),
-      secondary: Number(e.nightEstimatedMinutes || 0) > 0 ? "Hay horas nocturnas estimadas sin actividad detallada" : null,
-    });
+    if (Number(e.nocturnidad || 0) > 0) {
+      const hourly= e.nightManualUnit==="hourly" || (e.nightEstimationMode!=="manual" &&
+        ["hourly_percent","hourly_fixed"].includes(String(e.nightRuleType||"")));
+      const nightHours=(Number(e.nightMinutes||0)+Number(e.nightEstimatedMinutes||0))/60;
+      fixedRows.push({
+        concepto: (e.nightRuleName||"Plus nocturnidad") + " · estimado",
+        cantidad: hourly ? nightHours.toFixed(2)+" h" : "1 periodo mensual",
+        precio: hourly
+          ? formatEUR(nightHours>0?Number(e.nocturnidad||0)/nightHours:0)+"/h"
+          : formatEUR(Number(e.nightMonthly || 0))+"/mes",
+        total:formatEUR(Number(e.nocturnidad||0)),
+        secondary:Number(e.nightEstimatedMinutes||0)>0
+          ? "Incluye horas aproximadas sin actividad detallada · convenio y nómina oficial prevalecen"
+          : "Convenio y nómina oficial prevalecen",
+      });
+    }
 
     const mapExtraLabel = (k: string) => {
       if (k === "SABADO") return "Sábado";
@@ -1720,6 +1729,9 @@ export default function UsuarioScreen() {
           nocturnidad: round2(nocturnidad),
           nightMonthly: night?.monthly || 0,
           nightRuleName: night?.ruleName || "Plus nocturnidad",
+          nightRuleType:night?.rule?.calculation_mode||null,
+          nightEstimationMode:night?.mode||"automatic",
+          nightManualUnit:night?.preference.manual_unit||null,
           nightMonths: night?.months || [],
           nightMinutes: night?.minutes || 0,
           nightEstimatedMinutes: night?.estimatedMinutes || 0,
