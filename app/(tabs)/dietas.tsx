@@ -192,24 +192,25 @@ function DietasFeatureContent() {
     return getPeriod(periodoIdx);
   }, [periodoIdx, getPeriod]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const det = await detectMissingOutOfBaseDietDays({ fromDate: periodo.from, toDate: periodo.to });
-        if (cancelled) return;
-        if (det.length > 0) {
+  // Re-evaluate when returning to Dietas, not only when syncVersion changes:
+  // a diet confirmed automatically in Inicio must never remain as a stale
+  // "0 € pending arrival" card on this tab.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const run = async () => {
+        try {
+          const det = await detectMissingOutOfBaseDietDays({ fromDate: periodo.from, toDate: periodo.to });
+          if (cancelled) return;
           setPendingDiets(det);
-          setPendingDietsBannerVisible(true);
-        } else {
-          setPendingDiets([]);
-          setPendingDietsBannerVisible(false);
-        }
-      } catch {}
-    };
-    run();
-    return () => { cancelled = true; };
-  }, [periodo.from, periodo.to, syncVersion]);
+          setPendingDietsBannerVisible(det.length > 0);
+          if (det.length === 0) setPendingDietsVisible(false);
+        } catch {}
+      };
+      void run();
+      return () => { cancelled = true; };
+    }, [periodo.from, periodo.to, syncVersion])
+  );
 
   const resumenQuery = useQuery<ResumenDietas>({
     queryKey: ["dietas-resumen", periodo.from, periodo.to, syncVersion],
