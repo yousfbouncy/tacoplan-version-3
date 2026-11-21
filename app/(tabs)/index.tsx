@@ -3454,15 +3454,15 @@ export default function DashboardScreen() {
 
             {abierta.descansoAnteriorMin != null && (
               <View style={{
-                backgroundColor: abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#3C2331" :
+                backgroundColor: abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "#153655" : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "#3C2331" :
                   abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? "#352B19" : "#15372F",
                 padding: 10, borderRadius: 8, marginBottom: 8,
               }}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                   <Ionicons
-                    name={abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "alert-circle" : "moon-outline"}
+                    name={abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "time-outline" : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? "alert-circle" : "moon-outline"}
                     size={16}
-                    color={abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? Colors.light.danger :
+                    color={abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? Colors.light.tint : abierta.tipoDescansoAnterior === "INFRACCION_DESCANSO" ? Colors.light.danger :
                       abierta.tipoDescansoAnterior === "DESCANSO_DIARIO_REDUCIDO" || abierta.tipoDescansoAnterior === "DESCANSO_SEMANAL_REDUCIDO" ? Colors.light.warning : Colors.light.success}
                   />
                   <Text style={{ marginLeft: 6, fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.light.text }}>
@@ -3470,7 +3470,7 @@ export default function DashboardScreen() {
                   </Text>
                   {!showPreviousSplitRestSummary && (
                     <Text style={{ marginLeft: 6, fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary }}>
-                      ({t(`common.restType.${abierta.tipoDescansoAnterior}`)})
+                      ({abierta.tipoDescansoAnterior === "PAUSA_INTERMEDIA" ? "Pausa intermedia · continúa el período legal" : t(`common.restType.${abierta.tipoDescansoAnterior}`)})
                     </Text>
                   )}
                 </View>
