@@ -1199,19 +1199,24 @@ export default function DashboardScreen() {
       ? (conduccionDomingoParsed.minutes || 0) + (conduccionLunesParsed.minutes || 0)
       : conduccionParsed.minutes;
     if (totalMin == null || totalMin === 0) return null;
+    const earlierDriving = estado.legalPeriodPreviousDrivingMin;
+    const dailyTotalMin = totalMin + (earlierDriving ?? 0);
     const extensionsAvailable = estado.maxExtensiones - estado.extensiones10h;
     const weeklyRemainMin = estado.restanteSemanalMin;
     const biweeklyRemainMin = estado.restanteBisemanalMin;
     const maxDailyMin = extensionsAvailable > 0 ? 600 : 540;
     const maxDailyLabel = extensionsAvailable > 0 ? "10h" : "9h";
     const warnings: Array<{ type: "infraction" | "warning"; message: string }> = [];
-    if (totalMin > maxDailyMin) {
-      const excessMin = totalMin - maxDailyMin;
+    if (isResumedLegalPeriod && earlierDriving === null) {
+      warnings.push({ type: "warning", message: "Conducción diaria acumulada sin verificar: revisa los tramos anteriores o solapados." });
+    }
+    if (dailyTotalMin > maxDailyMin && earlierDriving !== null) {
+      const excessMin = dailyTotalMin - maxDailyMin;
       const msg = t("dashboard.drivingInfraction")
         .replace("{max}", maxDailyLabel)
         .replace("{excess}", formatMinutosHoras(excessMin));
       warnings.push({ type: "infraction", message: msg });
-    } else if (totalMin > 540 && extensionsAvailable > 0) {
+    } else if (dailyTotalMin > 540 && extensionsAvailable > 0 && earlierDriving !== null) {
       const msg = t("dashboard.drivingWarning")
         .replace("{used}", String(estado.extensiones10h + 1));
       warnings.push({ type: "warning", message: msg });
@@ -1229,7 +1234,7 @@ export default function DashboardScreen() {
       warnings.push({ type: "infraction", message: `${t("dashboard.biweekly")}: +${formatMinutosHoras(excessMin)} (${formatMinutosHoras(biweeklyRemainMin)} ${t("dashboard.remaining").toLowerCase()})` });
     }
     return warnings.length > 0 ? warnings : null;
-  }, [conduccionParsed.minutes, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, isCrossSundayMonday, estado, t]);
+  }, [conduccionParsed.minutes, conduccionDomingoParsed.minutes, conduccionLunesParsed.minutes, isCrossSundayMonday, estado, isResumedLegalPeriod, t]);
 
   const lastClosedQuery = useQuery<Jornada | null>({
     queryKey: dashboardQueryKey("last-closed", user?.id),
