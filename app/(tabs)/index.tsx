@@ -77,6 +77,8 @@ import {
   addFerryRest,
   detectMissingOutOfBaseDietDays,
   autoConfirmOutOfBaseDietDays,
+  autoConfirmClosedCrossDayDiet,
+  revokeCrossDayAutoDietsForNewStart,
   upsertNaturalDayDiets,
   dismissNaturalDayDiets,
   getAllNaturalDayDiets,
@@ -313,7 +315,7 @@ export default function DashboardScreen() {
   const { user, logout } = useAuth();
   const { t, locale } = useI18n();
   const {
-    triggerSync, syncStatus, lastSyncTime, hasPending,
+    triggerSync, triggerDeleteNaturalDayDietSync, syncStatus, lastSyncTime, hasPending,
     showRecoveryPrompt, isRestoring, restoreProgress,
     restoreComplete, restoreResult, startRestore,
     dismissRecovery, dismissRestoreComplete, refreshSyncInfo,
@@ -1385,6 +1387,20 @@ export default function DashboardScreen() {
       });
     },
     onSuccess: async (newJornada: Jornada) => {
+      // A newly opened shift owns its start date. Revoke only the provisional
+      // cross-day diet, not a user-confirmed/manual diet or an old jornada.
+      try {
+        const revokedIds = await revokeCrossDayAutoDietsForNewStart(newJornada);
+        for (const id of revokedIds) await triggerDeleteNaturalDayDietSync(id, newJornada.fechaInicio);
+        if (revokedIds.length) {
+          await Promise.all([
+            qc.invalidateQueries({ queryKey: ["dietas-resumen"] }),
+            qc.invalidateQueries({ queryKey: ["natural-day-diets"] }),
+          ]);
+        }
+      } catch (error) {
+        console.warn("[CROSSDAY_DIET] No se pudo retirar la dieta provisional", error);
+      }
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setConfirmedStart(newJornada);
       setShowInicioForm(false);
@@ -2137,14 +2153,30 @@ export default function DashboardScreen() {
         if (closeFrom && closeTo) {
           await clearDismissedNaturalDayDietsInRange(closeFrom, closeTo);
           console.log(`[DISMISSED_CLEARED_CLOSE from=${closeFrom} to=${closeTo}]`);
+          // The selected rest is part of the closing record. The cross-day
+          // international diet is automatic; it must not also appear in the
+          // manual 0 € arrival-day selector.
+          const autoCrossDay = await autoConfirmClosedCrossDayDiet(closed);
+          if (autoCrossDay) {
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: ["dietas-resumen"] }),
+              qc.invalidateQueries({ queryKey: ["natural-day-diets"] }),
+            ]);
+          }
           const closeDetectados = await detectMissingOutOfBaseDietDays({
             fromDate: closeFrom,
             toDate: closeTo,
           });
-          console.log(`[TRIGGER_CLOSE pendingCount=${closeDetectados?.length || 0} from=${closeFrom} to=${closeTo}]`);
-          if (closeDetectados && closeDetectados.length > 0) {
-            setPendingDiets(closeDetectados);
+          const savedDates = new Set((await getAllNaturalDayDiets())
+            .filter(d => d.confirmedByUser && !d.dismissedAt).map(d => d.date));
+          const stillPending = closeDetectados.filter(d => !savedDates.has(d.date));
+          console.log(`[TRIGGER_CLOSE pendingCount=${stillPending.length} from=${closeFrom} to=${closeTo}]`);
+          if (stillPending.length > 0) {
+            setPendingDiets(stillPending);
             setPendingDietsVisible(true);
+          } else {
+            setPendingDiets([]);
+            setPendingDietsVisible(false);
           }
         }
       } catch (e) {
