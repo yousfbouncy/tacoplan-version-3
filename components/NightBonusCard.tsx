@@ -3,8 +3,8 @@ import {Alert,Modal,Pressable,Text,TextInput,View} from "react-native";
 import {saveNightPreference} from "@/lib/night-estimator";
 import type {NightPeriodReport} from "@/lib/night-work-data";
 const eur=(n:number)=>n.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
-export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
- report:NightPeriodReport|null|undefined;userId:string|undefined;onUpdated?:()=>void;compact?:boolean;
+export default function NightBonusCard({report,userId,onUpdated,compact=false,inline=false}:{
+ report:NightPeriodReport|null|undefined;userId:string|undefined;onUpdated?:()=>void;compact?:boolean;inline?:boolean;
 }){
  const [opened,setOpened]=useState(false);
  const [unit,setUnit]=useState<"hourly"|"monthly">("hourly");
@@ -34,7 +34,35 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
   }catch(e){Alert.alert("No se pudo guardar",e instanceof Error?e.message:"Inténtalo de nuevo");}
   finally{setBusy(false);}
  };
- return <View style={{borderRadius:14,borderWidth:1,borderColor:"#2C5184",backgroundColor:"#112D4C",
+ return <>
+  {inline ? (
+  <View style={{paddingVertical:10,borderTopWidth:1,borderTopColor:"#2A435E",gap:6}}>
+    <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
+      <View style={{flex:1}}>
+        <Text style={{color:"#EAF3FF",fontSize:14,fontWeight:"600"}}>🌙 Nocturnidad</Text>
+        <Text style={{color:"#AFC3D8",fontSize:11,marginTop:3}}>
+          {report ? `${Math.floor((report.minutes+report.estimatedMinutes)/60)}h ${String((report.minutes+report.estimatedMinutes)%60).padStart(2,"0")}min · ${report.nightDays} jornadas` : "Calculando horas…"}
+        </Text>
+      </View>
+      <Text style={{color:"#FFBC48",fontSize:16,fontWeight:"700"}}>
+        {report ? (report.amountKnown ? eur(report.total) : "Sin referencia") : "—"}
+      </Text>
+    </View>
+    {!!report?.estimatedMinutes && <Text style={{color:"#F3C88C",fontSize:11}}>
+      Incluye {Math.floor(report.estimatedMinutes/60)}h {String(report.estimatedMinutes%60).padStart(2,"0")}min estimados
+    </Text>}
+    <View style={{flexDirection:"row",justifyContent:"space-between",alignItems:"center",gap:8}}>
+      <Text style={{color:"#AFC3D8",fontSize:11,flex:1}}>
+        {report?.mode==="manual"?"Importe configurado manualmente":(report?.ruleName||"Referencia pendiente")}
+      </Text>
+      <Pressable onPress={()=>setOpened(true)} disabled={!userId}
+        style={{borderWidth:1,borderColor:"#5E9CF1",borderRadius:8,paddingVertical:6,paddingHorizontal:10}}>
+        <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
+      </Pressable>
+    </View>
+  </View>
+  ) : (
+  <View style={{borderRadius:14,borderWidth:1,borderColor:"#2C5184",backgroundColor:"#112D4C",
   padding:compact?10:14,marginVertical:5}}>
    <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
     <Text style={{fontSize:compact?13:16,fontWeight:"700",color:"#F2F7FF"}}>🌙 Nocturnidad estimada</Text>
@@ -69,6 +97,7 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
      <Text style={{color:"#DCEAFF",fontSize:12,fontWeight:"700"}}>{needsSetup?"Configurar plus":"Editar plus"}</Text>
     </Pressable>
    </View>
+  )}
    <Modal visible={opened} transparent animationType="fade" onRequestClose={()=>setOpened(false)}>
     <View style={{flex:1,justifyContent:"center",padding:20,backgroundColor:"#0009"}}>
      <View style={{backgroundColor:"#102641",borderRadius:18,padding:20,borderColor:"#44638B",borderWidth:1,gap:12}}>
@@ -103,5 +132,5 @@ export default function NightBonusCard({report,userId,onUpdated,compact=false}:{
      </View>
     </View>
    </Modal>
-  </View>;
+  </>; 
 }
