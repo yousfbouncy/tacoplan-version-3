@@ -86,6 +86,10 @@ export function nightPayrollSummary(
   const eligible=Array.from(months).sort();
   const startMonth=from.slice(0,7),endMonth=to.slice(0,7);
   const partial=from.slice(8)!=="01"||to.slice(8)!==String(new Date(Number(to.slice(0,4)),Number(to.slice(5,7)),0).getDate()).padStart(2,"0")||startMonth!==endMonth;
-  // Do not invent daily proration: show the full provisional monthly entitlement.
-  return {monthly,total:monthly*eligible.length,minutes,estimatedMinutes,months:eligible,partial};
+  // A 21st→20th company payroll period spans two calendar months but is
+  // still ONE salary period. Never multiply the fixed plus by both months.
+  const dateDays=Math.max(1,Math.round((Date.parse(to+"T12:00:00Z")-Date.parse(from+"T12:00:00Z"))/86400000)+1);
+  const payPeriods=Math.min(eligible.length,Math.max(1,Math.round(dateDays/30)));
+  // For partial payroll periods, entitlement/proration still needs confirmation.
+  return {monthly,total:round2(monthly*payPeriods),minutes,estimatedMinutes,months:eligible,partial};
 }
