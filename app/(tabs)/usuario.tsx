@@ -40,7 +40,8 @@ import { supabase } from "@/lib/supabase";
 import TrafficLocationConsent from "@/components/TrafficLocationConsent";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
-import { loadNightPeriodReport } from "@/lib/night-work-data";
+import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
+import NightBonusCard from "@/components/NightBonusCard";
 
 function safeHaptic() {
   if (Platform.OS !== "web") {
@@ -1025,6 +1026,7 @@ export default function UsuarioScreen() {
   const [loadingPayrollConfig, setLoadingPayrollConfig] = useState(false);
   const [savingPayrollConfig, setSavingPayrollConfig] = useState(false);
   const [payrollEstimate, setPayrollEstimate] = useState<any | null>(null);
+  const [payrollNightReport,setPayrollNightReport] = useState<NightPeriodReport|null>(null);
   const [loadingPayrollEstimate, setLoadingPayrollEstimate] = useState(false);
 
   const [settings, setSettings] = useState<UserSettings>({ ...DEFAULT_SETTINGS });
@@ -1360,7 +1362,7 @@ export default function UsuarioScreen() {
       })
       .filter(Boolean) as any[];
     if (Number(e.nocturnidad || 0) > 0) fixedRows.push({
-      concepto: "Plus nocturnidad (León 7 % mensual)",
+      concepto: (e.nightRuleName||"Plus nocturnidad") + " · estimado",
       cantidad: String((e.nightMonths || []).length) + " mes(es)",
       precio: formatEUR(Number(e.nightMonthly || 0)) + "/mes",
       total: formatEUR(Number(e.nocturnidad || 0)),
@@ -1611,6 +1613,7 @@ export default function UsuarioScreen() {
 
         const fixedTotal = getPayrollFixedTotal(payrollConfig as unknown as Record<string, unknown>, daysComputed, daysWorked, baseDays);
         const night = userId ? await loadNightPeriodReport(userId,jornadas,payrollConfig,from,to) : null;
+        setPayrollNightReport(night);
         const nocturnidad = night?.total || 0;
 
         let baseVariable = 0;
@@ -1716,6 +1719,7 @@ export default function UsuarioScreen() {
           fixedTotal: round2(fixedTotal + nocturnidad),
           nocturnidad: round2(nocturnidad),
           nightMonthly: night?.monthly || 0,
+          nightRuleName: night?.ruleName || "Plus nocturnidad",
           nightMonths: night?.months || [],
           nightMinutes: night?.minutes || 0,
           nightEstimatedMinutes: night?.estimatedMinutes || 0,
@@ -1751,6 +1755,7 @@ export default function UsuarioScreen() {
         });
       } catch {
         setPayrollEstimate(null);
+        setPayrollNightReport(null);
       } finally {
         setLoadingPayrollEstimate(false);
       }
@@ -2659,16 +2664,17 @@ export default function UsuarioScreen() {
 
                     <ValueField label="Salario base bruto" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.salario_base_bruto} onChange={(v) => setPayrollConfig((p) => ({ ...p, salario_base_bruto: v }))} />
                     <View style={styles.subsectionDivider} />
-                    <Text style={styles.subsectionLabel}>Plus de nocturnidad</Text>
-                    <Pressable style={styles.ferryToggleRow} onPress={() => setPayrollConfig(p => ({...p, night_enabled: !p.night_enabled}))}>
-                      <Text style={styles.ferryToggleText}>Aplicar nocturnidad (convenio León 2026–2028)</Text>
-                      <Switch value={payrollConfig.night_enabled} onValueChange={v=>setPayrollConfig(p=>({...p,night_enabled:v}))}/>
+                    <Text style={styles.subsectionLabel}>Plus de nocturnidad (automático por convenio)</Text>
+                    <Text style={{fontSize:12,color:Colors.light.textSecondary}}>
+                      Tacoplan aplica el convenio provincial identificado por tu base o el que selecciones en «Editar plus».
+                      La nocturnidad es informativa, separada de dietas y calculada sobre trabajo nocturno. Prevalece la nómina oficial.
+                    </Text>
+                    <ValueField label="Salario base mensual de referencia para nocturnidad (opcional)"
+                      unit="EUR/mes" value={payrollConfig.night_salary_base_monthly}
+                      onChange={v=>setPayrollConfig(p=>({...p,night_salary_base_monthly:v}))}/>
+                    <Pressable style={styles.saveBtn} onPress={()=>router.push("/dietas")}>
+                      <Text style={styles.saveBtnText}>Ver y editar cálculo de nocturnidad</Text>
                     </Pressable>
-                    {payrollConfig.night_enabled && <>
-                      <Text style={{fontSize:12,color:Colors.light.textSecondary}}>León, artículo 25: plus mensual del 7 % del salario base, en 12 mensualidades, si trabajas total o parcialmente de 22:00 a 06:00. Las horas se registran por separado y no multiplican el plus.</Text>
-                      <ValueField label="Porcentaje mensual del salario base" unit="%" value={payrollConfig.night_rate_pct} onChange={v=>setPayrollConfig(p=>({...p,night_rate_pct:v}))}/>
-                      <ValueField label="Salario base mensual para nocturnidad (opcional)" unit="EUR/mes" value={payrollConfig.night_salary_base_monthly} onChange={v=>setPayrollConfig(p=>({...p,night_salary_base_monthly:v}))}/>
-                    </>}
 
                     <ValueField label="Plus convenio" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.plus_convenio} onChange={(v) => setPayrollConfig((p) => ({ ...p, plus_convenio: v }))} />
                     <ValueField label="Complemento" unit={payrollConfig.fixed_unit === "day" ? "EUR/día" : "EUR/mes"} value={payrollConfig.complemento} onChange={(v) => setPayrollConfig((p) => ({ ...p, complemento: v }))} />
@@ -2834,6 +2840,8 @@ export default function UsuarioScreen() {
                   </Text>
                 </View>
 
+                <NightBonusCard report={payrollNightReport} userId={userId}
+                  onUpdated={()=>{void loadPayrollConfig();setPayrollNightReport(null);}}/>
                 {loadingPayrollEstimate ? (
                   <View style={styles.card}>
                     <SectionHeader title="Calculando..." icon="time-outline" />
