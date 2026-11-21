@@ -34,3 +34,10 @@ test("León nocturnity is monthly 7 percent, never multiplied by shift count",()
   assert.equal(total.total,82.55);
   assert.equal(total.minutes,310);
 });
+
+test("21st-to-20th payroll cut spanning two calendar months counts monthly plus once",()=>{
+ const config={night_enabled:true,night_rate_pct:"7",fixed_unit:"day" as const,salario_base_bruto:"39.31"};
+ const shifts=[{...shift,fechaInicio:"2026-11-21"},{...shift,id:"s2",fechaInicio:"2026-12-19"}];
+ const details={s1:{minutes:60,potentialMinutes:60,estimated:false,hasNightWork:true},s2:{minutes:60,potentialMinutes:60,estimated:false,hasNightWork:true}};
+ assert.equal(nightPayrollSummary(config,shifts,details,"2026-11-21","2026-12-20").total,82.55);
+});
