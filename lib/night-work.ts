@@ -23,25 +23,30 @@ const MAX_SEGMENT_MIN=48*60;
 
 /** Count minutes intersecting local nighttime by using the configured work timezone.
  * Iterating whole minutes accommodates DST transitions without a stale fixed UTC offset. */
-export function nightWindowMinutes(startAt:string,endAt:string,timeZone="Europe/Madrid"):number {
+export function nightWindowMinutes(startAt:string,endAt:string,timeZone="Europe/Madrid",nightFrom="22:00",nightTo="06:00"):number {
   const first=Date.parse(startAt),last=Date.parse(endAt);
   if(!Number.isFinite(first)||!Number.isFinite(last)||last<=first)return 0;
   const minutes=Math.min(MAX_SEGMENT_MIN,Math.ceil((last-first)/60000));
-  const fmt=new Intl.DateTimeFormat("en-GB",{timeZone,hour:"2-digit",hourCycle:"h23"});
+  const fmt=new Intl.DateTimeFormat("en-GB",{timeZone,hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+  const clock=(v:string,fallback:number)=>/^([01]\\d|2[0-3]):[0-5]\\d$/.test(v)?Number(v.slice(0,2))*60+Number(v.slice(3)):fallback;
+  const from=clock(nightFrom,1320),until=clock(nightTo,360);
   let sum=0;
   for(let i=0;i<minutes;i++){
     const t=first+i*60000;
     if(t>=last)break;
-    const hour=Number(fmt.format(new Date(t)));
-    if(hour>=22||hour<6)sum+=Math.min(60000,last-t)/60000;
+    const label=fmt.format(new Date(t));
+    const m=label.match(/(\\d{1,2}):(\\d{2})/);
+    const minuteOfDay=m?Number(m[1])*60+Number(m[2]):-1;
+    const inWindow=from<until?minuteOfDay>=from&&minuteOfDay<until:minuteOfDay>=from||minuteOfDay<until;
+    if(minuteOfDay>=0&&inWindow)sum+=Math.min(60000,last-t)/60000;
   }
   return Math.round(sum);
 }
 
 /** Separates actual selected driving/availability/work from a bare open/closed span.
  * A mere shift span can include rest, so it is never reported as proven worked hours. */
-export function nightWorkForShift(shift:NightShift,activities:NightActivity[],timeZone="Europe/Madrid"):NightDetail {
-  const potentialMinutes=shift.endAt?nightWindowMinutes(shift.startAt,shift.endAt,timeZone):0;
+export function nightWorkForShift(shift:NightShift,activities:NightActivity[],timeZone="Europe/Madrid",nightFrom="22:00",nightTo="06:00"):NightDetail {
+  const potentialMinutes=shift.endAt?nightWindowMinutes(shift.startAt,shift.endAt,timeZone,nightFrom,nightTo):0;
   const valid=activities.filter(a=>a.endedAt&&Date.parse(a.endedAt)>Date.parse(a.startedAt));
   if(!valid.length)return {minutes:0,potentialMinutes,estimated:potentialMinutes>0,hasNightWork:potentialMinutes>0};
   const worked=valid.filter(a=>a.type!=="REST").map(a=>({
@@ -54,7 +59,7 @@ export function nightWorkForShift(shift:NightShift,activities:NightActivity[],ti
     if(last&&seg.start<=last.end)last.end=Math.max(last.end,seg.end);
     else merged.push({...seg});
   }
-  const minutes=merged.reduce((sum,seg)=>sum+nightWindowMinutes(new Date(seg.start).toISOString(),new Date(seg.end).toISOString(),timeZone),0);
+  const minutes=merged.reduce((sum,seg)=>sum+nightWindowMinutes(new Date(seg.start).toISOString(),new Date(seg.end).toISOString(),timeZone,nightFrom,nightTo),0);
   return {minutes,potentialMinutes,estimated:false,hasNightWork:minutes>0};
 }
 export function monthlyNightAmount(config:NightConfig):number {
