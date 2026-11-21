@@ -4,7 +4,7 @@ import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import { legalPeriodStartAt, overlappingShiftPairs } from "./shift-periods";
-import { crossDayAutoDietDate, isProvisionalCrossDayDietForNewStart, CROSSDAY_AUTO_DIET_PREFIX } from "./crossday-diet";
+import { crossDayAutoDietDate, crossDayAutoDietPercentage, isProvisionalCrossDayDietForNewStart, CROSSDAY_AUTO_DIET_PREFIX } from "./crossday-diet";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
@@ -5507,11 +5507,7 @@ export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<Natural
   // The return-to-base rule is product-configurable via existing 60% diet rate.
   // A crossed-midnight journey must not become a second 100% day by default.
   const baseConfig = await loadBaseLocationConfigFromSettings();
-  const baseCity = normalizeLocationForCompare(baseConfig.baseCity || "");
-  const finalLocation = normalizeLocationForCompare(j.lugarFin || "");
-  const arrivesAtBase = Boolean(baseCity && finalLocation &&
-    (finalLocation === baseCity || finalLocation.includes(baseCity)));
-  const autoPct: 100 | 60 = arrivesAtBase ? 60 : 100;
+  const autoPct: 100 | 60 = crossDayAutoDietPercentage(j.lugarFin,baseConfig.baseCity);
   let isFestivo = false;
   try {
     const rawHolidays = await getItemScoped("tacoplan_user_holidays_cache");
