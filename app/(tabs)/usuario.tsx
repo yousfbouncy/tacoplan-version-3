@@ -2840,7 +2840,7 @@ export default function UsuarioScreen() {
                   </Text>
                 </View>
 
-                <NightBonusCard report={payrollNightReport} userId={userId}
+                <NightBonusCard report={payrollNightReport} userId={userId||undefined}
                   onUpdated={()=>{void loadPayrollConfig();setPayrollNightReport(null);}}/>
                 {loadingPayrollEstimate ? (
                   <View style={styles.card}>
