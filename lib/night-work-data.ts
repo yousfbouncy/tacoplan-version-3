@@ -44,8 +44,8 @@ export async function loadNightPeriodReport(
   let detail:NightDetail;
   try {
    const log=await loadDriverActivities(userId,shift.id);
-   detail=nightWorkForShift(shift,log.segments,convention.rule?.timezone||config.night_timezone||"Europe/Madrid");
-  }catch{detail=nightWorkForShift(shift,[],convention.rule?.timezone||config.night_timezone||"Europe/Madrid");}
+   detail=nightWorkForShift(shift,log.segments,convention.rule?.timezone||config.night_timezone||"Europe/Madrid",convention.rule?.night_from||"22:00",convention.rule?.night_to||"06:00");
+  }catch{detail=nightWorkForShift(shift,[],convention.rule?.timezone||config.night_timezone||"Europe/Madrid",convention.rule?.night_from||"22:00",convention.rule?.night_to||"06:00");}
   byShift[shift.id]=detail;
   newRows.push({
    user_id:userId,shift_id:shift.id,shift_date:shift.fechaInicio,
