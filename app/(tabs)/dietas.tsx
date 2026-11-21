@@ -1682,5 +1682,5 @@ const styles = StyleSheet.create({
 });
 
 export default function DietasScreen(){
- return <SubscriptionGate tier="plus"><DietasFeatureContent/></SubscriptionGate>;
+ return <SubscriptionGate tier="plus" feature="diets"><DietasFeatureContent/></SubscriptionGate>;
 }
