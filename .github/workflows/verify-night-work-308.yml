@@ -5,6 +5,11 @@ on:
       - feature/crossday-60-night-premium-308
     paths:
       - .github/workflows/verify-night-work-308.yml
+      - 'app/(tabs)/dietas.tsx'
+      - 'app/(tabs)/historial.tsx'
+      - 'app/(tabs)/usuario.tsx'
+      - 'lib/night-work.ts'
+      - 'tests/night-work.test.ts'
   workflow_dispatch:
 jobs:
   typecheck-and-tests:
