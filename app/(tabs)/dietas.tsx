@@ -32,6 +32,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { fetchDayExtras, fetchDietRates } from "@/lib/user-cloud";
 import { supabase } from "@/lib/supabase";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
+import { loadNightPeriodReport, type NightPeriodReport } from "@/lib/night-work-data";
 import EnterpriseDietReviews from "@/components/EnterpriseDietReviews";
 
 type ResumenDietas = {
@@ -258,6 +259,16 @@ function DietasFeatureContent() {
     },
   });
 
+  const nightQuery = useQuery<NightPeriodReport | null>({
+    queryKey:["night-dietas",user?.id,periodo.from,periodo.to,syncVersion,JSON.stringify(payrollConfig||{})],
+    enabled:!!user?.id && payrollConfig?.night_enabled===true,
+    queryFn:async()=> {
+      if(!user?.id)return null;
+      const jornadas=await listarJornadas(periodo.from,periodo.to);
+      return loadNightPeriodReport(user.id,jornadas,payrollConfig||{},periodo.from,periodo.to);
+    },
+  });
+  const nightPremium = nightQuery.data?.total || 0;
   const data = resumenQuery.data;
   const kmData = kmResumenQuery.data as any;
   const viajeData = viajeResumenQuery.data as any;
@@ -301,18 +312,18 @@ function DietasFeatureContent() {
     const pluses = Number(summary?.plus?.totalPlus || 0);
     const baseVariable = paymentMode === "dietas" ? 0 : Number(summary?.totalImporte || 0);
     const regularDiets = Math.max(0, dietTotal - offsite);
-    const taxed = fixedTotal + baseVariable
+    const taxed = fixedTotal + nightPremium + baseVariable
       + (payrollConfig.dietas_cotizan ? regularDiets : 0)
       + (payrollConfig.extras_cotizan ? extras : 0)
       + (payrollConfig.pluses_cotizan ? pluses : 0)
       + (payrollConfig.descanso_fuera_base_cotiza ? offsite : 0);
-    const gross = fixedTotal + baseVariable + dietTotal + extras + pluses;
+    const gross = fixedTotal + nightPremium + baseVariable + dietTotal + extras + pluses;
     const social = ["ss_cc_pct", "ss_desempleo_pct", "ss_fp_pct", "ss_mei_pct"]
       .reduce((sum, key) => sum + Math.round(taxed * parsePay(payrollConfig[key]) / 100 * 100) / 100, 0);
     const irpf = parsePay(payrollConfig.irpf_mode === "manual" ? payrollConfig.irpf_manual_pct : payrollConfig.irpf_auto_applied_pct);
     const net = gross - social - Math.round(taxed * irpf / 100 * 100) / 100;
-    return { gross, net, dietTotal, extras, pluses };
-  }, [payrollConfig, hasPayrollSetup, payrollDaysQuery.data, periodo.from, periodo.to, paymentMode, kmData, viajeData, data, periodConfig.mode]);
+    return { gross, net, dietTotal, extras, pluses, nocturnidad: nightPremium };
+  }, [payrollConfig, hasPayrollSetup, payrollDaysQuery.data, periodo.from, periodo.to, paymentMode, kmData, viajeData, data, periodConfig.mode, nightPremium]);
   const refreshing =
     resumenQuery.isRefetching ||
     kmResumenQuery.isRefetching ||
@@ -847,6 +858,15 @@ function DietasFeatureContent() {
         )}
 
 
+        {payrollConfig?.night_enabled === true && (
+          <View style={{backgroundColor:"#122E50",borderRadius:12,padding:12,marginBottom:10}}>
+            <Text style={{color:"#E3F0FF",fontWeight:"700"}}>🌙 Plus nocturnidad · salario, no dieta</Text>
+            <Text style={{color:"#E3F0FF",fontSize:12}}>
+              {nightQuery.data ? `${Math.floor(nightQuery.data.minutes/60)}h ${String(nightQuery.data.minutes%60).padStart(2,"0")}min trabajadas · ${euro(nightPremium)} mensual estimado`:"Calculando nocturnidad…"}
+            </Text>
+            {(nightQuery.data?.estimatedMinutes||0)>0 && <Text style={{color:"#FFD39B",fontSize:11}}>Hay tramos de noche sin actividades verificadas; revisa las horas.</Text>}
+          </View>
+        )}
         {hasPayrollSetup && (
           <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/usuario", params: { section: "estimacion_nomina", from: periodo.from, to: periodo.to } } as any)}
             style={{ borderRadius: 18, overflow: "hidden", marginBottom: 12 }}>
@@ -861,6 +881,7 @@ function DietasFeatureContent() {
                   ["Dietas", estimatedPayroll.dietTotal],
                   ["Extras", estimatedPayroll.extras],
                   ["Plus", estimatedPayroll.pluses],
+                  ["Nocturnidad", estimatedPayroll.nocturnidad],
                 ] as const).map(([label, value]) => <View key={label} style={{ flex: 1, padding: 9, borderRadius: 10, backgroundColor: "#FFFFFF20", alignItems: "center" }}>
                   <Text style={{ color: "#E5F0FF", fontSize: 11 }}>{label}</Text>
                   <Text style={{ color: "#FFFFFF", fontSize: 13, fontFamily: "Inter_600SemiBold" }}>{euro(value)}</Text>
