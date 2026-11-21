@@ -1,5 +1,6 @@
 import { isWithinAlertWindow56Days } from "./weekly-compensation";
 import type { Jornada, Compensacion } from "./local-storage";
+import { legalPeriodStartAt } from "./shift-periods";
 
 export const POLICIA_VENTANA_DIAS = 56;
 
@@ -316,8 +317,30 @@ export function evaluateJornada(
   const infractions: LegalInfraction[] = [];
   const warnings: LegalWarning[] = [];
 
-  const durMin = jornada.duracionJornadaMin || 0;
-  const condMin = jornada.conduccionMin || 0;
+  const cycleStart = legalPeriodStartAt([...allJornadas.filter(j => j.id !== jornada.id), jornada], jornada.id);
+  const previousSegments = cycleStart && cycleStart !== jornada.startAt
+    ? allJornadas.filter(j => j.id !== jornada.id &&
+        Date.parse(j.startAt) >= Date.parse(cycleStart) &&
+        Date.parse(j.startAt) < Date.parse(jornada.startAt))
+    : [];
+  const hasIncompleteSegments = previousSegments.some(j =>
+    !j.endAt || Date.parse(j.endAt) > Date.parse(jornada.startAt) ||
+    (j.conduccionMin == null && j.conduccionDomingoMin == null && j.conduccionLunesMin == null));
+  const previousDriving = hasIncompleteSegments ? 0 : previousSegments.reduce((n,j) =>
+    n + (j.conduccionMin ?? ((j.conduccionDomingoMin ?? 0) + (j.conduccionLunesMin ?? 0))), 0);
+  const condMin = (jornada.conduccionMin ?? ((jornada.conduccionDomingoMin ?? 0) + (jornada.conduccionLunesMin ?? 0))) + previousDriving;
+  const wholeSpan = cycleStart && jornada.endAt
+    ? Math.round((Date.parse(jornada.endAt) - Date.parse(cycleStart)) / 60000) : NaN;
+  // The 13/15-hour reference is the first start after a qualifying rest,
+  // even if the driver closed and reopened one or more work records.
+  const durMin = previousSegments.length > 0 && !hasIncompleteSegments && Number.isFinite(wholeSpan)
+    ? wholeSpan : jornada.duracionJornadaMin || 0;
+  if (hasIncompleteSegments) {
+    warnings.push({
+      code: "TRAMOS_SIN_VERIFICAR",
+      description: "Existen tramos anteriores incompletos o solapados; no se puede verificar el total del período legal.",
+    });
+  }
   const descansoMin = jornada.descansoAnteriorMin;
   const tipoDescanso = jornada.tipoDescansoAnterior;
   const isDouble = !!((jornada as any).isDoubleDriving === true);
@@ -430,7 +453,7 @@ export function evaluateJornada(
     const weekDriving = getJornadaDrivingForWeek(j, lunesStr, domingoStr);
     conduccionSemanalMin += weekDriving;
     const jCond = j.conduccionMin || 0;
-    if (jCond > 9 * 60) extensiones10h++;
+    if (jCond > 9 * 60 && !previousSegments.some(s => s.id === j.id)) extensiones10h++;
   }
 
   // El límite de tres descansos diarios reducidos no se reinicia el lunes:
