@@ -5437,7 +5437,7 @@ export async function detectMissingOutOfBaseDietDays(options?: {
       let rtype: NaturalDayDietType = "NACIONAL";
       if (tipo === "INTERNACIONAL" || tipo === "REGIONAL_INTL" || tipo === "NAC_INTL") rtype = "INTERNACIONAL";
       else if (tipo === "REGIONAL") rtype = "REGIONAL";
-      const pct: 100 | 60 | 30 = 100;
+      const pct: 100 | 60 | 30 = rtype === "INTERNACIONAL" ? 60 : 100;
       const amt = findRateSafe(rtype, pct);
       const loc = j.lugarFin || j.lugarInicio || null;
       let arrivalHHMM: string | null = null;
