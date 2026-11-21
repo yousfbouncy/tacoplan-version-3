@@ -1,6 +1,6 @@
 import {loadDriverActivities} from "./driver-activities";
 import {supabase} from "./supabase";
-import {nightWorkForShift,type NightConfig,type NightDetail,type NightShift} from "./night-work";
+import {nightWorkForShift,nightWindowMinutes,type NightConfig,type NightDetail,type NightShift} from "./night-work";
 import {estimateNightBonus,resolveNightConvention,type NightResolved} from "./night-estimator";
 
 export type NightPeriodReport={
@@ -32,7 +32,15 @@ export async function loadNightPeriodReport(
  const byShift:Record<string,NightDetail>={};
  for(const shift of relevant){
   const old=saved.get(shift.id);
-  if(old){
+  const zone=convention.rule?.timezone||config.night_timezone||"Europe/Madrid";
+  const nightFrom=convention.rule?.night_from||"22:00";
+  const nightTo=convention.rule?.night_to||"06:00";
+  // Earlier backfills wrote some invalid zero-hour rows even when a shift
+  // overlapped the night. Treat those cached zeros as corrupt, never as
+  // proof of no nocturnal work. Rebuild from real activity or shift span.
+  const expectedWindow=shift.endAt
+   ?nightWindowMinutes(shift.startAt,shift.endAt,zone,nightFrom,nightTo):0;
+  if(old && !(old.night_window_minutes===0 && expectedWindow>0)){
    const value=Math.max(0,Number(old.night_work_minutes)||0);
    byShift[shift.id]={
     minutes:old.is_estimated?0:value,
@@ -44,8 +52,8 @@ export async function loadNightPeriodReport(
   let detail:NightDetail;
   try {
    const log=await loadDriverActivities(userId,shift.id);
-   detail=nightWorkForShift(shift,log.segments,convention.rule?.timezone||config.night_timezone||"Europe/Madrid",convention.rule?.night_from||"22:00",convention.rule?.night_to||"06:00");
-  }catch{detail=nightWorkForShift(shift,[],convention.rule?.timezone||config.night_timezone||"Europe/Madrid",convention.rule?.night_from||"22:00",convention.rule?.night_to||"06:00");}
+   detail=nightWorkForShift(shift,log.segments,zone,nightFrom,nightTo);
+  }catch{detail=nightWorkForShift(shift,[],zone,nightFrom,nightTo);}
   byShift[shift.id]=detail;
   newRows.push({
    user_id:userId,shift_id:shift.id,shift_date:shift.fechaInicio,
