@@ -112,6 +112,10 @@ export async function resolveNightConvention(userId:string,profile?:NightProfile
    void supabase.from("night_convention_research_requests").upsert({
      user_id:userId,country_code:country||"OTHER",province,city:city||name,status:"pending"
    },{onConflict:"user_id,city",ignoreDuplicates:true});
+   // Authenticated server function performs source research only when an AI
+   // provider is configured. It never activates unverified legal parameters.
+   if(country==="ES")void supabase.functions.invoke("research-night-convention",{body:{}})
+    .catch(()=>{});
  }
  return {rule,preference:pref,province,status,payroll};
 }
