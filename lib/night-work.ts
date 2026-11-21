@@ -28,14 +28,14 @@ export function nightWindowMinutes(startAt:string,endAt:string,timeZone="Europe/
   if(!Number.isFinite(first)||!Number.isFinite(last)||last<=first)return 0;
   const minutes=Math.min(MAX_SEGMENT_MIN,Math.ceil((last-first)/60000));
   const fmt=new Intl.DateTimeFormat("en-GB",{timeZone,hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
-  const clock=(v:string,fallback:number)=>/^([01]\\d|2[0-3]):[0-5]\\d$/.test(v)?Number(v.slice(0,2))*60+Number(v.slice(3)):fallback;
+  const clock=(v:string,fallback:number)=>/^([01]\d|2[0-3]):[0-5]\d$/.test(v)?Number(v.slice(0,2))*60+Number(v.slice(3)):fallback;
   const from=clock(nightFrom,1320),until=clock(nightTo,360);
   let sum=0;
   for(let i=0;i<minutes;i++){
     const t=first+i*60000;
     if(t>=last)break;
     const label=fmt.format(new Date(t));
-    const m=label.match(/(\\d{1,2}):(\\d{2})/);
+    const m=label.match(/(\d{1,2}):(\d{2})/);
     const minuteOfDay=m?Number(m[1])*60+Number(m[2]):-1;
     const inWindow=from<until?minuteOfDay>=from&&minuteOfDay<until:minuteOfDay>=from||minuteOfDay<until;
     if(minuteOfDay>=0&&inWindow)sum+=Math.min(60000,last-t)/60000;
