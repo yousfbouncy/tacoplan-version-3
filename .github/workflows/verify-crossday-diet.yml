@@ -1,0 +1,34 @@
+name: Verify cross-day diet automation
+on:
+  push:
+    branches: [fix/crossday-diet-auto-reconcile]
+    paths:
+      - 'lib/crossday-diet.ts'
+      - 'lib/local-storage.ts'
+      - 'app/(tabs)/index.tsx'
+      - 'app/(tabs)/dietas.tsx'
+      - 'tests/crossday-diet.test.ts'
+      - '.github/workflows/verify-crossday-diet.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/crossday-diet.ts'
+      - 'lib/local-storage.ts'
+      - 'app/(tabs)/index.tsx'
+      - 'app/(tabs)/dietas.tsx'
+      - 'tests/crossday-diet.test.ts'
+      - '.github/workflows/verify-crossday-diet.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: node --import tsx --test tests/crossday-diet.test.ts
+      - run: npm test
