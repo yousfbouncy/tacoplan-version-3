@@ -261,7 +261,7 @@ function DietasFeatureContent() {
 
   const nightQuery = useQuery<NightPeriodReport | null>({
     queryKey:["night-dietas",user?.id,periodo.from,periodo.to,syncVersion,JSON.stringify(payrollConfig||{})],
-    enabled:!!user?.id && payrollConfig?.night_enabled===true,
+    enabled:!!user?.id && typeof payrollConfig==="object" && payrollConfig?.night_enabled===true,
     queryFn:async()=> {
       if(!user?.id)return null;
       const jornadas=await listarJornadas(periodo.from,periodo.to);
@@ -858,7 +858,7 @@ function DietasFeatureContent() {
         )}
 
 
-        {payrollConfig?.night_enabled === true && (
+        {typeof payrollConfig==="object" && payrollConfig?.night_enabled === true && (
           <View style={{backgroundColor:"#122E50",borderRadius:12,padding:12,marginBottom:10}}>
             <Text style={{color:"#E3F0FF",fontWeight:"700"}}>🌙 Plus nocturnidad · salario, no dieta</Text>
             <Text style={{color:"#E3F0FF",fontSize:12}}>
