@@ -307,6 +307,9 @@ export interface EstadoLegal {
   availabilityContext?: AvailabilityContext;
   /** Original start of consecutive working segments without completed daily rest. */
   legalPeriodStartAt?: string | null;
+  /** Driving recorded in earlier segments of the current legal period.
+   * null means the history is incomplete/overlapping and must not be trusted. */
+  legalPeriodPreviousDrivingMin?: number | null;
   /** Suspected overlapping records in the local rolling 56-day history. */
   overlappingPairs?: number;
   conduccionSemanalMin: number;
@@ -3748,7 +3751,28 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
 
   const abierta = all.find((j) => !j.fechaFin);
   const currentLegalPeriodStartAt = abierta ? legalPeriodStartAt(all, abierta.id) : null;
-  const overlappingPairs = overlappingShiftPairs(all).length;
+  const recentOverlaps = overlappingShiftPairs(all);
+  const overlappingPairs = recentOverlaps.length;
+  let legalPeriodPreviousDrivingMin: number | null = 0;
+  if (abierta && currentLegalPeriodStartAt && currentLegalPeriodStartAt !== abierta.startAt) {
+    const first = Date.parse(currentLegalPeriodStartAt);
+    const currentStart = Date.parse(abierta.startAt);
+    const previousSegments = all.filter(j => j.id !== abierta.id &&
+      Number.isFinite(Date.parse(j.startAt)) &&
+      Date.parse(j.startAt) >= first && Date.parse(j.startAt) < currentStart);
+    const incomplete = previousSegments.some(j =>
+      !j.endAt || !Number.isFinite(Date.parse(j.endAt)) ||
+      Date.parse(j.endAt) > currentStart ||
+      (j.conduccionMin == null && j.conduccionDomingoMin == null && j.conduccionLunesMin == null));
+    const conflicts = recentOverlaps.some(([a,b]) =>
+      previousSegments.some(j => j.id === a || j.id === b));
+    if (incomplete || conflicts) {
+      legalPeriodPreviousDrivingMin = null;
+    } else {
+      legalPeriodPreviousDrivingMin = previousSegments.reduce((total,j) =>
+        total + (j.conduccionMin ?? ((j.conduccionDomingoMin ?? 0) + (j.conduccionLunesMin ?? 0))), 0);
+    }
+  }
   const availabilityContext = getAvailabilityContext(all);
   const descansosReducidos = availabilityContext.reducidosUsados;
 
@@ -3890,6 +3914,7 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
 
   return {
     legalPeriodStartAt: currentLegalPeriodStartAt,
+    legalPeriodPreviousDrivingMin,
     overlappingPairs,
     conduccionSemanalMin,
     conduccionBisemanalMin,
