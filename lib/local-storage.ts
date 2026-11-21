@@ -4,6 +4,7 @@ import { createWriteQueue, acknowledgeConfirmed } from "./local-write-queue";
 const withJornadaWrite = createWriteQueue();
 import { getAvailabilityContext, type AvailabilityContext } from "./availability-context";
 import { legalPeriodStartAt, overlappingShiftPairs } from "./shift-periods";
+import { crossDayAutoDietDate, isProvisionalCrossDayDietForNewStart, CROSSDAY_AUTO_DIET_PREFIX } from "./crossday-diet";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { evaluateJornada, getJornadaDrivingForWeek, jornadaOverlapsWeek, isSplitDailyRestGapComplete, computeReducidosSinceLastWeeklyRest, type LegalSummary } from "./legalEngine";
 import { buildBaseLocationConfig, type BaseLocationConfig } from "@/lib/base-location";
@@ -5486,6 +5487,77 @@ export async function detectMissingOutOfBaseDietDays(options?: {
 
   candidates.sort((a, b) => a.date.localeCompare(b.date));
   return candidates;
+}
+
+/**
+ * Creates exactly one provisional 100% international diet on the calendar day
+ * a cross-midnight journey is closed with daily/weekly rest selected.
+ * A later same-day journey start revokes this provisional record. No other
+ * manually saved or historical diet is overwritten.
+ */
+export async function autoConfirmClosedCrossDayDiet(j: Jornada): Promise<NaturalDayDietEntry | null> {
+  const jornadas = await getAllJornadas();
+  const date = crossDayAutoDietDate(j, jornadas);
+  if (!date) return null;
+  const alreadySaved = (await getAllNaturalDayDiets()).some(e => e.date === date && !e.dismissedAt);
+  if (alreadySaved) return null;
+  const dismissed = await getAllDismissedNaturalDayDates();
+  if (dismissed.has(date)) return null;
+  const { customRates } = await loadDietDerivationContext();
+  let isFestivo = false;
+  try {
+    const rawHolidays = await getItemScoped("tacoplan_user_holidays_cache");
+    const dates = rawHolidays ? JSON.parse(rawHolidays) : [];
+    isFestivo = Array.isArray(dates) && dates.some((d: any) =>
+      (typeof d === "string" ? d : d?.date) === date);
+  } catch {}
+  const now = new Date().toISOString();
+  const entry: NaturalDayDietEntry = {
+    id: `${CROSSDAY_AUTO_DIET_PREFIX}${date}_${j.id}`,
+    date,
+    type: "INTERNACIONAL",
+    percentage: 100,
+    amount: findRate(customRates, "INTERNACIONAL", 100),
+    location: j.lugarFin || j.lugarInicio || null,
+    source: "NATURAL_DAY_OUT_OF_BASE",
+    previousJourneyId: j.id,
+    nextJourneyId: null,
+    confirmedByUser: true,
+    dismissedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    syncStatus: "pending",
+    plusItems: null,
+    isDomingo: new Date(date + "T12:00:00").getDay() === 0,
+    isFestivo,
+  };
+  await upsertNaturalDayDiets([entry]);
+  return entry;
+}
+
+/**
+ * Revoke only provisional automatically generated diets for this start date.
+ * Return IDs so the caller queues cloud deletions, including offline retries.
+ * Manual diets and historical journeys are never removed.
+ */
+export async function revokeCrossDayAutoDietsForNewStart(j: Jornada): Promise<string[]> {
+  const all = await getAllNaturalDayDiets();
+  const previousJornadas = new Map((await getAllJornadas()).map(previous => [previous.id, previous]));
+  const revoked = all.filter(e => {
+    if (isProvisionalCrossDayDietForNewStart(e, j)) return true;
+    // Compatibility with earlier automatic out-of-base records: only remove
+    // an old auto_oob_ entry if its source journey actually crossed midnight
+    // and finished on the same date as the new shift. Never remove manually
+    // created entries or auto gap-day diets unrelated to this closing shift.
+    if (!e.id.startsWith("auto_oob_") || e.date !== j.fechaInicio || !e.previousJourneyId) return false;
+    const previous = previousJornadas.get(e.previousJourneyId);
+    return Boolean(previous && previous.id !== j.id &&
+      previous.fechaInicio < e.date && previous.fechaFin === e.date &&
+      previous.endAt && Date.parse(previous.endAt) <= Date.parse(j.startAt) &&
+      ["INTERNACIONAL", "REGIONAL_INTL", "NAC_INTL"].includes(previous.tipoRuta || ""));
+  });
+  for (const entry of revoked) await deleteNaturalDayDiet(entry.id);
+  return revoked.map(e => e.id);
 }
 
 export async function autoConfirmOutOfBaseDietDays(

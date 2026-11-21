@@ -77,9 +77,12 @@ import {
   addFerryRest,
   detectMissingOutOfBaseDietDays,
   autoConfirmOutOfBaseDietDays,
+  autoConfirmClosedCrossDayDiet,
+  revokeCrossDayAutoDietsForNewStart,
   upsertNaturalDayDiets,
   dismissNaturalDayDiets,
   getAllNaturalDayDiets,
+  getJornadaById,
   clearDismissedNaturalDayDietsInRange,
   type DetectedMissingNaturalDay,
   type NaturalDayDietEntry,
@@ -313,7 +316,7 @@ export default function DashboardScreen() {
   const { user, logout } = useAuth();
   const { t, locale } = useI18n();
   const {
-    triggerSync, syncStatus, lastSyncTime, hasPending,
+    triggerSync, triggerDeleteNaturalDayDietSync, syncStatus, lastSyncTime, hasPending,
     showRecoveryPrompt, isRestoring, restoreProgress,
     restoreComplete, restoreResult, startRestore,
     dismissRecovery, dismissRestoreComplete, refreshSyncInfo,
@@ -1385,6 +1388,20 @@ export default function DashboardScreen() {
       });
     },
     onSuccess: async (newJornada: Jornada) => {
+      // A newly opened shift owns its start date. Revoke only the provisional
+      // cross-day diet, not a user-confirmed/manual diet or an old jornada.
+      try {
+        const revokedIds = await revokeCrossDayAutoDietsForNewStart(newJornada);
+        for (const id of revokedIds) await triggerDeleteNaturalDayDietSync(id, newJornada.fechaInicio);
+        if (revokedIds.length) {
+          await Promise.all([
+            qc.invalidateQueries({ queryKey: ["dietas-resumen"] }),
+            qc.invalidateQueries({ queryKey: ["natural-day-diets"] }),
+          ]);
+        }
+      } catch (error) {
+        console.warn("[CROSSDAY_DIET] No se pudo retirar la dieta provisional", error);
+      }
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setConfirmedStart(newJornada);
       setShowInicioForm(false);
@@ -2137,14 +2154,27 @@ export default function DashboardScreen() {
         if (closeFrom && closeTo) {
           await clearDismissedNaturalDayDietsInRange(closeFrom, closeTo);
           console.log(`[DISMISSED_CLEARED_CLOSE from=${closeFrom} to=${closeTo}]`);
+          // Rest is selected in the legal-plan modal AFTER closing. Do not
+          // prematurely show the cross-day arrival as a manual 0 € diet;
+          // selecting daily/weekly rest will save it automatically.
           const closeDetectados = await detectMissingOutOfBaseDietDays({
             fromDate: closeFrom,
             toDate: closeTo,
           });
-          console.log(`[TRIGGER_CLOSE pendingCount=${closeDetectados?.length || 0} from=${closeFrom} to=${closeTo}]`);
-          if (closeDetectados && closeDetectados.length > 0) {
-            setPendingDiets(closeDetectados);
+          const savedDates = new Set((await getAllNaturalDayDiets())
+            .filter(d => d.confirmedByUser && !d.dismissedAt).map(d => d.date));
+          const crossDayEndDate = closed.fechaFin && closed.fechaInicio !== closed.fechaFin &&
+            ["INTERNACIONAL", "REGIONAL_INTL", "NAC_INTL"].includes(closed.tipoRuta || "")
+            ? closed.fechaFin : null;
+          const stillPending = closeDetectados.filter(d =>
+            !savedDates.has(d.date) && !(crossDayEndDate && d.date === crossDayEndDate));
+          console.log(`[TRIGGER_CLOSE pendingCount=${stillPending.length} from=${closeFrom} to=${closeTo}]`);
+          if (stillPending.length > 0) {
+            setPendingDiets(stillPending);
             setPendingDietsVisible(true);
+          } else {
+            setPendingDiets([]);
+            setPendingDietsVisible(false);
           }
         }
       } catch (e) {
@@ -3348,7 +3378,17 @@ export default function DashboardScreen() {
                               onPress={async () => {
                                 try {
                                   await updateJornadaPlannedRest(lastClosed.id, hours * 60, hours >= 24 ? "weekly" : "daily");
+                                  const updated = await getJornadaById(lastClosed.id);
+                                  if (updated) {
+                                    const created = await autoConfirmClosedCrossDayDiet(updated);
+                                    if (created) {
+                                      setPendingDiets(prev => prev.filter(d => d.date !== created.date));
+                                      setPendingDietsVisible(false);
+                                      void qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
+                                    }
+                                  }
                                   await qc.invalidateQueries({ queryKey: dashboardQueryKey("last-closed", user?.id) });
+                                  triggerSync();
                                 } catch (error) { Alert.alert("Descanso", "No se pudo guardar la duración seleccionada."); }
                               }}>
                               <Text style={{ color: Colors.light.tint, fontFamily: "Inter_600SemiBold" }}>{hours} h</Text>
@@ -4862,6 +4902,17 @@ export default function DashboardScreen() {
                       splitRestSecondPartMin: chosenRest,
                       countsAsReducedRest: false,
                     } : undefined);
+                    // The rest choice is now persisted. Create the automatic
+                    // calendar-day diet only at this point, not at close.
+                    const updated = await getJornadaById(closedJornadaId);
+                    if (updated) {
+                      const created = await autoConfirmClosedCrossDayDiet(updated);
+                      if (created) {
+                        setPendingDiets(prev => prev.filter(d => d.date !== created.date));
+                        setPendingDietsVisible(false);
+                        void qc.invalidateQueries({ queryKey: ["dietas-resumen"] });
+                      }
+                    }
                     invalidateAll();
                     triggerSync();
                   }
