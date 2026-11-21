@@ -1253,8 +1253,18 @@ export default function UsuarioScreen() {
           .update({ payroll_config: payrollConfig, payroll_config_updated_at: nowIso, updated_at: nowIso } as any)
           .eq("id", userId);
       } catch {}
+      const {error:nightSettingsError}=await supabase.from("user_night_work_settings").upsert({
+        user_id:userId,
+        enabled:payrollConfig.night_enabled,
+        calculation_mode:"leon_monthly",
+        rate_percent:Number(String(payrollConfig.night_rate_pct||7).replace(",",".")),
+        base_salary_monthly:Number(String(payrollConfig.night_salary_base_monthly).replace(",","."))||null,
+        work_timezone:payrollConfig.night_timezone||"Europe/Madrid",
+        updated_at:nowIso,
+      },{onConflict:"user_id"});
+      if(nightSettingsError)throw nightSettingsError;
       safeHaptic();
-      Alert.alert("Guardado", "Configuración de nómina actualizada.");
+      Alert.alert("Guardado", "Configuración de nómina y nocturnidad actualizada.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || String(e));
     }
