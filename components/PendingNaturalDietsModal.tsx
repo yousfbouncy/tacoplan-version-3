@@ -168,7 +168,8 @@ function PendingNaturalDietsModal({
         if (!d.removed) s.add(d.date);
         if (d.removed) r.add(d.date);
         if (d.isBaseArrivalDay) {
-          p.set(d.date, null);
+          // Return from an international overnight trip: editable 60% proposal.
+          p.set(d.date, d.type === "INTERNACIONAL" ? 60 : null);
         } else if (d.userPercentage) {
           p.set(d.date, d.userPercentage as DietPercentage | SinDiet);
         } else {
