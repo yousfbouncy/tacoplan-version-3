@@ -47,3 +47,18 @@ export function crossDayAutoDietPercentage(endLocation:string|null|undefined,bas
   const tokens=end.split(/[^a-z0-9]+/).filter(Boolean);
   return tokens.includes(city)||end===city||end.startsWith(city+",")?60:100;
 }
+
+/** A confirmed natural-day diet can originate from a cross-midnight journey,
+ * even when its ID is a normal saved ID rather than our provisional prefix.
+ * Prefer its stable previousJourneyId over the ID format. */
+export function isCrossDayContinuationDiet(
+  diet:{id:string;date:string;previousJourneyId?:string|null},
+  previous?:CrossDayJourney|null,
+):boolean {
+  if(diet.id.startsWith(CROSSDAY_AUTO_DIET_PREFIX))return true;
+  if(!diet.previousJourneyId||!previous||diet.previousJourneyId!==previous.id)return false;
+  return !!previous.startAt&&!!previous.endAt&&
+    previous.fechaInicio<diet.date&&previous.fechaFin===diet.date&&
+    previous.startAt.slice(0,10)===previous.fechaInicio&&
+    previous.endAt.slice(0,10)===diet.date;
+}
