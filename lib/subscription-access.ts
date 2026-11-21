@@ -6,7 +6,7 @@ export type PlanTier='free'|'plus'|'pro';
 export type FeatureKey='auto'|'diets'|'manual'|'notify'|'reports'|'trip'|'widget';
 export type PlanFeatures=Record<FeatureKey,boolean>;
 const FEATURE_KEYS:FeatureKey[]=['auto','diets','manual','notify','reports','trip','widget'];
-const FREE_FEATURES:PlanFeatures={auto:false,diets:true,manual:false,notify:true,reports:false,trip:true,widget:true};
+const FREE_FEATURES:PlanFeatures={auto:false,diets:false,manual:false,notify:true,reports:false,trip:true,widget:true};
 export type LimitedFeatureStatus={allowed:boolean;expires_at:string|null;days_left:number|null;limited:boolean;expired:boolean};
 export type PlanAccess={
  restrictions_enabled:boolean;
