@@ -78,5 +78,5 @@ const styles = StyleSheet.create({
 });
 
 export default function AutoStartScreen(){
- return <SubscriptionGate tier="plus"><AutoStartFeatureContent/></SubscriptionGate>;
+ return <SubscriptionGate tier="plus" feature="auto"><AutoStartFeatureContent/></SubscriptionGate>;
 }

@@ -28,6 +28,12 @@ export default function PlanesScreen(){
     <Text style={styles.current}>{!access.restrictions_enabled?'Tacoplan gratuito · todas las funciones disponibles':'Plan '+(tier==='free'?'Gratis':tier==='plus'?'Plus':'Pro')}</Text>
     {access.restrictions_enabled&&access.complimentary_plan?<Text style={styles.note}>Acceso gratuito concedido por Administración: {access.complimentary_plan.toUpperCase()}</Text>:null}
     {access.subscription?.status?<Text style={styles.note}>Suscripción en Stripe: {access.subscription.status}{access.subscription.trial_ends_at?' · Prueba hasta '+date(access.subscription.trial_ends_at):''}</Text>:null}
+    {access.trial_used?<Text style={styles.note}>La prueba gratuita ya se ha utilizado; no se reinicia aunque se desactiven los planes.</Text>:
+      access.trial_available?<Text style={styles.note}>Tienes una prueba gratuita disponible para Plus o Pro.</Text>:null}
+    {tier==='free'&&Object.entries(access.feature_status||{}).filter(([,v])=>v?.limited).map(([key,v])=><Text key={key} style={styles.note}>
+      {({diets:'Dietas y pluses',auto:'AutoStart',manual:'Actividades',reports:'Informes',notify:'Avisos',widget:'Widgets',trip:'Jornadas'} as Record<string,string>)[key]||key}: {v?.expired?'plazo gratuito finalizado':(v?.days_left??0)+' días gratuitos restantes'}
+    </Text>)}
+
     <Pressable accessibilityRole="button" onPress={()=>void refresh()}><Text style={styles.refresh}>Actualizar mi suscripción</Text></Pressable>
    </View>
    {!access.restrictions_enabled?<Text style={styles.intro}>La administración todavía no ha activado las restricciones. Ninguna función de Tacoplan se bloquea por el plan.</Text>
@@ -40,7 +46,7 @@ export default function PlanesScreen(){
      <Text style={styles.price}>{p?euro(p.monthly_cents)+'/mes':'0 €'}</Text>
      {p?.annual_cents!=null?<Text style={styles.subprice}>Anual: {euro(p.annual_cents)}</Text>:null}
      <Text style={styles.description}>{option.description}</Text>
-     {p&&p.trial_days>0?<Text style={styles.trial}>{p.trial_days} días de prueba gratuita para nuevas suscripciones elegibles</Text>:null}
+     {p&&p.trial_days>0?<Text style={styles.trial}>{access.trial_available?p.trial_days+" días de prueba gratuita disponibles":"Prueba gratuita ya utilizada o no disponible"}</Text>:null}
     </View>;
    })}
    <View style={styles.footer}>

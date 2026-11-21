@@ -6,7 +6,8 @@ export type PlanTier='free'|'plus'|'pro';
 export type FeatureKey='auto'|'diets'|'manual'|'notify'|'reports'|'trip'|'widget';
 export type PlanFeatures=Record<FeatureKey,boolean>;
 const FEATURE_KEYS:FeatureKey[]=['auto','diets','manual','notify','reports','trip','widget'];
-const FREE_FEATURES:PlanFeatures={auto:false,diets:true,manual:false,notify:true,reports:false,trip:true,widget:true};
+const FREE_FEATURES:PlanFeatures={auto:false,diets:false,manual:false,notify:true,reports:false,trip:true,widget:true};
+export type LimitedFeatureStatus={allowed:boolean;expires_at:string|null;days_left:number|null;limited:boolean;expired:boolean};
 export type PlanAccess={
  restrictions_enabled:boolean;
  features:PlanFeatures;
@@ -20,6 +21,9 @@ export type PlanAccess={
  complimentary_plan:PlanTier|null;
  billing_enabled:boolean;
  subscription:{status:string;trial_ends_at?:string|null;current_period_end?:string|null}|null;
+ trial_used:boolean;
+ trial_available:boolean;
+ feature_status:Partial<Record<FeatureKey,LimitedFeatureStatus>>;
  plans:Array<{slug:string;monthly_cents:number;annual_cents:number|null;trial_days:number}>;
  audience:string;
 };
@@ -27,7 +31,7 @@ const FREE_MODE:PlanAccess={
  restrictions_enabled:true,all_features_unlocked:false,effective_plan:'free',
  features:FREE_FEATURES,history_days:14,free_plan_expired:false,free_plan_expires_at:null,
  plus_access:false,pro_access:false,complimentary_plan:null,billing_enabled:false,
- subscription:null,plans:[],audience:'standard'
+ subscription:null,plans:[],audience:'standard',trial_used:false,trial_available:false,feature_status:{}
 };
 const API='https://www.tacoplan.es/api/driver/subscription';
 
@@ -62,6 +66,9 @@ export async function readSubscriptionAccess():Promise<PlanAccess>{
   subscription:p.subscription||null,
   plans:Array.isArray(p.plans)?p.plans:[],
   audience:p.audience||'standard',
+  trial_used:p.trial_used===true,
+  trial_available:p.trial_available===true,
+  feature_status:p.feature_status&&typeof p.feature_status==='object'?p.feature_status:{},
  };
 }
 
