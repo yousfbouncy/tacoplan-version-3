@@ -1058,7 +1058,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    compact inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
@@ -1176,7 +1176,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    compact inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
@@ -1246,7 +1246,7 @@ function DietasFeatureContent() {
                     </View>
                   ))}
                   <NightBonusCard report={nightQuery.data} userId={user?.id}
-                    compact
+                    compact inline
                     onUpdated={()=>{
                       void qc.invalidateQueries({queryKey:["night-dietas"]});
                     }}/>
