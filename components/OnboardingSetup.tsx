@@ -146,6 +146,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [manualFrom, setManualFrom] = useState("1");
   const [manualTo, setManualTo] = useState("30");
   const [userPaymentMode, setUserPaymentMode] = useState<"dietas" | "viaje" | "km">("dietas");
+  const [nightEnabled, setNightEnabled] = useState(false);
+  const [nightSalaryBase, setNightSalaryBase] = useState("");
   const [pricePerKmNac, setPricePerKmNac] = useState("0");
   const [pricePerKmIntl, setPricePerKmIntl] = useState("0");
   const [pricePerKmReg, setPricePerKmReg] = useState("0");
@@ -477,6 +479,13 @@ export default function OnboardingSetup({ onComplete }: Props) {
         ferryRestEnabled: profile === "ferry",
       };
       await saveUserConfig(userId, { settings: userSettings, period: periodConfig, ferry: ferryConfig });
+      // Initial nocturnity setup belongs to payroll (salary), not diet rates.
+      const {data:existingPayroll} = await supabase.from("profiles").select("payroll_config").eq("id",userId).maybeSingle();
+      const payroll = {...((existingPayroll as any)?.payroll_config || {}),night_enabled:nightEnabled,night_rate_pct:"7",night_salary_base_monthly:nightSalaryBase.trim(),night_timezone:"Europe/Madrid"};
+      const payrollKey=await userScopedKey("tacoplan_payroll_config",userId);
+      await AsyncStorage.setItem(payrollKey,JSON.stringify(payroll));
+      const {error:payrollError}=await supabase.from("profiles").update({payroll_config:payroll,payroll_config_updated_at:new Date().toISOString()} as any).eq("id",userId);
+      if(payrollError)throw new Error("No se pudo guardar la nocturnidad en Supabase: "+payrollError.message);
       const { error: nameError } = await supabase.from("profiles").upsert({ id:userId, display_name:driverName.trim(), name:driverName.trim(), updated_at:new Date().toISOString() } as any,{onConflict:"id"});
       if (nameError) throw new Error(t("wizard.nameSaveError"));
 
@@ -849,6 +858,17 @@ export default function OnboardingSetup({ onComplete }: Props) {
               ))}
             </View>
 
+            <View style={s.subsectionDivider} />
+            <SectionHeader title="Plus nocturnidad (opcional)" icon="moon-outline" />
+            <Pressable style={s.chip} onPress={()=>setNightEnabled(v=>!v)}>
+              <Text style={s.chipText}>{nightEnabled?"✓ ":"○ "}Convenio León: 7 % mensual por trabajo de 22:00 a 06:00</Text>
+            </Pressable>
+            {nightEnabled && <View style={s.manualRow}>
+              <View style={s.manualField}>
+                <Text style={s.inputLabel}>Salario base mensual (€), opcional</Text>
+                <TextInput style={s.input} value={nightSalaryBase} onChangeText={setNightSalaryBase} keyboardType="decimal-pad" placeholder="Se puede configurar más adelante" placeholderTextColor={Colors.light.textSecondary}/>
+              </View>
+            </View>}
             {userPaymentMode === "km" && (
               <>
                 <View style={[s.gridContainer, { marginTop: 10 }]}>
