@@ -4,6 +4,7 @@ import {
   crossDayAutoDietDate,
   crossDayAutoDietPercentage,
   isProvisionalCrossDayDietForNewStart,
+  isCrossDayContinuationDiet,
   CROSSDAY_AUTO_DIET_PREFIX,
 } from "../lib/crossday-diet";
 
@@ -51,4 +52,20 @@ test("return to configured base gets international 60%, outside base remains 100
   assert.equal(crossDayAutoDietPercentage("Abrera, Spain","Abrera"),60);
   assert.equal(crossDayAutoDietPercentage("Lyon, Francia","Abrera"),100);
   assert.equal(crossDayAutoDietPercentage("Abrera, España",null),100);
+});
+
+test("confirmed cross-midnight arrival keeps continuity title even without provisional ID prefix",()=>{
+ const previous={
+  id:"mwp65qi93j52kiufu",fechaInicio:"2026-11-20",fechaFin:"2026-11-21",
+  startAt:"2026-11-20T17:04:00.000",endAt:"2026-11-21T05:14:00.000",
+  tipoRuta:"INTERNACIONAL",
+ };
+ const confirmed={
+  id:"mwpz9qf535pmfgk_2026-11-21",date:"2026-11-21",
+  previousJourneyId:"mwp65qi93j52kiufu",
+ };
+ assert.equal(isCrossDayContinuationDiet(confirmed,previous),true);
+ assert.equal(isCrossDayContinuationDiet({...confirmed,previousJourneyId:null},previous),false);
+ assert.equal(isCrossDayContinuationDiet({...confirmed,date:"2026-11-22"},previous),false);
+ assert.equal(isCrossDayContinuationDiet({...confirmed,previousJourneyId:"unrelated"},previous),false);
 });
