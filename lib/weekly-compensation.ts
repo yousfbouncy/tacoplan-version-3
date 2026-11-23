@@ -72,6 +72,62 @@ export function isWithinAlertWindow56Days(
   return midnight >= today - 56 * 86400000 && midnight <= today;
 }
 
+
+/**
+ * Art. 8(6) y 8(6b), Reglamento 561/2006.
+ * El lugar relevante es el INICIO de cada descanso, no solamente estar
+ * fuera de la base o tener una dieta internacional.
+ * No inferimos residencia ni pais a partir de una dirección libre.
+ */
+export type InternationalWeeklyRestInput = {
+  startAt: string;
+  durationMin: number;
+  startCountry: string | null | undefined; // ISO 3166-1 alpha-2 confirmado
+};
+export type InternationalWeeklyPairAssessment = {
+  status: "eligible" | "ineligible" | "unverified";
+  compensationMin: number;
+  requiredNextRestMin: number;
+  reasons: string[];
+};
+
+export function assessInternationalReducedWeeklyPair(
+  first: InternationalWeeklyRestInput,
+  second: InternationalWeeklyRestInput,
+  employerCountry: string | null | undefined,
+  residenceCountry: string | null | undefined,
+): InternationalWeeklyPairAssessment {
+  const compensationMin = weeklyReductionDebtMin(first.durationMin) +
+    weeklyReductionDebtMin(second.durationMin);
+  const result = (
+    status: InternationalWeeklyPairAssessment["status"],
+    reasons: string[],
+  ): InternationalWeeklyPairAssessment => ({
+    status, reasons, compensationMin,
+    requiredNextRestMin: compensationMin + 45 * 60,
+  });
+  if (!weeklyReductionDebtMin(first.durationMin) ||
+      !weeklyReductionDebtMin(second.durationMin)) {
+    return result("ineligible", ["No son dos descansos semanales reducidos válidos (24 a menos de 45 horas)."]);
+  }
+  const week1 = mondayOfIsoWeek(first.startAt);
+  const week2 = mondayOfIsoWeek(second.startAt);
+  if (!Number.isFinite(week1) || !Number.isFinite(week2) ||
+      week2 - week1 !== 7 * 86400000) {
+    return result("unverified", ["Comprobar la atribución de cada descanso a semanas consecutivas; los descansos que cruzan el lunes pueden asignarse a una de dos semanas."]);
+  }
+  const countries = [first.startCountry, second.startCountry, employerCountry, residenceCountry];
+  const valid = countries.map(c => typeof c === "string" && /^[A-Za-z]{2}$/.test(c.trim()) ? c.trim().toUpperCase() : null);
+  if (valid.some(c => !c)) {
+    return result("unverified", ["Falta confirmar el país de inicio de ambos descansos, el país de establecimiento de la empresa o el país de residencia."]);
+  }
+  const [country1, country2, employer, residence] = valid;
+  if ([country1, country2].some(c => c === employer || c === residence)) {
+    return result("ineligible", ["Uno de los descansos empezó en el país de establecimiento de la empresa o en el país de residencia."]);
+  }
+  return result("eligible", ["Dos descansos reducidos iniciados fuera de ambos países: ambas compensaciones deben preceder al siguiente descanso semanal normal."]);
+}
+
 /** Alerta preventiva de planificación semanal; no declara una infracción automática. */
 export function checkWeeklyRestSequence(
   rests: ReadonlyArray<{startAt: string; endAt: string; durationMin: number}>,
