@@ -18,13 +18,13 @@ test("stationary 20 s subtracts the full gap without ending DRIVING",()=>{
   assert.equal(r.transition,"DRIVING");
   r=updateDrivingDetection(r.state,fix(62,0.4));
   assert.equal(r.transition,null);
-  r=updateDrivingDetection(r.state,fix(82,1.1));
+  r=updateDrivingDetection(r.state,fix(82,7.1));
   assert.equal(r.transition,"RESUME");
   assert.equal(r.stopStart,fix(62,0.4).timestamp);
   assert.equal(r.state.stoppedSince,null);
 });
 
-test("60 s below 1 km/h confirms STOP, backdated to first fix",()=>{
+test("60 s below 6 km/h confirms STOP, backdated to first fix",()=>{
   let r=updateDrivingDetection(init,fix(0,20));
   r=updateDrivingDetection(r.state,fix(60,20));
   r=updateDrivingDetection(r.state,fix(61,0.5));
@@ -42,11 +42,11 @@ test("a first moving fix after 60 seconds confirms a stop without fabricating RE
   assert.equal(r.stopStart,epoch);
 });
 
-test("speed exactly 1 km/h ends a pending short stop",()=>{
+test("speed exactly 6 km/h ends a pending short stop",()=>{
   let r=updateDrivingDetection(init,fix(0,0));
-  r=updateDrivingDetection(r.state,fix(20,1));
+  r=updateDrivingDetection(r.state,fix(20,6));
   assert.equal(r.transition,"RESUME");
-  assert.equal(STOP_SPEED_MPS,1/3.6);
+  assert.equal(STOP_SPEED_MPS,6/3.6);
   assert.equal(STOP_CONFIRM_MS,60_000);
   assert.equal(START_SPEED_MPS,6/3.6);
 });
@@ -55,7 +55,7 @@ test("stopping briefly never requires new 15 km/h detection",()=>{
   let r=updateDrivingDetection(init,fix(0,30));
   r=updateDrivingDetection(r.state,fix(60,30));
   r=updateDrivingDetection(r.state,fix(61,0));
-  r=updateDrivingDetection(r.state,fix(71,2));
+  r=updateDrivingDetection(r.state,fix(71,7));
   assert.equal(r.transition,"RESUME");
 });
 
@@ -92,37 +92,39 @@ test("out-of-order and duplicate fixes are ignored",()=>{
   assert.equal(updateDrivingDetection(r.state,fix(9,0)).transition,null);
 });
 
-test("slow departure at 2 km/h then 6 km/h uses first movement only after 60s threshold",()=>{
+test("departure below 6 km/h is treated as stopped until sustained movement",()=>{
  let r=updateDrivingDetection(init,fix(0,0));
  r=updateDrivingDetection(r.state,fix(10,2));
- assert.equal(r.transition,"RESUME");
+ assert.equal(r.transition,null);
  r=updateDrivingDetection(r.state,fix(25,4));
  assert.equal(r.transition,null);
  r=updateDrivingDetection(r.state,fix(40,6.1));
- assert.equal(r.transition,null);
+ assert.equal(r.transition,"RESUME");
  r=updateDrivingDetection(r.state,fix(70,6.1));
  assert.equal(r.transition,null);
  r=updateDrivingDetection(r.state,fix(100,6.1));
  assert.equal(r.transition,"DRIVING");
- assert.equal(r.movementStart,fix(10,2).timestamp);
+ assert.equal(r.movementStart,fix(40,6.1).timestamp);
 });
-test("never confirm below 6 km/h, even after a full minute of maneuvers",()=>{
+test("below 6 km/h does not confirm driving and triggers automatic stop after one minute",()=>{
  let r=updateDrivingDetection(init,fix(0,2));
  r=updateDrivingDetection(r.state,fix(30,4));
  r=updateDrivingDetection(r.state,fix(60,4.5));
- assert.equal(r.transition,null);
+ assert.equal(r.transition,"STOP");
  r=updateDrivingDetection(r.state,fix(61,6));
- assert.equal(r.transition,null);
+ assert.equal(r.transition,"STOP");
  r=updateDrivingDetection(r.state,fix(121,6));
+ assert.equal(r.transition,null);
+ r=updateDrivingDetection(r.state,fix(181,6));
  assert.equal(r.transition,"DRIVING");
- assert.equal(r.movementStart,fix(0,2).timestamp);
+ assert.equal(r.movementStart,fix(61,6).timestamp);
 });
-test("short stop and resume at 1 km/h remain unchanged",()=>{
+test("short stop and resume above 6 km/h remain unchanged",()=>{
  let r=updateDrivingDetection(init,fix(0,10));
  r=updateDrivingDetection(r.state,fix(60,10));
  assert.equal(r.transition,"DRIVING");
  r=updateDrivingDetection(r.state,fix(61,0));
- r=updateDrivingDetection(r.state,fix(81,1.1));
+ r=updateDrivingDetection(r.state,fix(81,7.1));
  assert.equal(r.transition,"RESUME");
  assert.equal(r.stopStart,fix(61,0).timestamp);
 });
