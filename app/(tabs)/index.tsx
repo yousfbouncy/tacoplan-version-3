@@ -1190,6 +1190,29 @@ export default function DashboardScreen() {
     return { debtMin, dueThisWeek, fechaLimite: String(comp.fechaLimite) };
   }, [estado]);
 
+  // Misma lista para pintar, previsualizar y guardar: una opción dinámica
+  // no debe desaparecer al confirmar el descanso seleccionado.
+  const closeWeeklyRestOptions = useMemo(() => {
+    const base = closePlanData?.restOptions.filter(o => o.type === "weekly") ?? [];
+    if (!closePlanData || !closePlanEndAt || compensationInfo.debtMin <= 0) return base;
+    const endAt = new Date(closePlanEndAt);
+    if (!Number.isFinite(endAt.getTime())) return base;
+    const totalMin = 45 * 60 + compensationInfo.debtMin;
+    return [
+      ...base,
+      {
+        minutes: totalMin,
+        label: `Compensación · ${formatMinutosHoras(totalMin)}`,
+        enabled: true,
+        nextStartTime: formatDateTimeES(new Date(endAt.getTime() + totalMin * 60000), locale),
+        tomorrowMaxDutyMin: 13 * 60,
+        tomorrowMaxDriveMin: 9 * 60,
+        type: "weekly" as const,
+        generatesDebt: false,
+      },
+    ];
+  }, [closePlanData, closePlanEndAt, compensationInfo.debtMin, locale]);
+
   const crossWeekTimeLabel = useMemo(() => {
     if (!abierta) return "01:00";
     const isSummer = isSpainSummerTime(abierta.fechaInicio);
@@ -4727,28 +4750,7 @@ export default function DashboardScreen() {
 
                 <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary, marginBottom: 4 }}>{t("dashboard.weeklyRest")}</Text>
                 <View style={{ flexDirection: "row" as const, gap: 8, marginBottom: 8 }}>
-                  {(() => {
-                    const base = closePlanData.restOptions.filter((o) => o.type === "weekly");
-                    const canAdd = compensationInfo.dueThisWeek && Number.isFinite(compensationInfo.debtMin) && compensationInfo.debtMin > 0 && !!closePlanEndAt;
-                    if (!canAdd) return base;
-                    const endAt = new Date(closePlanEndAt as string);
-                    const rawTotal = 45 * 60 + (Number.isFinite(compensationInfo.debtMin) ? Math.max(0, compensationInfo.debtMin) : 0);
-                    const totalMin = Math.max(0, Math.min(rawTotal, 24 * 60 * 30));
-                    const next = new Date(endAt.getTime() + totalMin * 60000);
-                    return [
-                      ...base,
-                      {
-                        minutes: totalMin,
-                        label: "Semanal + compensación",
-                        enabled: true,
-                        nextStartTime: formatDateTimeES(next, locale),
-                        tomorrowMaxDutyMin: 13 * 60,
-                        tomorrowMaxDriveMin: 9 * 60,
-                        type: "weekly",
-                        generatesDebt: false,
-                      },
-                    ] as any[];
-                  })().map((opt) => (
+                  {closeWeeklyRestOptions.map((opt) => (
                     <Pressable
                       key={opt.minutes}
                       style={[
@@ -4766,7 +4768,7 @@ export default function DashboardScreen() {
                       onPress={() => {
                         if (!opt.enabled) return;
                         const isBaseWeekly = opt.type === "weekly" && (opt.minutes === 24 * 60 || opt.minutes === 45 * 60);
-                        if (isBaseWeekly && compensationInfo.dueThisWeek && compensationInfo.debtMin > 0) {
+                        if (isBaseWeekly && compensationInfo.debtMin > 0) {
                           Alert.alert(
                             "Compensación pendiente",
                             "Tienes compensación pendiente esta semana. Si haces solo este descanso, puede quedar deuda pendiente.",
@@ -4785,11 +4787,6 @@ export default function DashboardScreen() {
                       <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.text }}>
                         {opt.label}
                       </Text>
-                      {opt.label === "Semanal + compensación" && compensationInfo.debtMin > 0 && (
-                        <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary, marginTop: 2 }}>
-                          45h + {formatMinutosHoras(compensationInfo.debtMin)} = {formatMinutosHoras(45 * 60 + compensationInfo.debtMin)}
-                        </Text>
-                      )}
                       {opt.generatesDebt && (
                         <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: "#F59E0B", marginTop: 2 }}>
                           {t("dashboard.generatesDebtLabel")}
@@ -4832,8 +4829,8 @@ export default function DashboardScreen() {
                     </Text>
                   </View>
                 )}
-                {chosenRest && !chosenVacation && closePlanData.restOptions.find(o => o.minutes === chosenRest) && (() => {
-                  const opt = closePlanData.restOptions.find(o => o.minutes === chosenRest)!;
+                {chosenRest && !chosenVacation && [...closePlanData.restOptions, ...closeWeeklyRestOptions].find(o => o.minutes === chosenRest) && (() => {
+                  const opt = [...closePlanData.restOptions, ...closeWeeklyRestOptions].find(o => o.minutes === chosenRest)!;
                   return (
                     <View style={{ backgroundColor: Colors.light.background, borderRadius: 10, padding: 12, gap: 6 }}>
                       <View style={{ gap: 2 }}>
@@ -4909,7 +4906,7 @@ export default function DashboardScreen() {
                   return;
                 }
                 if (chosenRest && closedJornadaId) {
-                  const opt = closePlanData?.restOptions.find(o => o.minutes === chosenRest);
+                  const opt = [...(closePlanData?.restOptions ?? []), ...closeWeeklyRestOptions].find(o => o.minutes === chosenRest);
                   if (opt) {
                     const isSplit = opt.type === "daily" && (closePlanData?.canUseSplitRest || splitRestManual) && chosenRest >= 9 * 60;
                     const firstPartMin = Math.max(closePlanData?.splitRestFirstPartMin || 0, splitRestManual ? 3 * 60 : 0);
