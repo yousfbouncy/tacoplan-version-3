@@ -4223,6 +4223,23 @@ export default function DashboardScreen() {
               <Ionicons name={legalExpanded ? "chevron-up" : "chevron-down"} size={18} color={Colors.light.textSecondary} />
             </Pressable>
 
+            {estado.proximoDescansoSemanal && (
+              <Text style={{ fontSize: 11, lineHeight: 16, color: Colors.light.textSecondary, marginHorizontal: 12, marginBottom: 7 }}>
+                {(() => {
+                  const info = estado.proximoDescansoSemanal!;
+                  const fecha = new Date(info.limiteAt);
+                  const fechaTexto = fecha.toLocaleString(undefined, {
+                    weekday: "short", day: "2-digit", month: "2-digit",
+                    hour: "2-digit", minute: "2-digit",
+                  });
+                  const debtText = info.compensacionPendienteMin > 0
+                    ? ` · Compensar ${formatMinutosHoras(info.compensacionPendienteMin)} (vence ${info.compensacionVence || "por determinar"})`
+                    : "";
+                  return `Próximo descanso semanal: iniciar antes del ${fechaTexto} · ${info.minimoHoras} h orientativas${debtText}`;
+                })()}
+              </Text>
+            )}
+
             <View style={styles.kpiRow}>
               <View style={styles.kpiBox}>
                 <Text style={styles.kpiLabel}>{t("dashboard.weekly")}</Text>
