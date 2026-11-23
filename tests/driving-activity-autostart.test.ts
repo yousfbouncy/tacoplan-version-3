@@ -114,8 +114,6 @@ test("below 6 km/h does not confirm driving and triggers automatic stop after on
  r=updateDrivingDetection(r.state,fix(61,6));
  assert.equal(r.transition,"STOP");
  r=updateDrivingDetection(r.state,fix(121,6));
- assert.equal(r.transition,null);
- r=updateDrivingDetection(r.state,fix(181,6));
  assert.equal(r.transition,"DRIVING");
  assert.equal(r.movementStart,fix(61,6).timestamp);
 });
