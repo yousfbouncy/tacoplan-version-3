@@ -137,10 +137,24 @@ export default function ViajesScreen() {
   });
 
   const eliminarMutation = useMutation({
-    mutationFn: (id: string) => eliminarViaje(id),
+    mutationFn: async (id: string) => {
+      // Delete in Supabase before deleting the local copy. Otherwise the next
+      // pull restores the removed trip and makes the trash button seem broken.
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!session?.user?.id) throw new Error("Inicia sesión para eliminar el viaje de todos tus dispositivos.");
+      const { error } = await supabase.from("viajes")
+        .delete().eq("id", id).eq("user_id", session.user.id);
+      if (error) throw new Error("No se ha podido borrar el viaje en la nube. Inténtalo de nuevo cuando tengas conexión: " + error.message);
+      await eliminarViaje(id);
+    },
     onSuccess: () => {
       if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       invalidateAll();
+    },
+    onError: (error: Error) => {
+      if (Platform.OS === "web") window.alert(error.message);
+      else Alert.alert("No se ha eliminado el viaje", error.message);
     },
   });
 
