@@ -1202,7 +1202,7 @@ export default function DashboardScreen() {
       ...base,
       {
         minutes: totalMin,
-        label: `Compensación · ${formatMinutosHoras(totalMin)}`,
+        label: formatMinutosHoras(totalMin),
         enabled: true,
         nextStartTime: formatDateTimeES(new Date(endAt.getTime() + totalMin * 60000), locale),
         tomorrowMaxDutyMin: 13 * 60,
@@ -4722,7 +4722,8 @@ export default function DashboardScreen() {
                       key={opt.minutes}
                       style={[
                         {
-                          flex: 1,
+                          flexGrow: 1,
+                          minWidth: "29%" as const,
                           paddingVertical: 12,
                           borderRadius: 10,
                           alignItems: "center" as const,
@@ -4749,7 +4750,7 @@ export default function DashboardScreen() {
                 </View>
 
                 <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.textSecondary, marginBottom: 4 }}>{t("dashboard.weeklyRest")}</Text>
-                <View style={{ flexDirection: "row" as const, gap: 8, marginBottom: 8 }}>
+                <View style={{ flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8, marginBottom: 8 }}>
                   {closeWeeklyRestOptions.map((opt) => (
                     <Pressable
                       key={opt.minutes}
@@ -4771,7 +4772,7 @@ export default function DashboardScreen() {
                         if (isBaseWeekly && compensationInfo.debtMin > 0) {
                           Alert.alert(
                             "Compensación pendiente",
-                            "Tienes compensación pendiente esta semana. Si haces solo este descanso, puede quedar deuda pendiente.",
+                            "Tienes horas de compensación pendientes. Si eliges solo este descanso, pueden quedar horas por recuperar.",
                             [
                               { text: t("common.cancel"), style: "cancel" },
                               { text: "Continuar", onPress: () => { setChosenVacation(false); setChosenRest(opt.minutes); } },
@@ -4787,6 +4788,9 @@ export default function DashboardScreen() {
                       <Text style={{ fontSize: 18, fontFamily: "Inter_700Bold", color: chosenRest === opt.minutes ? Colors.light.tint : Colors.light.text }}>
                         {opt.label}
                       </Text>
+                      {opt.minutes === 45 * 60 + compensationInfo.debtMin && compensationInfo.debtMin > 0 && (
+                        <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.light.tint, marginTop: 3 }}>Con compensación</Text>
+                      )}
                       {opt.generatesDebt && (
                         <Text style={{ fontSize: 10, fontFamily: "Inter_400Regular", color: "#F59E0B", marginTop: 2 }}>
                           {t("dashboard.generatesDebtLabel")}
