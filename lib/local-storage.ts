@@ -325,6 +325,7 @@ export interface EstadoLegal {
   maxDescansosReducidos: number;
   disponibilidadMin: number;
   compensacionAgregada: CompensacionAgregada | null;
+  proximoDescansoSemanal?: { limiteAt: string; minimoHoras: 24 | 45; compensacionPendienteMin: number; compensacionVence: string | null } | null;
   alertas: Array<{
     tipo: "info" | "warning" | "danger";
     mensaje: string;
@@ -3861,6 +3862,27 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
       durationMin: j.descansoAnteriorMin!,
     }));
   const weeklySafetyAlerts = checkWeeklyRestSequence(recordedWeekly);
+  // Los seis períodos de 24 horas empiezan al TERMINAR el último descanso
+  // semanal, nunca al iniciar una jornada del lunes.
+  const lastWeekly = recordedWeekly
+    .filter(r => Number.isFinite(Date.parse(r.startAt)) &&
+      Number.isFinite(Date.parse(r.endAt)) &&
+      Date.parse(r.endAt) > Date.parse(r.startAt) &&
+      Date.parse(r.endAt) <= ahora.getTime())
+    .sort((a, b) => Date.parse(b.endAt) - Date.parse(a.endAt))[0];
+  const weeklyDeadlineMs = lastWeekly ? Date.parse(lastWeekly.endAt) + 144 * 3600000 : NaN;
+  // Guía orientativa: tras un semanal reducido normalmente corresponde
+  // uno normal; hay excepciones para transporte internacional.
+  const proximoDescansoSemanal: EstadoLegal["proximoDescansoSemanal"] =
+    Number.isFinite(weeklyDeadlineMs) ? {
+      limiteAt: new Date(weeklyDeadlineMs).toISOString(),
+      minimoHoras: lastWeekly.durationMin < 45 * 60 ? 45 : 24,
+      compensacionPendienteMin: compensacionAgregada
+        ? Number(compensacionAgregada.totalDeudaHoras || 0) * 60 +
+          Number(compensacionAgregada.totalDeudaMinutos || 0)
+        : 0,
+      compensacionVence: compensacionAgregada?.fechaLimite ?? null,
+    } : null;
 
   const alertas: EstadoLegal["alertas"] = [];
   for (const safety of weeklySafetyAlerts) {
@@ -3932,6 +3954,7 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     availabilityContext,
     disponibilidadMin: !availabilityContext.aplica13h15h ? 21 * 60 : availabilityContext.ampliacion15h === "disponible" ? 15 * 60 : 13 * 60,
     compensacionAgregada,
+    proximoDescansoSemanal,
     alertas,
   };
 }
