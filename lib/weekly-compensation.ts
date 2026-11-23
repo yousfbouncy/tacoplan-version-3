@@ -76,16 +76,34 @@ export function isWithinAlertWindow56Days(
 export function checkWeeklyRestSequence(
   rests: ReadonlyArray<{startAt: string; endAt: string; durationMin: number}>,
 ): Array<{code: "WEEKLY_REST_144H" | "CONSECUTIVE_REDUCED_WEEKLY_RESTS"; message: string}> {
+  // The six-24-hour rule measures the time FROM THE END of one weekly rest
+  // TO THE START of the next. Hours spent resting never count toward that gap.
+  // Invalid intervals and duplicate records must not trigger legal warnings.
   const items = rests
-    .filter(r => Number.isFinite(r.durationMin) && r.durationMin >= 24 * 60 &&
-      Number.isFinite(Date.parse(r.startAt)) && Number.isFinite(Date.parse(r.endAt)))
-    .sort((a, b) => a.startAt.localeCompare(b.startAt));
+    .filter(r => {
+      const start = Date.parse(r.startAt);
+      const end = Date.parse(r.endAt);
+      return Number.isFinite(start) && Number.isFinite(end) && end > start &&
+        Number.isFinite(r.durationMin) && r.durationMin >= 24 * 60 &&
+        (end - start) >= 24 * 60 * 60000;
+    })
+    .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+
   const alerts: Array<{code: "WEEKLY_REST_144H" | "CONSECUTIVE_REDUCED_WEEKLY_RESTS"; message: string}> = [];
   for (let i = 1; i < items.length; i++) {
     const before = items[i - 1], current = items[i];
-    const elapsedMin = (Date.parse(current.startAt) - Date.parse(before.endAt)) / 60000;
+    const previousEnd = Date.parse(before.endAt);
+    const nextStart = Date.parse(current.startAt);
+    // Overlap indicates duplicated or inconsistent records, not time worked.
+    if (nextStart < previousEnd) continue;
+    const elapsedMin = (nextStart - previousEnd) / 60000;
     if (elapsedMin > 144 * 60) {
-      alerts.push({code:"WEEKLY_REST_144H", message:"Han transcurrido más de 144 horas entre descansos semanales. Revisar planificación."});
+      const hours = Math.floor(elapsedMin / 60);
+      const minutes = Math.round(elapsedMin % 60);
+      alerts.push({
+        code: "WEEKLY_REST_144H",
+        message: `Intervalo de ${hours} h ${String(minutes).padStart(2, "0")} min desde el fin del descanso semanal (${before.endAt}) hasta el inicio del siguiente (${current.startAt}). Comprobar si faltan descansos registrados; no se trata de horas acumuladas de descanso.`,
+      });
     }
     const firstWeek = mondayOfIsoWeek(before.startAt);
     const nextWeek = mondayOfIsoWeek(current.startAt);
