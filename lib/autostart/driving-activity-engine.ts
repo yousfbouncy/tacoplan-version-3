@@ -1,12 +1,11 @@
 /** Driving AutoStart GPS policy shared by Android and iOS.
- * A reliable fix below 1 km/h begins a candidate stop. Stop is confirmed
+ * A reliable fix below 6 km/h begins a candidate stop. Stop is confirmed
  * after >=60 seconds, backdated to that first fix. A shorter stop is removed
  * from driving totals without losing the active DRIVING selection.
  * New DRIVING requires 60 seconds of reliable movement and a fix >=6 km/h.
- * Slow movement above 1 km/h preceding confirmation is retained, so short
- * low-speed maneuvers are not discarded from the start of driving.
+ * Movement at or above 6 km/h before confirmation is retained.
  */
-export const STOP_SPEED_MPS = 1 / 3.6;
+export const STOP_SPEED_MPS = 6 / 3.6;
 export const START_SPEED_MPS = 6 / 3.6;
 export const START_CONFIRM_MS = 60_000;
 export const STOP_CONFIRM_MS = 60_000;
@@ -64,9 +63,8 @@ export function updateDrivingDetection(state: DrivingDetection, fix: DrivingFix)
       transition: "STOP", stopStart: stoppedSince,
     };
   }
-  // Capture reliable low-speed maneuvers separately from the 6 km/h gate.
-  // Require 60 seconds since the first >=6 km/h fix; any preceding 1–6 km/h
-  // movement is then included, without changing STOP/RESUME transitions.
+  // Require 60 seconds of reliable movement at or above 6 km/h.
+  // Speeds below 6 km/h count toward a possible stop, not active driving.
   const slowSince = !interrupted && state.slowSince != null ? state.slowSince : ts;
   const movingSince = !interrupted && state.movingSince !== null
     ? state.movingSince : speed >= START_SPEED_MPS ? ts : null;
