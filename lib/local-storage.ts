@@ -3874,7 +3874,7 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
   // Guía orientativa: tras un semanal reducido normalmente corresponde
   // uno normal; hay excepciones para transporte internacional.
   const proximoDescansoSemanal: EstadoLegal["proximoDescansoSemanal"] =
-    Number.isFinite(weeklyDeadlineMs) ? {
+    lastWeekly && Number.isFinite(weeklyDeadlineMs) ? {
       limiteAt: new Date(weeklyDeadlineMs).toISOString(),
       minimoHoras: lastWeekly.durationMin < 45 * 60 ? 45 : 24,
       compensacionPendienteMin: compensacionAgregada
