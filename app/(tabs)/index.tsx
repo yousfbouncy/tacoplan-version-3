@@ -315,6 +315,20 @@ export default function DashboardScreen() {
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const qc = useQueryClient();
   const { user, logout } = useAuth();
+  const legalAccessQuery = useQuery({
+    queryKey: ["legal-plan-access", user?.id],
+    queryFn: readSubscriptionAccess,
+    enabled: !!user?.id,
+    staleTime: 0,
+    refetchInterval: 30_000,
+  });
+  const legalAccess = legalAccessQuery.data;
+  const legalLocked = !legalAccess || (legalAccess.restrictions_enabled &&
+    legalAccess.effective_plan === "free" &&
+    (legalAccess.trial_used || !legalAccess.trial_available || legalAccess.free_plan_expired));
+  useFocusEffect(useCallback(() => {
+    if (user?.id) void legalAccessQuery.refetch();
+  }, [user?.id, legalAccessQuery.refetch]));
   const { t, locale } = useI18n();
   const {
     triggerSync, triggerDeleteNaturalDayDietSync, syncStatus, lastSyncTime, hasPending,
@@ -4261,7 +4275,16 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {estado && (
+        {estado && (legalLocked ? (
+          <Pressable style={styles.legalPanel} onPress={() => router.push("/planes" as any)}>
+            <View style={styles.legalHeader}>
+              <Ionicons name="lock-closed-outline" size={20} color={Colors.light.tint} />
+              <Text style={[styles.legalTitle, { flex: 1 }]}>{t("dashboard.legalStatus")}</Text>
+              <Text style={{ color: Colors.light.tint, fontWeight: "700" }}>Pro</Text>
+            </View>
+            <Text style={{ color: Colors.light.textSecondary, padding: 12 }}>Consulta tu estado legal y la conducción semanal y bisemanal con un plan activo.</Text>
+          </Pressable>
+        ) : (
           <View style={styles.legalPanel}>
             <Pressable accessibilityRole="button" accessibilityLabel="Mostrar u ocultar detalles del estado legal" accessibilityState={{ expanded: legalExpanded }} onPress={() => setLegalExpanded(v => !v)} style={styles.legalHeader}>
               <Ionicons name="shield-checkmark" size={20} color={Colors.light.tint} />
@@ -4504,7 +4527,7 @@ export default function DashboardScreen() {
               </View>
             )}
           </View>
-        )}
+        ))}
 
         <Text style={{ color: Colors.light.textSecondary, fontSize: 11, lineHeight: 16, marginBottom: 14 }}>Información orientativa. Prevalecen la normativa aplicable y los registros del tacógrafo.</Text>
         <Pressable
@@ -4649,10 +4672,12 @@ export default function DashboardScreen() {
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.weeklyCond")}</Text>
                     <Text style={styles.legalModalStatValue}>{formatMinutosHoras(legalResult.conduccionSemanalMin)} / 56h</Text>
                   </View>
+                  {!legalLocked && <>
                   <View style={styles.legalModalStatRow}>
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.biweeklyCond")}</Text>
                     <Text style={styles.legalModalStatValue}>{formatMinutosHoras(legalResult.conduccionBisemanalMin)} / 90h</Text>
                   </View>
+                  </>}
                   <View style={styles.legalModalStatRow}>
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.extensions10h")}</Text>
                     <Text style={styles.legalModalStatValue}>{legalResult.extensiones10hSemana} / 2</Text>
@@ -4896,7 +4921,7 @@ export default function DashboardScreen() {
                   );
                 })()}
 
-                {closePlanData.biweeklyRemainMin < 10 * 60 && (
+                {!legalLocked && closePlanData.biweeklyRemainMin < 10 * 60 && (
                   <View style={{ backgroundColor: Colors.light.danger + "15", borderRadius: 8, padding: 10, marginTop: 6, flexDirection: "row" as const, alignItems: "center" as const, gap: 6 }}>
                     <Ionicons name="alert-circle" size={16} color={Colors.light.danger} />
                     <Text style={{ flex: 1, fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.light.danger }}>
@@ -5020,10 +5045,12 @@ export default function DashboardScreen() {
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.remainingWeekly")}</Text>
                     <Text style={styles.legalModalStatValue}>{formatMinutosHoras(startPlanData.weeklyRemainMin)}</Text>
                   </View>
+                  {!legalLocked && <>
                   <View style={styles.legalModalStatRow}>
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.remainingBiweekly")}</Text>
                     <Text style={styles.legalModalStatValue}>{formatMinutosHoras(startPlanData.biweeklyRemainMin)}</Text>
                   </View>
+                  </>}
                   <View style={styles.legalModalStatRow}>
                     <Text style={styles.legalModalStatLabel}>{t("dashboard.reducedRestsUsed")}</Text>
                     <Text style={styles.legalModalStatValue}>{startPlanData.reducedRestsUsed} / 3</Text>
