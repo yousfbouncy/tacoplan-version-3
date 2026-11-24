@@ -96,9 +96,57 @@ export function mergeActivityCorrections(log:ActivityLog,corrections:ActivitySeg
   return {...log,segments:[...log.segments,...extra].sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt))};
 }
 
+
+/**
+ * Apply server-authorized, closed activity corrections to the device timeline.
+ * Unlike a display-only overlay, this repairs the local source of truth before
+ * its next upload, so local-first sync cannot undo a cloud correction.
+ * Preserve all activity outside each corrected interval, including live driving.
+ */
+export function reconcileActivityCorrections(log:ActivityLog,corrections:ActivitySegment[]):ActivityLog {
+  const valid=corrections.filter(c=>c.endedAt!==null &&
+    Number.isFinite(Date.parse(c.startedAt)) &&
+    Number.isFinite(Date.parse(c.endedAt!)) &&
+    Date.parse(c.endedAt!)>Date.parse(c.startedAt))
+    .sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt));
+  if(!valid.length)return log;
+  let segments=log.segments.map(s=>({...s}));
+  for(const correction of valid) {
+    const from=Date.parse(correction.startedAt),to=Date.parse(correction.endedAt!);
+    const remaining:ActivitySegment[]=[];
+    for(const segment of segments) {
+      const begin=Date.parse(segment.startedAt);
+      const end=segment.endedAt===null?Infinity:Date.parse(segment.endedAt);
+      if(end<=from || begin>=to) { remaining.push(segment);continue; }
+      if(begin<from) remaining.push({...segment,endedAt:new Date(from).toISOString()});
+      if(end>to) remaining.push({...segment,startedAt:new Date(to).toISOString()});
+    }
+    remaining.push({...correction,automaticRest:undefined});
+    segments=remaining.sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt));
+  }
+  const next=sanitizeLog({segments},log.shiftId);
+  return JSON.stringify(next.segments)===JSON.stringify(log.segments)?log:next;
+}
+
+async function repairLocalActivityCorrections(userId:string,shiftId:string,log:ActivityLog):Promise<ActivityLog> {
+  // Corrections are separate admin_adjustment rows; never sync those IDs as manual.
+  const corrections=await loadActivityCorrections(userId,shiftId);
+  if(!corrections.length)return log;
+  const repaired=reconcileActivityCorrections(log,corrections);
+  if(repaired!==log) {
+    await AsyncStorage.setItem(key(userId,shiftId),JSON.stringify(repaired));
+    await updatePending(userId,shiftId,true);
+  }
+  return repaired;
+}
+
 export async function loadDriverActivities(userId: string, shiftId: string): Promise<ActivityLog> {
   const stored = await loadLocalDriverActivities(userId,shiftId);
-  if (stored.segments.length) return stored;
+  if (stored.segments.length) {
+    const repaired=await repairLocalActivityCorrections(userId,shiftId,stored);
+    if(repaired!==stored) void syncDriverActivities(userId,shiftId);
+    return repaired;
+  }
   // Hydrate when opening the same shift from a different device or after a reinstall.
   // Do not overwrite locally pending activity changes.
   try {
@@ -141,12 +189,27 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
   const previous=syncJobs.get(storageKey) || Promise.resolve(true);
   const next=previous.catch(()=>false).then(async()=>{
     const snapshot=await AsyncStorage.getItem(storageKey);
-    const log=parseStoredLog(snapshot,shiftId);
+    const original=parseStoredLog(snapshot,shiftId);
+    const log=await repairLocalActivityCorrections(userId,shiftId,original);
     if (!log.segments.length) { await updatePending(userId,shiftId,false); return true; }
     const rows=buildActivitySyncRows(userId,log);
     const {supabase}=await import("@/lib/supabase");
     const {error}=await supabase.from("tacho_activities").upsert(rows,{onConflict:"id"});
     if (error) throw error;
+    // Removing trailing rows is required when corrections replace multiple
+    // original segments with a shorter timeline. Only remove THIS shift's
+    // obsolete manual rows, never admin_adjustment or tachograph imports.
+    const {data:existing,error:listError}=await supabase.from("tacho_activities")
+      .select("id").eq("user_id",userId).eq("shift_id",shiftId).eq("source","manual");
+    if(listError)throw listError;
+    const currentIds=new Set(rows.map(row=>row.id));
+    const obsolete=(existing||[]).map(row=>String(row.id)).filter(id=>!currentIds.has(id));
+    if(obsolete.length) {
+      const {error:deleteError}=await supabase.from("tacho_activities")
+        .delete().eq("user_id",userId).eq("shift_id",shiftId)
+        .eq("source","manual").in("id",obsolete);
+      if(deleteError)throw deleteError;
+    }
     // A newer local edit may have happened during this request. Do not mark
     // that new edit as synced; the next pass will upload it.
     if ((await AsyncStorage.getItem(storageKey))===snapshot) {
