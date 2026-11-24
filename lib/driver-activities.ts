@@ -132,8 +132,9 @@ async function repairLocalActivityCorrections(userId:string,shiftId:string,log:A
   // Corrections are separate admin_adjustment rows; never sync those IDs as manual.
   const corrections=await loadActivityCorrections(userId,shiftId);
   if(!corrections.length)return log;
-  const repaired=reconcileActivityCorrections(log,corrections);
-  if(repaired!==log) {
+  const newest=parseStoredLog(await AsyncStorage.getItem(key(userId,shiftId)),shiftId);
+  const repaired=reconcileActivityCorrections(newest,corrections);
+  if(repaired!==newest) {
     await AsyncStorage.setItem(key(userId,shiftId),JSON.stringify(repaired));
     await updatePending(userId,shiftId,true);
   }
@@ -188,9 +189,10 @@ export function syncDriverActivities(userId: string, shiftId: string): Promise<b
   // responses must not reopen an already closed segment.
   const previous=syncJobs.get(storageKey) || Promise.resolve(true);
   const next=previous.catch(()=>false).then(async()=>{
-    const snapshot=await AsyncStorage.getItem(storageKey);
+    let snapshot=await AsyncStorage.getItem(storageKey);
     const original=parseStoredLog(snapshot,shiftId);
     const log=await repairLocalActivityCorrections(userId,shiftId,original);
+    snapshot=await AsyncStorage.getItem(storageKey);
     if (!log.segments.length) { await updatePending(userId,shiftId,false); return true; }
     const rows=buildActivitySyncRows(userId,log);
     const {supabase}=await import("@/lib/supabase");
