@@ -1,0 +1,59 @@
+name: Publish corrected driver activity sync 3.0.8
+on:
+  push:
+    branches: [main]
+    paths:
+      - lib/driver-activities.ts
+      - tests/driver-activities.test.ts
+      - tests/driving-auto-runtime.test.ts
+      - .github/workflows/publish-driver-activity-sync-308.yml
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Confirm compatible 3.0.8 runtime
+        run: |
+          node - <<'NODE'
+          const app=require('./app.json').expo;
+          const eas=require('./eas.json');
+          if(app.version!=='3.0.8' || app.runtimeVersion?.policy!=='appVersion'
+            || app.updates?.enabled!==true
+            || eas.build.preview.channel!=='preview'
+            || eas.build.production.channel!=='production')
+            throw new Error('Unsupported app/runtime; OTA disabled');
+          NODE
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: test -n "$EXPO_TOKEN" || (echo "Missing Expo token" && exit 1)
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, android]
+        channel: [production, preview]
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Publish corrected activity timeline
+        run: |
+          npx --yes eas-cli update --channel ${{ matrix.channel }} --platform ${{ matrix.platform }} --non-interactive --message "Tacoplan 3.0.8: corrected break timeline and cloud sync"
