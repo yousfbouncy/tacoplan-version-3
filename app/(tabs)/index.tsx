@@ -565,14 +565,18 @@ export default function DashboardScreen() {
   useEffect(() => {
     if (!user?.id || selectedNotification || showNotifications) return;
     const userId = user.id;
-    const candidates = notifications.filter(n => !n.is_read && n.data?.presentation === "modal");
+    // Subscription expiry notices need their own on-open popup, even when an
+    // unrelated admin notice has already used this session's generic popup.
+    const candidates = notifications.filter(n => !n.is_read && n.data?.presentation === "modal")
+      .sort((a,b) => Number(b.data?.category === "subscription") - Number(a.data?.category === "subscription"));
     if (!candidates.length) return;
     let cancelled = false;
     (async () => {
       for (const pending of candidates) {
         if (cancelled || !pending?.id) return;
         const trafficTrip = pending.data?.target === "viaje" && pending.data?.source === "traffic";
-        if (!trafficTrip && autoPopupShownThisSession.current) continue;
+        const subscriptionNotice = pending.data?.category === "subscription";
+        if (!trafficTrip && !subscriptionNotice && autoPopupShownThisSession.current) continue;
         if (trafficTrip && shownTrafficTripIdsThisSession.current.has(pending.id)) continue;
         const key = await userScopedKey("tacoplan_notification_popup_" + pending.id, userId);
         const alreadyShown = await AsyncStorage.getItem(key).catch(() => null);
@@ -582,7 +586,7 @@ export default function DashboardScreen() {
           continue;
         }
         if (trafficTrip) shownTrafficTripIdsThisSession.current.add(pending.id);
-        else autoPopupShownThisSession.current = true;
+        else if (!subscriptionNotice) autoPopupShownThisSession.current = true;
         await AsyncStorage.setItem(key, "1").catch(() => {});
         if (!cancelled) setSelectedNotification(pending);
         return;
