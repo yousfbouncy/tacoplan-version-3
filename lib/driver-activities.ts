@@ -162,7 +162,12 @@ export async function loadDriverActivities(userId: string, shiftId: string): Pro
       startedAt:String(row.inicio),
       endedAt:row.fin===null?null:String(row.fin),
     }))},shiftId);
-    if (log.segments.length) await AsyncStorage.setItem(key(userId,shiftId),JSON.stringify(log));
+    if (log.segments.length) {
+      await AsyncStorage.setItem(key(userId,shiftId),JSON.stringify(log));
+      const repaired=await repairLocalActivityCorrections(userId,shiftId,log);
+      if(repaired!==log) void syncDriverActivities(userId,shiftId);
+      return repaired;
+    }
     return log;
   } catch { return stored; }
 }
