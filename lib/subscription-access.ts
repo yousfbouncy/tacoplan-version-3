@@ -78,8 +78,8 @@ export function useSubscriptionAccess(){
  const [error,setError]=useState('');
  const refresh=useCallback(async()=>{
   setLoading(true);
-  try{setAccess(await readSubscriptionAccess());setError('');}
-  catch{setError('No se ha podido actualizar el estado del plan. Comprueba tu conexión.');}
+  try{setAccess(await readSubscriptionAccess());setError('');return true;}
+  catch{setError('No se ha podido actualizar el estado del plan. Comprueba tu conexión.');return false;}
   finally{setLoading(false);}
  },[]);
  useFocusEffect(useCallback(()=>{void refresh();},[refresh]));
