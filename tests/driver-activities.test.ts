@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,mergeActivityCorrections,pauseDriverActivity,startAutomaticRest,finishAutomaticRest} from "../lib/driver-activities";
+import {buildActivitySyncRows,changeDriverActivity,closeDriverActivities,getDriverActivityTotals,getDrivingTotalsForClose,sanitizeLog,mergeActivityCorrections,reconcileActivityCorrections,pauseDriverActivity,startAutomaticRest,finishAutomaticRest} from "../lib/driver-activities";
 
 const t=(min:number)=>new Date(Date.parse("2026-11-16T08:00:00.000Z")+min*60000);
 test("activity changes are exclusive and repeated taps do not duplicate segments",()=>{
@@ -284,4 +284,25 @@ test("cloud correction does not duplicate a local segment overlapping the correc
  log=changeDriverActivity(log,"DRIVING",t(47));
  const correction={type:"REST" as const,startedAt:t(0).toISOString(),endedAt:t(47).toISOString()};
  assert.equal(mergeActivityCorrections(log,[correction]),log);
+});
+
+test("server correction replaces overlapped driving and rest, retaining driving after the stop",()=>{
+ const iso=(time:string)=>"2026-11-24T"+time+":00.000Z";
+ const log={shiftId:"live",segments:[
+  {type:"DRIVING" as const,startedAt:iso("08:19"),endedAt:iso("09:15")},
+  {type:"DRIVING" as const,startedAt:iso("09:15"),endedAt:iso("09:20")},
+  {type:"REST" as const,startedAt:iso("09:20"),endedAt:iso("09:24")},
+  {type:"DRIVING" as const,startedAt:iso("09:24"),endedAt:null}
+ ]};
+ const correction=[{type:"REST" as const,startedAt:iso("08:52"),endedAt:iso("09:24")}];
+ const repaired=reconcileActivityCorrections(log,correction);
+ assert.deepEqual(repaired.segments.map(x=>x.type),["DRIVING","REST","DRIVING"]);
+ assert.equal(repaired.segments[0].endedAt,iso("08:52"));
+ assert.equal(repaired.segments[1].startedAt,iso("08:52"));
+ assert.equal(repaired.segments[1].endedAt,iso("09:24"));
+ assert.equal(repaired.segments[2].startedAt,iso("09:24"));
+ assert.equal(repaired.segments[2].endedAt,null);
+ assert.deepEqual(reconcileActivityCorrections(repaired,correction),repaired);
+ const rows=buildActivitySyncRows("driver",repaired);
+ assert.deepEqual(rows.map(row=>row.tipo),["CONDUCCION","DESCANSO","CONDUCCION"]);
 });
