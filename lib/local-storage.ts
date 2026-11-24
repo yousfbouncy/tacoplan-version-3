@@ -3713,7 +3713,12 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     );
     if (anterior && anterior.endAt) {
       j.descansoAnteriorMin = calcMinutesBetween(anterior.endAt, j.startAt);
-      if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
+      // Use actual chronological rest bounds, even for imported legacy shifts.
+      j.previousRestStartAt = anterior.endAt;
+      j.previousRestEndAt = j.startAt;
+      if (j.descansoAnteriorMin >= 24 * 60) {
+        j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin);
+      } else if (isSplitDailyRestGapComplete(j.descansoAnteriorMin, anterior)) {
         j.tipoDescansoAnterior = "DESCANSO_DIARIO_COMPLETO";
       } else {
         j.tipoDescansoAnterior = clasificarDescanso(j.descansoAnteriorMin, anterior.plannedRestType);
