@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import {ActivityIndicator,Platform,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
 import {router} from 'expo-router';
 import {useSubscriptionAccess} from '@/lib/subscription-access';
@@ -8,6 +8,15 @@ const date=(s:string|null|undefined)=>s?new Date(s).toLocaleDateString('es-ES'):
 export default function PlanesScreen(){
  const {access,loading,error,refresh}=useSubscriptionAccess();
  const tier=access.effective_plan;
+ const [refreshing,setRefreshing]=useState(false);
+ const [feedback,setFeedback]=useState('');
+ const updatePlan=async()=>{
+  if(loading||refreshing)return;
+  setRefreshing(true);setFeedback('');
+  try{const ok=await refresh();setFeedback(ok?'Estado y precios actualizados.':'No se ha podido actualizar. Inténtalo de nuevo.');}
+  catch{setFeedback('No se ha podido actualizar. Inténtalo de nuevo.');}
+  finally{setRefreshing(false);}
+ };
  const choose=(key:'plus'|'pro')=>{
   const slug=access.audience==='founder'?(key==='plus'?'plus_existing':'pro_founder')
    :access.audience==='existing'?key+'_existing':key;
@@ -34,7 +43,8 @@ export default function PlanesScreen(){
       {({diets:'Dietas y pluses',auto:'AutoStart',manual:'Actividades',reports:'Informes',notify:'Avisos',widget:'Widgets',trip:'Jornadas'} as Record<string,string>)[key]||key}: {v?.expired?'plazo gratuito finalizado':(v?.days_left??0)+' días gratuitos restantes'}
     </Text>)}
 
-    <Pressable accessibilityRole="button" onPress={()=>void refresh()}><Text style={styles.refresh}>Actualizar mi suscripción</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityState={{disabled:loading||refreshing,busy:refreshing}} disabled={loading||refreshing} onPress={()=>void updatePlan()}><Text style={styles.refresh}>{refreshing||loading?'Actualizando…':'Actualizar estado y precios'}</Text></Pressable>
+    {feedback?<Text accessibilityLiveRegion="polite" style={styles.note}>{feedback}</Text>:null}
    </View>
    {!access.restrictions_enabled?<Text style={styles.intro}>La administración todavía no ha activado las restricciones. Ninguna función de Tacoplan se bloquea por el plan.</Text>
     :<Text style={styles.intro}>Las funciones se habilitan según tu suscripción o el acceso gratuito que te conceda el administrador.</Text>}
