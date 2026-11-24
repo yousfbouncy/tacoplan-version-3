@@ -88,7 +88,7 @@ test("20-second stop keeps DRIVING active and excludes stationary seconds",async
   assert.equal(h.log.segments.at(-1).type,"DRIVING");
   await h.deliver(location(61,0));
   assert.equal(h.log.segments.at(-1).type,"DRIVING");
-  await h.deliver(location(81,1.1));
+  await h.deliver(location(81,7.1));
   assert.equal(h.log.segments.length,2);
   assert.deepEqual(h.log.segments.map((v:any)=>v.type),["DRIVING","DRIVING"]);
   assert.equal(h.log.segments[0].endedAt,new Date(epoch+61_000).toISOString());
@@ -129,7 +129,7 @@ test("stopping does not override a manually selected WORK or AVAILABLE",async()=
   assert.equal(h.log.segments[0].type,"WORK");
 });
 
-test("slow departure is saved from the first 2 km/h fix after reaching 6 km/h for a minute",async()=>{
+test("slow departure starts at the first 6 km/h fix after sustained confirmation",async()=>{
  const h=await harness();
  await h.deliver(location(0,0));
  await h.deliver(location(10,2));
@@ -141,7 +141,7 @@ test("slow departure is saved from the first 2 km/h fix after reaching 6 km/h fo
  await h.deliver(location(100,6.5));
  assert.equal(h.log.segments.length,1);
  assert.equal(h.log.segments[0].type,"DRIVING");
- assert.equal(h.log.segments[0].startedAt,new Date(epoch+10000).toISOString());
+ assert.equal(h.log.segments[0].startedAt,new Date(epoch+40000).toISOString());
 });
 
 test("GPS REST below 15 minutes turns into WORK upon confirmed driving restart",async()=>{
