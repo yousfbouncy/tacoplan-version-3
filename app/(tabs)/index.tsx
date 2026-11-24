@@ -39,6 +39,7 @@ import { isTrafficTripNotice } from "@/lib/browser-trip-notifications";
 import { notifyLocalTripWithoutPushToken } from "@/lib/native-trip-alert";
 import { useI18n } from "@/lib/i18n-context";
 import { getNotificationAction } from "@/lib/notification-links";
+import { readSubscriptionAccess } from "@/lib/subscription-access";
 import OnboardingGuide from "@/components/OnboardingGuide";
 import SoporteFlotante from "@/components/SoporteFlotante";
 import DebugSimulator from "@/components/DebugSimulator";
@@ -380,6 +381,7 @@ export default function DashboardScreen() {
   const [selectedNotification, setSelectedNotification] = useState<UserNotificationRow | null>(null);
   const autoPopupShownThisSession = useRef(false);
   const shownTrafficTripIdsThisSession = useRef<Set<string>>(new Set());
+  const shownSubscriptionNoticeIdsThisSession = useRef<Set<string>>(new Set());
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const notificationsFetchInFlightRef = useRef(false);
   const [closePlanEndAt, setClosePlanEndAt] = useState<string | null>(null);
@@ -567,7 +569,8 @@ export default function DashboardScreen() {
     const userId = user.id;
     // Subscription expiry notices need their own on-open popup, even when an
     // unrelated admin notice has already used this session's generic popup.
-    const candidates = notifications.filter(n => !n.is_read && n.data?.presentation === "modal")
+    const candidates = notifications.filter(n => n.data?.presentation === "modal" &&
+      (!n.is_read || n.data?.kind === "subscription_trial_expired_notice"))
       .sort((a,b) => Number(b.data?.category === "subscription") - Number(a.data?.category === "subscription"));
     if (!candidates.length) return;
     let cancelled = false;
@@ -576,8 +579,24 @@ export default function DashboardScreen() {
         if (cancelled || !pending?.id) return;
         const trafficTrip = pending.data?.target === "viaje" && pending.data?.source === "traffic";
         const subscriptionNotice = pending.data?.category === "subscription";
+        const recurringExpiry = pending.data?.kind === "subscription_trial_expired_notice";
         if (!trafficTrip && !subscriptionNotice && autoPopupShownThisSession.current) continue;
         if (trafficTrip && shownTrafficTripIdsThisSession.current.has(pending.id)) continue;
+        if (recurringExpiry && shownSubscriptionNoticeIdsThisSession.current.has(pending.id)) continue;
+        if (recurringExpiry) {
+          // Never nag subscribers, users with complementary access, or anyone
+          // whose trial is still available. Verify current server permissions
+          // on every cold launch rather than trusting an old notification row.
+          let access;
+          try { access = await readSubscriptionAccess(); }
+          catch { continue; }
+          if (cancelled) return;
+          if (!access.restrictions_enabled || access.effective_plan !== "free" ||
+              access.trial_available || access.subscription?.status === "trialing") continue;
+          shownSubscriptionNoticeIdsThisSession.current.add(pending.id);
+          setSelectedNotification(pending);
+          return;
+        }
         const key = await userScopedKey("tacoplan_notification_popup_" + pending.id, userId);
         const alreadyShown = await AsyncStorage.getItem(key).catch(() => null);
         if (cancelled) return;
