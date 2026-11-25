@@ -26,6 +26,7 @@ const MENU_ITEMS = [
   { label: "Notificaciones", icon: Bell, href: "/admin/notifications" },
   { label: "Programadas", icon: CalendarClock, href: "/admin/scheduled" },
   { label: "Automáticas", icon: Bot, href: "/admin/automations" },
+  { label: "Correos automáticos", icon: Bot, href: "/admin/emails" },
   { label: "Actualizaciones", icon: ArrowUpCircle, href: "/admin/updates" },
   { label: "Ajustes", icon: Settings, href: "/admin/settings" },
 ] as const;

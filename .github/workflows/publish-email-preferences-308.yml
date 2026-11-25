@@ -1,0 +1,27 @@
+name: Publish email preferences 3.0.8
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-email-preferences-308.yml'
+  workflow_dispatch:
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: node -e "if(require('./app.json').expo.version!=='3.0.8')process.exit(1)"
+      - run: |
+          npx --yes eas-cli update --channel production --platform all --non-interactive --message "Tacoplan 3.0.8: preferencias de correo y gestión de automatizaciones"

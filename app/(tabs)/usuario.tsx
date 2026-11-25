@@ -37,6 +37,7 @@ import { userScopedKey } from "@/lib/user-scope";
 import { createHoliday, deleteHoliday as deleteHolidayCloud, fetchHolidays } from "@/lib/user-cloud";
 import { getUserConfig, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
+import EmailMarketingPreference from "@/components/EmailMarketingPreference";
 import TrafficLocationConsent from "@/components/TrafficLocationConsent";
 import { AVAILABILITY_ALARMS_KEY, syncAvailabilityAlarms } from "@/lib/availability-alarms";
 import { getPayrollFixedTotal } from "@/lib/payroll-fixed-calculation";
@@ -3086,6 +3087,7 @@ export default function UsuarioScreen() {
                 }}
               >
                 <SectionHeader title="Notificaciones" icon="notifications-outline" />
+                <EmailMarketingPreference userId={userId} />
 
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <Text style={{ fontFamily: "Inter_500Medium", fontSize: 12, color: Colors.light.textSecondary }}>
