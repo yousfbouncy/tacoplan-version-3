@@ -4,6 +4,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/publish-legal-warning-308.yml'
+      - 'lib/weekly-compensation.ts'
+      - 'lib/availability-context.ts'
+      - 'lib/local-storage.ts'
   workflow_dispatch:
 jobs:
   verify-and-publish:
@@ -24,6 +27,6 @@ jobs:
       - run: npm test
       - run: node -e "if(require('./app.json').expo.version!=='3.0.8')process.exit(1)"
       - run: |
-          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.8: advertencias legales y compensaciones"
+          npx --yes eas-cli update --channel production --platform ios --non-interactive --message "Tacoplan 3.0.8: avisos de descanso y compensaciones"
       - run: |
-          npx --yes eas-cli update --channel production --platform android --non-interactive --message "Tacoplan 3.0.8: advertencias legales y compensaciones"
+          npx --yes eas-cli update --channel production --platform android --non-interactive --message "Tacoplan 3.0.8: avisos de descanso y compensaciones"

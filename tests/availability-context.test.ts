@@ -88,3 +88,17 @@ test("canonical timestamp preserves elapsed hours across DST and midnight; edit 
   assert.equal(Date.parse(edited[0].fecha)-Date.parse(alerts[0].fecha),3600000);
   assert.equal(edited[0].id,alerts[0].id);
 });
+
+test("una jornada cerrada conserva los dos descansos reducidos después del último semanal", () => {
+  const rows = [
+    {id:"old", startAt:"2026-11-10T08:00:00Z", endAt:"invalid", fechaFin:"closed"},
+    {id:"anchor", startAt:"2026-11-20T17:04:00Z", endAt:"2026-11-21T05:14:00Z", fechaFin:"closed"},
+    {id:"mon", startAt:"2026-11-23T13:23:00Z", endAt:"2026-11-23T23:14:00Z", fechaFin:"closed"},
+    {id:"tue", startAt:"2026-11-24T09:15:00Z", endAt:"2026-11-24T19:47:00Z", fechaFin:"closed"},
+    {id:"wed", startAt:"2026-11-25T04:55:00Z", endAt:"2026-11-25T18:17:00Z", fechaFin:"closed"},
+  ] as unknown as Jornada[];
+  const ctx = getAvailabilityContext(rows);
+  assert.equal(ctx.reducidosUsados,2);
+  assert.equal(ctx.ampliacionesDisponibles,1);
+  assert.equal(ctx.shiftId,null);
+});

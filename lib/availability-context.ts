@@ -15,7 +15,15 @@ export interface AvailabilityContext {
  * This is evidence from recorded shifts, not certification of unrecorded activity.
  */
 export function getAvailabilityContext(jornadas: Jornada[]): AvailabilityContext {
-  const sorted = [...jornadas].sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  const ordered = [...jornadas].sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  // Start at the latest observed weekly-rest boundary. An invalid older record
+  // cannot invalidate a subsequent, complete weekly rest and its new cycle.
+  let anchor = 0;
+  for (let i = 1; i < ordered.length; i++) {
+    const gap = Date.parse(ordered[i].startAt) - Date.parse(ordered[i-1].endAt || "");
+    if (Number.isFinite(gap) && gap >= 24 * 3600000) anchor = i - 1;
+  }
+  const sorted = ordered.slice(anchor);
   const open = sorted.filter(j => !j.fechaFin && !j.endAt);
   const current = open.length === 1 ? open[0] : null;
   let known = false;
@@ -45,7 +53,8 @@ export function getAvailabilityContext(jornadas: Jornada[]): AvailabilityContext
     }
     previous = j;
   }
-  known = known && !!current && sorted.at(-1) === current;
+  // A completed shift still has a known rest count; alarms require a matched open shift separately.
+  known = known && (open.length === 0 || (!!current && sorted.at(-1) === current));
   const remaining = known ? Math.max(0, 3 - used) : null;
   // A recorded first split-rest part does not establish all conditions for 3+9.
   const splitUncertain = (current?.splitRestFirstPartMin ?? 0) >= 180;

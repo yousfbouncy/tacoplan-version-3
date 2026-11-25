@@ -163,7 +163,7 @@ export function checkWeeklyRestSequence(
     }
     const firstWeek = mondayOfIsoWeek(before.startAt);
     const nextWeek = mondayOfIsoWeek(current.startAt);
-    if (nextWeek - firstWeek === 7 * 86400000 &&
+    if (i === items.length - 1 && nextWeek - firstWeek === 7 * 86400000 &&
         before.durationMin < 45 * 60 && current.durationMin < 45 * 60) {
       alerts.push({code:"CONSECUTIVE_REDUCED_WEEKLY_RESTS", message:"Dos descansos semanales reducidos en semanas consecutivas: comprobar condiciones del transporte internacional y compensaciones."});
     }

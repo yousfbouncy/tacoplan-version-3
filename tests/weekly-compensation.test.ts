@@ -89,3 +89,12 @@ test("el total pendiente solo considera plazos vigentes, incluido el día límit
   assert.equal(isActiveCompensationDeadline("", today), false);
   assert.equal(isActiveCompensationDeadline("2026-11-18", today), false);
 });
+
+test("un descanso semanal normal elimina la advertencia actual de dos semanales reducidos anteriores", () => {
+  const alerts = checkWeeklyRestSequence([
+    {startAt:"2026-11-07T18:36:00Z",endAt:"2026-11-09T09:39:00Z",durationMin:2343},
+    {startAt:"2026-11-14T12:29:00Z",endAt:"2026-11-15T18:40:00Z",durationMin:1811},
+    {startAt:"2026-11-21T05:14:00Z",endAt:"2026-11-23T13:23:00Z",durationMin:3369},
+  ]);
+  assert.equal(alerts.some(a=>a.code==="CONSECUTIVE_REDUCED_WEEKLY_RESTS"),false);
+});

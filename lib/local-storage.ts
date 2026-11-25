@@ -3924,8 +3924,12 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     alertas.push({ tipo: "warning", mensaje: "Has usado las 2 extensiones de 10h esta semana" });
   }
 
-  if (availabilityContext.ampliacion15h === "agotada") {
-    alertas.push({ tipo: "warning", mensaje: "Has usado los 3 descansos diarios reducidos. Disponibilidad limitada a 13h." });
+  if (descansosReducidos > 3) {
+    alertas.push({ tipo: "danger", mensaje: "Has superado los 3 descansos diarios reducidos entre descansos semanales." });
+  } else if (descansosReducidos === 3) {
+    alertas.push({ tipo: "warning", mensaje: "Has usado los 3 descansos diarios reducidos entre descansos semanales. No quedan reducciones." });
+  } else if (descansosReducidos === 2) {
+    alertas.push({ tipo: "warning", mensaje: "Has utilizado 2 descansos diarios reducidos desde el último descanso semanal. Te queda 1 descanso reducido de 9h." });
   }
 
   if (compensacionAgregada) {
