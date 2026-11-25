@@ -1131,6 +1131,8 @@ export default function DashboardScreen() {
   // intrusive banners above the driver's active shift.
   const currentLegalAlerts = estado?.alertas ?? [];
   const currentLegalAlertCount = currentLegalAlerts.length;
+  const hasCurrentLegalInfraction = currentLegalAlerts.some(alert => alert.tipo === "danger");
+  const hasLegalInfraction = activeInfractionsCount > 0 || hasCurrentLegalInfraction;
 
   const isCrossSundayMonday = useMemo(() => {
     if (!abierta) return false;
@@ -2558,21 +2560,26 @@ export default function DashboardScreen() {
                 : unreadCount > 0 ? `Tienes ${unreadCount} sin leer` : "No tienes notificaciones pendientes"}
             </Text>
 
-            {currentLegalAlertCount > 0 && (
-              <View style={{ backgroundColor: "#3C2331", borderWidth: 1, borderColor: "#E05262", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <Ionicons name="warning" size={20} color="#FFB86C" />
-                  <Text style={{ color: "#FFFFFF", fontFamily: "Inter_700Bold", fontSize: 14, flex: 1 }}>
-                    Avisos actuales del estado legal ({currentLegalAlertCount})
-                  </Text>
+            {(["warning", "danger"] as const).map(kind => {
+              const alerts = currentLegalAlerts.filter(alert => kind === "danger" ? alert.tipo === "danger" : alert.tipo !== "danger");
+              if (!alerts.length) return null;
+              const danger = kind === "danger";
+              return (
+                <View key={kind} style={{ backgroundColor: danger ? "#3C2331" : "#332A1B", borderWidth: 1, borderColor: danger ? "#E05262" : "#E5A329", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <Ionicons name={danger ? "alert-circle" : "warning"} size={20} color={danger ? "#FF7485" : "#FFB86C"} />
+                    <Text style={{ color: "#FFFFFF", fontFamily: "Inter_700Bold", fontSize: 14, flex: 1 }}>
+                      {danger ? "Posibles infracciones actuales" : "Advertencias legales actuales"} ({alerts.length})
+                    </Text>
+                  </View>
+                  {alerts.map((alerta, index) => (
+                    <Text key={index} style={{ color: danger ? "#F4CBD0" : "#FFE1A3", fontSize: 12, marginBottom: 6 }}>
+                      {alerta.mensaje}
+                    </Text>
+                  ))}
                 </View>
-                {currentLegalAlerts.map((alerta, index) => (
-                  <Text key={index} style={{ color: "#F4CBD0", fontSize: 12, marginBottom: 6 }}>
-                    {alerta.mensaje}
-                  </Text>
-                ))}
-              </View>
-            )}
+              );
+            })}
 
             {activeInfractionsCount > 0 && (
               <View style={{ backgroundColor: "#3C2331", borderWidth: 1, borderColor: "#E05262", borderRadius: 12, padding: 12, marginBottom: 12 }}>
@@ -2826,7 +2833,7 @@ export default function DashboardScreen() {
               hitSlop={8}
               style={[styles.headerActionButton, { marginLeft: 10 }]}
             >
-              <Ionicons name={activeInfractionsCount > 0 || currentLegalAlertCount > 0 ? "notifications" : "notifications-outline"} size={24} color={activeInfractionsCount > 0 || currentLegalAlertCount > 0 ? "#FF4D67" : "#FFFFFF"} />
+              <Ionicons name={activeInfractionsCount > 0 || currentLegalAlertCount > 0 ? "notifications" : "notifications-outline"} size={24} color={hasLegalInfraction ? "#FF4D67" : currentLegalAlertCount > 0 ? "#F59E0B" : "#FFFFFF"} />
               {(unreadCount > 0 || activeInfractionsCount > 0 || currentLegalAlertCount > 0) && (
                 <View
                   style={{
@@ -2837,7 +2844,7 @@ export default function DashboardScreen() {
                     height: 18,
                     paddingHorizontal: 5,
                     borderRadius: 9,
-                    backgroundColor: "#EF4444",
+                    backgroundColor: hasLegalInfraction ? "#EF4444" : currentLegalAlertCount > 0 ? "#B7791F" : Colors.light.tint,
                     alignItems: "center",
                     justifyContent: "center",
                     borderWidth: 2,

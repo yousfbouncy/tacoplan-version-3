@@ -3903,8 +3903,10 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     const m = restanteSemanalMin % 60;
     alertas.push({ tipo: "warning", mensaje: `Te quedan ${h}h ${m}m de conduccion semanal` });
   }
-  if (restanteSemanalMin <= 0) {
+  if (restanteSemanalMin < 0) {
     alertas.push({ tipo: "danger", mensaje: "Has superado el limite de 56h semanales de conduccion" });
+  } else if (restanteSemanalMin === 0) {
+    alertas.push({ tipo: "warning", mensaje: "Has alcanzado el límite semanal de 56h. No queda conducción disponible." });
   }
 
   if (restanteBisemanalMin <= 10 * 60 && restanteBisemanalMin > 0) {
@@ -3912,16 +3914,18 @@ export async function getEstadoLegal(): Promise<EstadoLegal> {
     const m = restanteBisemanalMin % 60;
     alertas.push({ tipo: "warning", mensaje: `Te quedan ${h}h ${m}m de conduccion bisemanal` });
   }
-  if (restanteBisemanalMin <= 0) {
+  if (restanteBisemanalMin < 0) {
     alertas.push({ tipo: "danger", mensaje: "Has superado el limite de 90h bisemanales de conduccion" });
+  } else if (restanteBisemanalMin === 0) {
+    alertas.push({ tipo: "warning", mensaje: "Has alcanzado el límite bisemanal de 90h. No queda conducción disponible." });
   }
 
   if (extensiones10h >= 2) {
-    alertas.push({ tipo: "danger", mensaje: "Has usado las 2 extensiones de 10h esta semana" });
+    alertas.push({ tipo: "warning", mensaje: "Has usado las 2 extensiones de 10h esta semana" });
   }
 
   if (availabilityContext.ampliacion15h === "agotada") {
-    alertas.push({ tipo: "danger", mensaje: "Has usado los 3 descansos diarios reducidos. Disponibilidad limitada a 13h." });
+    alertas.push({ tipo: "warning", mensaje: "Has usado los 3 descansos diarios reducidos. Disponibilidad limitada a 13h." });
   }
 
   if (compensacionAgregada) {

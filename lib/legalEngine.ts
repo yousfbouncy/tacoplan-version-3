@@ -418,7 +418,7 @@ export function evaluateJornada(
   } else if (tipoDescanso === "DESCANSO_DIARIO_REDUCIDO") {
     warnings.push({
       code: "DESCANSO_REDUCIDO",
-      description: `Descanso diario reducido (${descansoMin != null ? formatHM(descansoMin) : "?"}) - max 3/semana`,
+      description: `Descanso diario reducido (${descansoMin != null ? formatHM(descansoMin) : "?"}) - máximo 3 entre dos descansos semanales`,
     });
   }
 
@@ -514,12 +514,12 @@ export function evaluateJornada(
     infractions.push({
       code: "DESCANSOS_REDUCIDOS_EXCEDIDOS",
       severity: "grave",
-      description: `${descansosReducidos} descansos diarios reducidos esta semana (maximo 3)`,
+      description: `${descansosReducidos} descansos diarios reducidos entre descansos semanales (máximo 3)`,
     });
   } else if (descansosReducidos === 3) {
     warnings.push({
       code: "DESCANSOS_REDUCIDOS_LIMITE",
-      description: "Has usado los 3 descansos diarios reducidos esta semana",
+      description: "Has usado los 3 descansos diarios reducidos entre descansos semanales",
     });
   }
 
@@ -540,28 +540,34 @@ export function evaluateJornada(
     }
   }
 
-  // Filtro visual de 56 días, no prescripción legal ni cancelación de la deuda.
-  const pendientes = compensaciones.filter(c => isCompWithinPoliceWindow(c, allJornadas, new Date()));
+  // Use the evaluated shift date, not the day a historical shift is edited.
+  // An old expired debt must not turn every later shift red or inflate pending totals.
+  // Report a newly missed deadline only on the first day after that deadline.
+  const fechaCierre = jornada.fechaFin || jornada.endAt?.slice(0, 10) || jornada.fechaInicio;
+  const fechaRef = new Date(fechaCierre + "T12:00:00");
+  const ayer = new Date(fechaRef);
+  ayer.setDate(ayer.getDate() - 1);
+  const fechaAyer = formatDateStr(ayer);
+  const relevantes = compensaciones.filter(c =>
+    isCompWithinPoliceWindow(c, jornadasConActual, fechaRef) &&
+    (!c.sourceRestEndAt || c.sourceRestEndAt.slice(0, 10) <= fechaCierre));
+  const pendientes = relevantes.filter(c => c.fechaLimite >= fechaCierre);
+  const recienVencidas = relevantes.filter(c => c.fechaLimite === fechaAyer);
+  if (recienVencidas.length > 0) {
+    const total = recienVencidas.reduce((sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda, 0);
+    infractions.push({
+      code: "COMPENSACION_VENCIDA",
+      severity: "muy_grave",
+      description: `${formatHM(total)} de compensación vencida (límite: ${formatFechaES(fechaAyer)})`,
+    });
+  }
   if (pendientes.length > 0) {
-    const totalPendienteMin = pendientes.reduce(
-      (sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda, 0,
-    );
-    const primerVencimiento = pendientes
-      .sort((a, b) => a.fechaLimite.localeCompare(b.fechaLimite))[0];
-    const hoy = formatDateStr(new Date());
-    // REGLA 3-D: SOLO si hoy > fechaLimite → infracción. Si aún no, solo recordatorio (warning leve).
-    if (primerVencimiento.fechaLimite < hoy) {
-      infractions.push({
-        code: "COMPENSACION_VENCIDA",
-        severity: "muy_grave",
-        description: `${formatHM(totalPendienteMin)} de compensacion vencida (limite: ${formatFechaES(primerVencimiento.fechaLimite)})`,
-      });
-    } else {
-      warnings.push({
-        code: "COMPENSACION_PENDIENTE",
-        description: `Tienes ${formatHM(totalPendienteMin)} pendientes de compensar antes del ${formatFechaES(primerVencimiento.fechaLimite)}`,
-      });
-    }
+    const total = pendientes.reduce((sum, c) => sum + c.horasDeuda * 60 + c.minutosDeuda, 0);
+    const primerVencimiento = pendientes.sort((a,b) => a.fechaLimite.localeCompare(b.fechaLimite))[0];
+    warnings.push({
+      code: "COMPENSACION_PENDIENTE",
+      description: `Tienes ${formatHM(total)} pendientes de compensar antes del ${formatFechaES(primerVencimiento.fechaLimite)}`,
+    });
   }
 
   let status: LegalSummary["status"] = "legal";
@@ -702,8 +708,8 @@ export function getLegalStatusColor(status: LegalSummary["status"]): string {
 
 export function getLegalStatusLabel(status: LegalSummary["status"]): string {
   switch (status) {
-    case "infraccion": return "Infraccion";
-    case "advertencia": return "Advertencia";
+    case "infraccion": return "Infracción";
+    case "advertencia": return "Advertencias";
     case "legal": return "Legal";
   }
 }
