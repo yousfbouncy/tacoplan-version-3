@@ -28,6 +28,7 @@ import { ActivityIndicator, AppState, View, Text } from "react-native";
 import Colors from "@/constants/colors";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import UpdateGate from "@/components/UpdateGate";
+import EmailConsentPrompt from "@/components/EmailConsentPrompt";
 import WeeklySurveyModal from "@/components/WeeklySurveyModal";
 import { StartupFlowProvider, useStartupFlow } from "@/lib/startup-flow";
 import { flushPendingDriverActivities } from "@/lib/driver-activities";
@@ -433,10 +434,9 @@ function SequencedWeeklySurvey() {
   const { initialSyncSettled, showRecoveryPrompt, isRestoring, restoreComplete } = useSync();
   // Avoid a second modal while initial cloud data is being merged or when
   // the user is deciding whether to restore data on a new device.
-  return <WeeklySurveyModal enabled={
-    enabled && guideCompleted && initialSyncSettled &&
-    !showRecoveryPrompt && !isRestoring && !restoreComplete
-  } />;
+  const [emailSettled,setEmailSettled] = useState(false);
+  const ready = enabled && guideCompleted && initialSyncSettled && !showRecoveryPrompt && !isRestoring && !restoreComplete;
+  return <><EmailConsentPrompt enabled={ready} onSettled={setEmailSettled}/><WeeklySurveyModal enabled={ready && emailSettled}/></>;
 }
 
 function PeriodSetupGate() {

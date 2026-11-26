@@ -21,6 +21,9 @@ import { userScopedKey } from "@/lib/user-scope";
 import { useAuth } from "@/lib/auth-context";
 import { markOnboardingCompleted, saveUserConfig } from "@/lib/config-service";
 import { supabase } from "@/lib/supabase";
+import { EmailConsentPanel } from "@/components/EmailConsentPrompt";
+import { emailConsentCopy } from "@/lib/email-consent-copy";
+import { readEmailChoice,recordInitialEmailChoice } from "@/lib/email-consent";
 
 const SETTINGS_KEY = "tacoplan_user_settings";
 const PERIOD_KEY = "tacoplan_period_config";
@@ -118,7 +121,7 @@ const DEFAULT_EXTRAS: DayExtras = {
 };
 
 export default function OnboardingSetup({ onComplete }: Props) {
-  const { t } = useI18n();
+  const { t,locale } = useI18n();
   const insets = useSafeAreaInsets();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const { user } = useAuth();
@@ -172,6 +175,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState("account");
+  const [emailChoice,setEmailChoice]=useState<boolean|null>(null);
+  useEffect(()=>{let active=true;if(userId)void readEmailChoice(userId).then(v=>{if(active)setEmailChoice(v);}).catch(()=>{});return()=>{active=false;};},[userId]);
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   useEffect(() => {
@@ -290,6 +295,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
     ...(showUserPaymentSection ? [{id:"paymentStandard",title:t("wizard.paymentStandard")}] : []),
     {id:"period",title:t("wizard.period")},
     ...(showPaymentSection ? [{id:"paymentSpecial",title:t("wizard.paymentSpecial")}] : []),
+    {id:"emailConsent",title:emailConsentCopy[locale].step},
   ];
   const stepIndex = Math.max(0,steps.findIndex(item=>item.id===step));
   const activeStep = steps[stepIndex].id;
@@ -496,6 +502,8 @@ export default function OnboardingSetup({ onComplete }: Props) {
       const { error: nameError } = await supabase.from("profiles").upsert({ id:userId, display_name:driverName.trim(), name:driverName.trim(), updated_at:new Date().toISOString() } as any,{onConflict:"id"});
       if (nameError) throw new Error(t("wizard.nameSaveError"));
 
+      // Optional consent: no selection means no marketing. An unavailable server must not prevent setup.
+      try { await recordInitialEmailChoice(userId,emailChoice===true); } catch { /* no consent granted; prompt can retry on a later launch */ }
       const onboardingData = {
         completed: true,
         driverProfile: profile,
@@ -1062,6 +1070,7 @@ export default function OnboardingSetup({ onComplete }: Props) {
           </>
         )}
           </>}
+        {activeStep==="emailConsent" && <EmailConsentPanel choice={emailChoice} onChoice={setEmailChoice} disabled={saving}/>}
       </ScrollView>
 
       <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Platform.OS === "web" ? 34 : 16) }]}>
