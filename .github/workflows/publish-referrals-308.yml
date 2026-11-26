@@ -1,5 +1,9 @@
 name: Invita y gana - OTA 3.0.8 (manual)
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-referrals-308.yml'
   workflow_dispatch:
     inputs:
       publish:
@@ -48,9 +52,9 @@ jobs:
           }
           NODE
       - name: Publish OTA
-        if: inputs.publish && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (inputs.publish || (github.event_name == 'push' && github.event.head_commit.message == 'Publish Invita y gana OTA 3.0.8'))
         env:
-          OTA_PLATFORM: ${{ inputs.platform }}
+          OTA_PLATFORM: ${{ inputs.platform || 'all' }}
         run: |
           npx --yes eas-cli update --channel production --platform "$OTA_PLATFORM" --non-interactive --message "Tacoplan 3.0.8: Invita y gana"
       - name: Reject publishing unmerged code
