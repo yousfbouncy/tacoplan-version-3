@@ -1,0 +1,59 @@
+name: Invita y gana - OTA 3.0.8 (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publicar en producción (desmarcado = solo validar)'
+        type: boolean
+        default: false
+      platform:
+        description: 'Plataforma'
+        type: choice
+        options:
+          - all
+          - ios
+          - android
+        default: all
+permissions:
+  contents: read
+concurrency:
+  group: tacoplan-referral-ota
+  cancel-in-progress: false
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_SUPABASE_URL: https://dutgxjwfjtqxmqonnjlp.supabase.co/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Verify release and referral gate
+        run: |
+          node -e "const fs=require('fs');const a=require('./app.json').expo;if(a.version!=='3.0.8'||a.runtimeVersion.policy!=='appVersion'||!fs.existsSync('components/ReferralOnboardingGate.tsx')||!fs.readFileSync('app/_layout.tsx','utf8').includes('<ReferralOnboardingGate'))throw Error('Incorrect runtime or missing referral gate')"
+      - run: npm run typecheck
+      - run: npm test
+      - name: Validate actual notification sounds
+        run: |
+          node - <<'NODE'
+          require('./plugins/withTrafficAlertSound.js')({});
+          const fs=require('fs');
+          for(const file of ['tacoplan_viaje_3.wav','tacoplan_disponibilidad_5.wav']){
+            const wav=fs.readFileSync('./assets/sounds/'+file);
+            if(wav.length<1000||wav.toString('ascii',0,4)!=='RIFF'||wav.toString('ascii',8,12)!=='WAVE')throw Error('Invalid '+file);
+          }
+          NODE
+      - name: Publish OTA
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        env:
+          OTA_PLATFORM: ${{ inputs.platform }}
+        run: npx --yes eas-cli update --channel production --platform "$OTA_PLATFORM" --non-interactive --message "Tacoplan 3.0.8: Invita y gana"
+      - name: Reject publishing unmerged code
+        if: inputs.publish && github.ref != 'refs/heads/main'
+        run: |
+          echo "Merge the validated referral PR before publishing to production."
+          exit 1
