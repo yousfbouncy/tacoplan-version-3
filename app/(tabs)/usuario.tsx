@@ -5,7 +5,6 @@ import ScreenBackdrop from "@/components/ScreenBackdrop";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   StyleSheet,
-  Linking,
   Text,
   View,
   ScrollView,
@@ -2094,10 +2093,6 @@ export default function UsuarioScreen() {
           <View style={styles.card}>
             <SectionHeader title="Cuenta" icon="person-outline" />
             <TrafficLocationConsent />
-            <Pressable accessibilityRole="button" onPress={() => { void Linking.openURL("https://tacoplan.es/invita-y-gana").catch(() => Alert.alert("Tacoplan", "No se pudo abrir la página.")); }} style={({pressed})=>[styles.ferryToggleRow,{opacity:pressed?0.8:1}]}>
-              <View style={styles.ferryToggleLabel}><Ionicons name="gift-outline" size={20} color={Colors.light.tint}/><Text style={styles.ferryToggleText}>Invita y gana</Text></View>
-              <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary}/>
-            </Pressable>
             <Pressable accessibilityRole="button" onPress={() => router.push("/planes" as any)} style={({pressed})=>[styles.ferryToggleRow,{opacity:pressed?0.8:1}]}>
               <View style={styles.ferryToggleLabel}><Ionicons name="diamond-outline" size={20} color={Colors.light.tint}/><Text style={styles.ferryToggleText}>Planes y suscripción</Text></View>
               <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary}/>
