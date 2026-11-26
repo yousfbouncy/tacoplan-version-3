@@ -56,7 +56,7 @@ jobs:
         env:
           OTA_PLATFORM: ${{ inputs.platform || 'all' }}
         run: |
-          npx --yes eas-cli update --channel production --platform "$OTA_PLATFORM" --non-interactive --message "Tacoplan 3.0.8: Invita y gana"
+          npx --yes eas-cli update --channel production --platform "$OTA_PLATFORM" --non-interactive --message "Tacoplan 3.0.8: Invita y gana - corrección de conexión"
       - name: Reject publishing unmerged code
         if: inputs.publish && github.ref != 'refs/heads/main'
         run: |
