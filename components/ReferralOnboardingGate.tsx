@@ -8,10 +8,12 @@ type Props={userId:string;children:React.ReactNode};
 async function decide(userId:string,action:"check"|"claim"|"skip",code?:string){
  const {data:{session}}=await supabase.auth.getSession();
  if(!session||session.user.id!==userId)throw Error("Sesión no disponible");
+ if(action==="check"&&(!["google","apple"].includes(String(session.user.app_metadata?.provider))||!Number.isFinite(Date.parse(session.user.created_at))||Date.now()-Date.parse(session.user.created_at)>7*86400000))return "ineligible";
  const controller=new AbortController();
  const timeout=setTimeout(()=>controller.abort(),8000);
  try{
   const response=await fetch("https://tacoplan.es/api/referrals/onboarding",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+session.access_token},body:JSON.stringify({action,code}),signal:controller.signal});
+  if(action==="check"&&(response.status===404||response.status===503))return "disabled";
   const result=await response.json();
   if(!response.ok&&result.status!=="invalid_code")throw Error("Servicio no disponible");
   return result.status as string;
