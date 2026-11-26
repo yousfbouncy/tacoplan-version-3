@@ -2875,6 +2875,17 @@ export default function DashboardScreen() {
           )}
         </View>
 
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Invita y gana: programa de recomendaciones"
+          onPress={() => { void Linking.openURL("https://tacoplan.es/invita-y-gana").catch(() => Alert.alert("Tacoplan", "No se pudo abrir la página.")); }}
+          style={({pressed})=>({alignSelf:"stretch",flexDirection:"row",alignItems:"center",gap:8,minHeight:36,paddingHorizontal:12,paddingVertical:5,marginTop:-9,marginBottom:10,borderRadius:10,borderWidth:1,borderColor:"rgba(255,255,255,0.22)",backgroundColor:"rgba(255,255,255,0.09)",opacity:pressed?0.75:1})}
+        >
+          <Ionicons name="gift-outline" size={17} color="#D3E7FA" />
+          <Text style={{flex:1,fontSize:12,fontFamily:"Inter_600SemiBold",color:"#FFFFFF"}} numberOfLines={1}>Invita y gana</Text>
+          <Ionicons name="chevron-forward" size={15} color="#D3E7FA" />
+        </Pressable>
+
         {/* Compact overlap warning, without changing or deleting any stored shift. */}
         {(estado?.overlappingPairs ?? 0) > 0 && (
           <Pressable

@@ -21,6 +21,7 @@ import { FerryProvider } from "@/lib/ferry-context";
 import { TachographProvider } from "@/lib/tachograph/tachograph-context";
 import PeriodSetupModal from "@/components/PeriodSetupModal";
 import OnboardingSetup from "@/components/OnboardingSetup";
+import ReferralOnboardingGate from "@/components/ReferralOnboardingGate";
 import ExistingAccountSetup from "@/components/ExistingAccountSetup";
 import BaseLocationSetup from "@/components/BaseLocationSetup";
 import LoginScreen from "@/app/login";
@@ -392,9 +393,7 @@ function OnboardingGate() {
 
   if (needsOnboarding) {
     return (
-      <OnboardingSetup
-        onComplete={() => setNeedsOnboarding(false)}
-      />
+      user?.id ? <ReferralOnboardingGate key={user.id} userId={user.id}><OnboardingSetup onComplete={() => setNeedsOnboarding(false)} /></ReferralOnboardingGate> : <OnboardingSetup onComplete={() => setNeedsOnboarding(false)} />
     );
   }
 
